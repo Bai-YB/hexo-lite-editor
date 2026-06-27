@@ -1,0 +1,131 @@
+.markdown-preview {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 20px 24px 42px;
+  overflow: auto;
+  color: var(--text-main);
+  background: var(--bg-panel);
+  line-height: 1.75;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4 {
+  margin: 1.3em 0 0.55em;
+  line-height: 1.28;
+}
+
+.markdown-preview h1 {
+  font-size: 26px;
+}
+
+.markdown-preview h2 {
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: 5px;
+  font-size: 21px;
+}
+
+.markdown-preview h3 {
+  font-size: 17px;
+}
+
+.markdown-preview p {
+  margin: 0 0 1em;
+}
+
+.markdown-preview a {
+  color: var(--primary-color);
+}
+
+.markdown-preview blockquote {
+  margin: 1em 0;
+  border-left: 4px solid var(--primary-color);
+  padding: 8px 14px;
+  color: var(--text-muted);
+  background: var(--bg-muted);
+}
+
+.markdown-preview pre {
+  overflow: auto;
+  border-radius: 6px;
+  padding: 14px;
+  color: var(--log-text);
+  background: var(--log-bg);
+}
+
+.markdown-preview pre code {
+  padding: 0;
+  color: inherit;
+  background: transparent;
+}
+
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  border: 1px solid var(--border-soft);
+  padding: 7px 9px;
+}
+
+.markdown-preview th {
+  background: var(--bg-muted);
+}
+
+.markdown-preview img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.cm-editor {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  overflow: hidden;
+  outline: none;
+  contain: layout paint;
+}
+
+.cm-focused {
+  outline: none !important;
+}
+
+.cm-editor {
+  background: var(--bg-panel);
+  color: var(--text-main);
+}
+
+.cm-scroller {
+  max-width: 100%;
+  overflow: auto !important;
+}
+
+.cm-content {
+  max-width: 100%;
+}
+
+.cm-gutters {
+  border-right-color: var(--border-soft) !important;
+  background: var(--bg-muted) !important;
+  color: var(--text-muted) !important;
+}
+
+.cm-activeLine {
+  background: var(--editor-active-line) !important;
+}
+
+.cm-activeLineGutter {
+  background: var(--editor-active-gutter) !important;
+}
+
+.cm-content ::selection {
+  color: var(--selection-text);
+  background: var(--selection-bg);
+}
