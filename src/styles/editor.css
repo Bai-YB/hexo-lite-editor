@@ -109,6 +109,13 @@
 
 .cm-content {
   max-width: 100%;
+  caret-color: var(--editor-cursor) !important;
+}
+
+.cm-editor .cm-cursor,
+.cm-editor .cm-dropCursor {
+  border-left-color: var(--editor-cursor) !important;
+  border-left-width: 2px !important;
 }
 
 .cm-gutters {

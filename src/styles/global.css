@@ -1055,7 +1055,12 @@ code {
 .button-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+}
+
+.button-row button {
+  flex: 0 0 auto;
 }
 
 button.danger {
@@ -1076,7 +1081,8 @@ button.danger {
 .hexo-drawer-section {
   height: 100%;
   min-height: 0;
-  grid-template-rows: auto auto auto minmax(280px, 1fr);
+  align-content: start;
+  grid-template-rows: auto auto auto auto minmax(280px, 1fr);
 }
 
 .drawer-yaml-editor {

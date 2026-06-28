@@ -39,6 +39,7 @@ export interface LayoutSettings {
   logPanelHeight: number;
   showPreview: boolean;
   showLogPanel: boolean;
+  splitLayoutMigrated: boolean;
 }
 
 export interface RibbonSettings {
@@ -132,7 +133,8 @@ export const defaultSettings: AppSettings = {
     previewWidth: 0,
     logPanelHeight: 240,
     showPreview: true,
-    showLogPanel: false
+    showLogPanel: false,
+    splitLayoutMigrated: true
   },
   ribbon: {
     activeTab: "write"

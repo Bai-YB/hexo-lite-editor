@@ -14,7 +14,7 @@
   import StatusBar from "$lib/components/StatusBar.svelte";
   import { loadSettings, saveSettings } from "$lib/api/config";
   import {
-    deploySite,
+    generateAndDeploy,
     generateSite,
     getGitStatus,
     startHexoServer,
@@ -54,6 +54,7 @@
   let showTerminalPanel = false;
   let terminalRunning = false;
   let terminalOutput: string[] = [];
+  let previewRefreshToken = String(Date.now());
   let loading = false;
   let activeResizeKind: "sidebar" | "preview" | "terminal" | null = null;
   let sidebarWidth = defaultSettings.layout.sidebarWidth;
@@ -97,6 +98,7 @@
     };
     sidebarWidth = settings.layout.sidebarWidth;
     previewWidthState = settings.layout.previewWidth;
+    void saveSettings(settings).catch((error) => appendLog(`Settings migration save failed: ${error}`));
     applyTheme();
     mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     mediaQuery.addEventListener("change", applyTheme);
@@ -532,6 +534,7 @@
       const message = await startHexoServer(project.rootPath);
       runningServer = true;
       appendLog(message);
+      await waitForHexoServer();
       await openCurrentPreview();
     } catch (error) {
       appendLog(`启动 Hexo Server 失败: ${error}`);
@@ -559,7 +562,7 @@
         action === "generate"
           ? await generateSite(project.rootPath)
           : action === "deploy"
-            ? await deploySite(project.rootPath)
+            ? await generateAndDeploy(project.rootPath)
             : await getGitStatus(project.rootPath);
       appendCommandResult(result);
     } catch (error) {
@@ -571,10 +574,41 @@
 
   async function openCurrentPreview() {
     try {
+      if (project && !runningServer) {
+        appendLog("Hexo Server is not running, starting local preview...");
+        const message = await startHexoServer(project.rootPath);
+        runningServer = true;
+        appendLog(message);
+      }
+      if (project) {
+        await waitForHexoServer();
+      }
       await openCurrentPostPreview(project, activePost, content);
     } catch (error) {
       appendLog(`打开预览失败: ${error}`);
     }
+  }
+
+  function refreshPreview() {
+    previewRefreshToken = String(Date.now());
+  }
+
+  async function waitForHexoServer(timeoutMs = 15000) {
+    const deadline = Date.now() + timeoutMs;
+    let lastError: unknown = null;
+    while (Date.now() < deadline) {
+      try {
+        await fetch("http://localhost:4000", {
+          cache: "no-store",
+          mode: "no-cors"
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    throw new Error(`Hexo Server did not become ready in time: ${lastError ?? "timeout"}`);
   }
 
   async function runTerminal(command: string) {
@@ -718,7 +752,8 @@
       <MarkdownPreview
         bind:this={previewRef}
         content={content}
-        onRefresh={() => (content = `${content}`)}
+        refreshToken={previewRefreshToken}
+        onRefresh={refreshPreview}
         onOpenPreview={openCurrentPreview}
       />
     </div>

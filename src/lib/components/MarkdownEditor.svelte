@@ -296,14 +296,16 @@
           lineHeight: String(lineHeight)
         },
         ".cm-content": {
-          padding: "16px 18px"
+          padding: "16px 18px",
+          caretColor: "var(--editor-cursor)"
         },
         ".cm-cursor": {
-          borderLeftColor: "var(--editor-cursor)",
+          borderLeftColor: "var(--editor-cursor) !important",
           borderLeftWidth: "2px"
         },
         ".cm-dropCursor": {
-          borderLeftColor: "var(--editor-cursor)"
+          borderLeftColor: "var(--editor-cursor) !important",
+          borderLeftWidth: "2px"
         },
         ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
           backgroundColor: "var(--selection-bg) !important"

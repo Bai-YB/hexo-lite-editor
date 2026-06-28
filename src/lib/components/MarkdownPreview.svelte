@@ -3,13 +3,14 @@
   import { renderMarkdown } from "$lib/markdown/renderMarkdown";
 
   export let content = "";
+  export let refreshToken = "";
   export let onRefresh: () => void = () => {};
   export let onOpenPreview: () => void = () => {};
 
   let article: HTMLElement;
   let programmaticScroll = false;
 
-  $: html = renderMarkdown(content);
+  $: html = renderMarkdown(content, { imageCacheBust: refreshToken });
 
   export function scrollToRatio(ratio: number) {
     if (!article) return;

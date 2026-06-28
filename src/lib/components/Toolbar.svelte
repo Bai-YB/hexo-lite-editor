@@ -36,6 +36,14 @@
   export let onToggleTerminal: () => void = () => {};
 
   let menuOpen = false;
+  let menuWrapElement: HTMLElement;
+
+  function closeMenuFromOutside(event: MouseEvent) {
+    if (!menuOpen) return;
+    const target = event.target;
+    if (target instanceof Node && menuWrapElement?.contains(target)) return;
+    menuOpen = false;
+  }
 
   function toggleLog() {
     onToggleLog();
@@ -47,6 +55,8 @@
     menuOpen = false;
   }
 </script>
+
+<svelte:window on:click={closeMenuFromOutside} />
 
 <header class="toolbar">
   <div class="actions actions-left">
@@ -67,7 +77,7 @@
     <button title="Git 状态" disabled={!hasProject} on:click={onGitStatus}><GitBranch size={17} />Git</button>
     <button title="发布博客" disabled={!hasProject} on:click={onDeploy}><Rocket size={17} />发布</button>
 
-    <div class="menu-wrap">
+    <div class="menu-wrap" bind:this={menuWrapElement}>
       <button class="icon-only" class:active={menuOpen} title="更多" on:click={() => (menuOpen = !menuOpen)}>
         <MoreHorizontal size={18} />
       </button>

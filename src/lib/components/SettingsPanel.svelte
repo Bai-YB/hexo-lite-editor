@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
   import { onMount } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import {
@@ -21,10 +21,17 @@
   import { checkUpdate, getAppVersion, openConfigDir, openReleasePage } from "$lib/api/app";
   import {
     backupHexoConfig,
+    backupHexoConfigFile,
+    listHexoConfigFiles,
     openHexoConfigExternal,
+    openHexoConfigFileExternal,
     readHexoConfig,
+    readHexoConfigFile,
+    restoreLatestHexoConfigFileBackup,
     restoreLatestHexoConfigBackup,
     saveHexoConfig,
+    saveHexoConfigFile,
+    type HexoConfigEntry,
     type HexoConfigFile
   } from "$lib/api/hexoConfig";
   import { copyImageToProject, openCloudflareImgBedAdmin, uploadImagePathToCloudflareImgBed } from "$lib/api/uploader";
@@ -44,6 +51,8 @@
   let hexoConfig: HexoConfigFile | null = null;
   let hexoConfigContent = "";
   let hexoMessage = "未读取配置文件。";
+  let hexoConfigEntries: HexoConfigEntry[] = [];
+  let selectedConfigPath = "";
   let uploadTestResult = "";
   let updateResult: UpdateCheckResult | null = null;
   let updateMessage = "等待检查。";
@@ -85,6 +94,82 @@
   async function resetAllSettings() {
     if (!confirm("确定要重置所有设置吗？")) return;
     await commit(await resetSettings());
+  }
+
+  async function refreshHexoConfigEntries() {
+    const currentProject = project;
+    if (!currentProject) {
+      hexoMessage = "请先打开 Hexo 项目。";
+      return;
+    }
+    try {
+      hexoConfigEntries = await listHexoConfigFiles(currentProject.rootPath);
+      const preferred =
+        hexoConfigEntries.find((entry) => entry.kind === "root") ??
+        hexoConfigEntries.find((entry) => entry.is_active_theme) ??
+        hexoConfigEntries[0];
+      selectedConfigPath = selectedConfigPath || preferred?.path || "";
+      if (selectedConfigPath) await loadSelectedHexoConfig();
+      else hexoMessage = "没有找到可编辑的 Hexo 配置文件。";
+    } catch (error) {
+      hexoMessage = `扫描配置失败: ${error}`;
+    }
+  }
+
+  async function loadSelectedHexoConfig() {
+    if (!selectedConfigPath) {
+      await refreshHexoConfigEntries();
+      return;
+    }
+    try {
+      hexoConfig = await readHexoConfigFile(selectedConfigPath);
+      hexoConfigContent = hexoConfig.content;
+      hexoMessage = hexoConfig.exists ? "已读取配置文件。" : "配置文件不存在。";
+    } catch (error) {
+      hexoMessage = `读取失败: ${error}`;
+    }
+  }
+
+  async function saveSelectedHexoConfig() {
+    if (!selectedConfigPath) return;
+    try {
+      const result = await saveHexoConfigFile(selectedConfigPath, hexoConfigContent);
+      hexoMessage = `已保存，备份: ${result.backup_path}`;
+      await loadSelectedHexoConfig();
+    } catch (error) {
+      hexoMessage = `保存失败: ${error}`;
+    }
+  }
+
+  async function backupSelectedHexoConfig() {
+    if (!selectedConfigPath) return;
+    try {
+      const result = await backupHexoConfigFile(selectedConfigPath);
+      hexoMessage = `已备份: ${result.backup_path}`;
+      await loadSelectedHexoConfig();
+    } catch (error) {
+      hexoMessage = `备份失败: ${error}`;
+    }
+  }
+
+  async function restoreSelectedHexoConfig() {
+    if (!selectedConfigPath || !confirm("确定恢复最近一次该配置文件备份吗？当前内容会被覆盖。")) return;
+    try {
+      hexoConfig = await restoreLatestHexoConfigFileBackup(selectedConfigPath);
+      hexoConfigContent = hexoConfig.content;
+      hexoMessage = "已恢复最近备份。";
+    } catch (error) {
+      hexoMessage = `恢复失败: ${error}`;
+    }
+  }
+
+  async function openSelectedHexoConfigExternal() {
+    if (!selectedConfigPath) return;
+    try {
+      await openHexoConfigFileExternal(selectedConfigPath);
+    } catch (error) {
+      hexoMessage = `外部打开失败: ${error}`;
+    }
   }
 
   async function loadHexoConfig() {
@@ -262,12 +347,30 @@
           <small>配置文件：{hexoConfig?.config_path ?? "未读取"}</small>
           <small>{hexoMessage}</small>
         </div>
+        <label>
+          <span>配置文件</span>
+          <select
+            disabled={!project || !hexoConfigEntries.length}
+            value={selectedConfigPath}
+            on:change={async (event) => {
+              selectedConfigPath = event.currentTarget.value;
+              await loadSelectedHexoConfig();
+            }}
+          >
+            {#each hexoConfigEntries as entry}
+              <option value={entry.path}>
+                {entry.label}{entry.is_active_theme ? "（当前主题）" : ""}{entry.exists ? "" : "（不存在）"}
+              </option>
+            {/each}
+          </select>
+        </label>
         <div class="button-row">
-          <button disabled={!project} on:click={loadHexoConfig}>打开</button>
-          <button disabled={!project || !hexoConfig?.exists} on:click={saveCurrentHexoConfig}>保存</button>
-          <button disabled={!project || !hexoConfig?.exists} on:click={backupCurrentHexoConfig}>备份</button>
-          <button disabled={!project || !hexoConfig?.latest_backup_path} on:click={restoreHexoConfig}>恢复</button>
-          <button disabled={!project || !hexoConfig?.exists} on:click={() => project && openHexoConfigExternal(project.rootPath)}>外部打开</button>
+          <button disabled={!project} on:click={refreshHexoConfigEntries}>扫描</button>
+          <button disabled={!project || !selectedConfigPath} on:click={loadSelectedHexoConfig}>打开</button>
+          <button disabled={!project || !hexoConfig?.exists} on:click={saveSelectedHexoConfig}>保存</button>
+          <button disabled={!project || !hexoConfig?.exists} on:click={backupSelectedHexoConfig}>备份</button>
+          <button disabled={!project || !hexoConfig?.latest_backup_path} on:click={restoreSelectedHexoConfig}>恢复</button>
+          <button title="外部打开配置文件" disabled={!project || !hexoConfig?.exists} on:click={openSelectedHexoConfigExternal}>外部</button>
         </div>
         <div class="drawer-yaml-editor">
           {#if project}
@@ -282,7 +385,7 @@
               highlightLine={settings.editor.highlightActiveLine}
               tabSize={settings.editor.tabSize}
               onChange={(value) => (hexoConfigContent = value)}
-              onSave={saveCurrentHexoConfig}
+              onSave={saveSelectedHexoConfig}
             />
           {:else}
             <div class="settings-empty">请先打开 Hexo 项目。</div>
@@ -353,3 +456,4 @@
     {/if}
   </div>
 </aside>
+

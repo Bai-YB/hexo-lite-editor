@@ -11,6 +11,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
+
+const WINDOW_ICON: tauri::image::Image<'_> = tauri::include_image!("./icons/128x128.png");
 use walkdir::WalkDir;
 
 #[derive(Default)]
@@ -93,6 +95,16 @@ struct HexoConfigFile {
     config_path: String,
     content: String,
     latest_backup_path: Option<String>,
+}
+
+#[derive(Serialize)]
+struct HexoConfigEntry {
+    label: String,
+    path: String,
+    kind: String,
+    theme: Option<String>,
+    exists: bool,
+    is_active_theme: bool,
 }
 
 #[derive(Serialize)]
@@ -701,16 +713,49 @@ fn run_hexo_deploy(project_path: String) -> Result<CommandResult, String> {
 }
 
 #[tauri::command]
-fn run_hexo_generate_deploy(project_path: String) -> Result<CommandResult, String> {
+async fn run_hexo_generate_deploy(project_path: String) -> Result<CommandResult, String> {
+    tauri::async_runtime::spawn_blocking(move || run_hexo_generate_deploy_blocking(project_path))
+        .await
+        .map_err(|error| format!("Hexo publish task failed: {error}"))?
+}
+
+fn run_hexo_generate_deploy_blocking(project_path: String) -> Result<CommandResult, String> {
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+
     let clean = run_npx_hexo(&project_path, &["clean"])?;
+    append_step_output("hexo clean", &clean, &mut stdout, &mut stderr);
     if !clean.success {
-        return Ok(clean);
+        return Ok(CommandResult {
+            success: false,
+            command: "npx hexo clean && npx hexo generate && npx hexo deploy".to_string(),
+            stdout,
+            stderr,
+            code: clean.code,
+        });
     }
+
     let generate = run_npx_hexo(&project_path, &["generate"])?;
+    append_step_output("hexo generate", &generate, &mut stdout, &mut stderr);
     if !generate.success {
-        return Ok(generate);
+        return Ok(CommandResult {
+            success: false,
+            command: "npx hexo clean && npx hexo generate && npx hexo deploy".to_string(),
+            stdout,
+            stderr,
+            code: generate.code,
+        });
     }
-    run_npx_hexo(&project_path, &["deploy"])
+
+    let deploy = run_npx_hexo(&project_path, &["deploy"])?;
+    append_step_output("hexo deploy", &deploy, &mut stdout, &mut stderr);
+    Ok(CommandResult {
+        success: deploy.success,
+        command: "npx hexo clean && npx hexo generate && npx hexo deploy".to_string(),
+        stdout,
+        stderr,
+        code: deploy.code,
+    })
 }
 
 #[tauri::command]
@@ -885,6 +930,133 @@ fn open_hexo_config_external(project_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn list_hexo_config_files(project_path: String) -> Result<Vec<HexoConfigEntry>, String> {
+    let project = PathBuf::from(project_path);
+    let root_config = project.join("_config.yml");
+    let active_theme = read_active_theme(&root_config);
+    let mut entries = Vec::new();
+
+    entries.push(HexoConfigEntry {
+        label: "Root _config.yml".to_string(),
+        path: path_string(&root_config),
+        kind: "root".to_string(),
+        theme: None,
+        exists: root_config.exists(),
+        is_active_theme: false,
+    });
+
+    if let Some(theme) = active_theme.as_ref().filter(|value| !value.trim().is_empty()) {
+        let override_config = project.join(format!("_config.{theme}.yml"));
+        entries.push(HexoConfigEntry {
+            label: format!("Theme override _config.{theme}.yml"),
+            path: path_string(&override_config),
+            kind: "theme-override".to_string(),
+            theme: Some(theme.clone()),
+            exists: override_config.exists(),
+            is_active_theme: true,
+        });
+    }
+
+    let themes_dir = project.join("themes");
+    if themes_dir.exists() {
+        for entry in fs::read_dir(&themes_dir).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let theme = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_string();
+            let config = path.join("_config.yml");
+            entries.push(HexoConfigEntry {
+                label: format!("Theme {theme} / _config.yml"),
+                path: path_string(&config),
+                kind: "theme".to_string(),
+                theme: Some(theme.clone()),
+                exists: config.exists(),
+                is_active_theme: active_theme.as_deref() == Some(theme.as_str()),
+            });
+        }
+    }
+
+    Ok(entries)
+}
+
+#[tauri::command]
+fn read_hexo_config_file(path: String) -> Result<HexoConfigFile, String> {
+    let config = PathBuf::from(path);
+    let content = if config.exists() {
+        fs::read_to_string(&config).map_err(|error| format!("Read config failed: {error}"))?
+    } else {
+        String::new()
+    };
+    let project = find_project_root_for_config(&config).unwrap_or_else(|| {
+        config
+            .parent()
+            .map(|value| value.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
+
+    Ok(HexoConfigFile {
+        exists: config.exists(),
+        project_path: path_string(&project),
+        config_path: path_string(&config),
+        content,
+        latest_backup_path: latest_config_backup(&project, &config).map(|path| path_string(&path)),
+    })
+}
+
+#[tauri::command]
+fn save_hexo_config_file(path: String, content: String) -> Result<BackupResult, String> {
+    if content.trim().is_empty() {
+        return Err("Config content cannot be empty".to_string());
+    }
+    let config = PathBuf::from(path);
+    if !config.exists() {
+        return Err("Config file does not exist".to_string());
+    }
+    let project = find_project_root_for_config(&config).ok_or_else(|| "Cannot locate Hexo project root".to_string())?;
+    let backup_path = backup_config_path(&project, &config)?;
+    fs::write(&config, content).map_err(|error| format!("Save config failed: {error}"))?;
+    prune_config_backups(&project, &config, 10)?;
+    Ok(BackupResult {
+        backup_path: path_string(&backup_path),
+    })
+}
+
+#[tauri::command]
+fn backup_hexo_config_file_by_path(path: String) -> Result<BackupResult, String> {
+    let config = PathBuf::from(path);
+    let project = find_project_root_for_config(&config).ok_or_else(|| "Cannot locate Hexo project root".to_string())?;
+    let backup_path = backup_config_path(&project, &config)?;
+    prune_config_backups(&project, &config, 10)?;
+    Ok(BackupResult {
+        backup_path: path_string(&backup_path),
+    })
+}
+
+#[tauri::command]
+fn restore_latest_hexo_config_file_backup(path: String) -> Result<HexoConfigFile, String> {
+    let config = PathBuf::from(path);
+    let project = find_project_root_for_config(&config).ok_or_else(|| "Cannot locate Hexo project root".to_string())?;
+    let latest = latest_config_backup(&project, &config).ok_or_else(|| "No config backup to restore".to_string())?;
+    fs::copy(&latest, &config).map_err(|error| format!("Restore config backup failed: {error}"))?;
+    read_hexo_config_file(path_string(&config))
+}
+
+#[tauri::command]
+fn open_hexo_config_file_external(path: String) -> Result<(), String> {
+    let config = PathBuf::from(path);
+    if !config.exists() {
+        return Err("Config file does not exist".to_string());
+    }
+    open_path_external(&config)
+}
+
+#[tauri::command]
 fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
@@ -992,6 +1164,25 @@ fn run_npx_hexo(project_path: &str, hexo_args: &[&str]) -> Result<CommandResult,
 
 fn run_git(project_path: &str, args: &[&str]) -> Result<CommandResult, String> {
     run_command(project_path, git_command(), args)
+}
+
+fn append_step_output(label: &str, result: &CommandResult, stdout: &mut String, stderr: &mut String) {
+    stdout.push_str(&format!("\n===== {label} =====\n"));
+    if result.stdout.trim().is_empty() {
+        stdout.push_str("(no stdout)\n");
+    } else {
+        stdout.push_str(&result.stdout);
+        if !result.stdout.ends_with('\n') {
+            stdout.push('\n');
+        }
+    }
+    if !result.stderr.trim().is_empty() {
+        stderr.push_str(&format!("\n===== {label} stderr =====\n"));
+        stderr.push_str(&result.stderr);
+        if !result.stderr.ends_with('\n') {
+            stderr.push('\n');
+        }
+    }
 }
 
 fn run_command(project_path: &str, command: &str, args: &[&str]) -> Result<CommandResult, String> {
@@ -1179,6 +1370,105 @@ fn backup_entries(dir: &Path) -> Result<Vec<(PathBuf, SystemTime)>, String> {
     Ok(entries)
 }
 
+fn read_active_theme(root_config: &Path) -> Option<String> {
+    let content = fs::read_to_string(root_config).ok()?;
+    let front_matter: HashMap<String, Value> = serde_yaml::from_str(&content).ok()?;
+    yaml_string(&front_matter, "theme").filter(|value| !value.trim().is_empty())
+}
+
+fn find_project_root_for_config(config: &Path) -> Option<PathBuf> {
+    let mut current = if config.is_dir() {
+        config.to_path_buf()
+    } else {
+        config.parent()?.to_path_buf()
+    };
+    loop {
+        if current.join("_config.yml").exists() && current.join("source").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
+fn config_backup_dir(project: &Path) -> PathBuf {
+    project
+        .join(".hexo-lite-editor")
+        .join("backups")
+        .join("configs")
+}
+
+fn safe_config_backup_prefix(project: &Path, config: &Path) -> String {
+    let relative = config.strip_prefix(project).unwrap_or(config);
+    let raw = relative.to_string_lossy();
+    raw.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn backup_config_path(project: &Path, config: &Path) -> Result<PathBuf, String> {
+    if !config.exists() {
+        return Err("Config file does not exist, cannot back up".to_string());
+    }
+    let dir = config_backup_dir(project);
+    fs::create_dir_all(&dir).map_err(|error| format!("Create config backup directory failed: {error}"))?;
+    let timestamp = Local::now().format("%Y-%m-%d-%H-%M-%S");
+    let prefix = safe_config_backup_prefix(project, config);
+    let target = dir.join(format!("{prefix}.{timestamp}.bak"));
+    fs::copy(config, &target).map_err(|error| format!("Back up config failed: {error}"))?;
+    Ok(target)
+}
+
+fn latest_config_backup(project: &Path, config: &Path) -> Option<PathBuf> {
+    let dir = config_backup_dir(project);
+    let prefix = format!("{}.", safe_config_backup_prefix(project, config));
+    let mut entries = backup_entries_with_prefix(&dir, &prefix).ok()?;
+    entries.sort_by_key(|(_, modified)| *modified);
+    entries.pop().map(|(path, _)| path)
+}
+
+fn prune_config_backups(project: &Path, config: &Path, max_count: usize) -> Result<(), String> {
+    let dir = config_backup_dir(project);
+    let prefix = format!("{}.", safe_config_backup_prefix(project, config));
+    let mut backups = backup_entries_with_prefix(&dir, &prefix)?;
+    backups.sort_by_key(|(_, modified)| *modified);
+    while backups.len() > max_count {
+        if let Some((path, _)) = backups.first() {
+            fs::remove_file(path).map_err(|error| format!("Prune config backup failed: {error}"))?;
+        }
+        backups.remove(0);
+    }
+    Ok(())
+}
+
+fn backup_entries_with_prefix(dir: &Path, prefix: &str) -> Result<Vec<(PathBuf, SystemTime)>, String> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        let name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+        if !name.starts_with(prefix) || !name.ends_with(".bak") {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        entries.push((path, modified));
+    }
+    Ok(entries)
+}
+
 fn open_path_external(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -1261,7 +1551,8 @@ fn default_app_config() -> serde_json::Value {
             "previewWidth": 0,
             "logPanelHeight": 240,
             "showPreview": true,
-            "showLogPanel": false
+            "showLogPanel": false,
+            "splitLayoutMigrated": true
         },
         "ribbon": {
             "activeTab": "write"
@@ -1355,11 +1646,20 @@ pub fn run() {
             backup_hexo_config,
             restore_latest_hexo_config_backup,
             open_hexo_config_external,
+            list_hexo_config_files,
+            read_hexo_config_file,
+            save_hexo_config_file,
+            backup_hexo_config_file_by_path,
+            restore_latest_hexo_config_file_backup,
+            open_hexo_config_file_external,
             get_app_version,
             check_update,
             open_release_page
         ])
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_icon(WINDOW_ICON.clone());
+            }
             if let Ok(dir) = app.path().app_config_dir() {
                 let path = dir.join("app-config.json");
                 if !path.exists() {

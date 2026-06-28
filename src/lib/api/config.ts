@@ -39,6 +39,7 @@ export function normalizeSettings(input: LooseSettings = {}): AppSettings {
   const coverSourcePriority = sanitizeCoverSourcePriority(
     input.postList?.coverSourcePriority ?? defaultSettings.postList.coverSourcePriority
   );
+  const layoutMigrated = input.layout?.splitLayoutMigrated === true;
 
   return {
     general: {
@@ -59,7 +60,9 @@ export function normalizeSettings(input: LooseSettings = {}): AppSettings {
     },
     layout: {
       ...defaultSettings.layout,
-      ...input.layout
+      ...input.layout,
+      previewWidth: layoutMigrated ? (input.layout?.previewWidth ?? defaultSettings.layout.previewWidth) : 0,
+      splitLayoutMigrated: true
     },
     ribbon: {
       ...defaultSettings.ribbon,
