@@ -11,6 +11,8 @@
     Info,
     KeyRound,
     ClipboardPaste,
+    GitPullRequest,
+    RefreshCw,
     RotateCcw,
     Rocket,
     Settings,
@@ -36,10 +38,12 @@
   } from "$lib/api/hexoConfig";
   import { copyImageToProject, openCloudflareImgBedAdmin, uploadImagePathToCloudflareImgBed } from "$lib/api/uploader";
   import { resetSettings } from "$lib/api/config";
+  import { getContentSyncStatus, initContentSync, pullContentSync, runContentSync } from "$lib/api/sync";
   import type { HexoProject } from "$lib/types/project";
   import type { AppSettings, UpdateCheckResult } from "$lib/types/settings";
+  import type { ContentSyncStatus } from "$lib/types/sync";
 
-  type Tab = "general" | "appearance" | "editor" | "hexo" | "uploader" | "publish" | "update" | "about";
+  type Tab = "general" | "appearance" | "editor" | "hexo" | "uploader" | "sync" | "publish" | "update" | "about";
 
   export let settings: AppSettings;
   export let project: HexoProject | null = null;
@@ -54,6 +58,9 @@
   let hexoConfigEntries: HexoConfigEntry[] = [];
   let selectedConfigPath = "";
   let uploadTestResult = "";
+  let syncStatus: ContentSyncStatus | null = null;
+  let syncMessage = "等待检查。";
+  let syncRunning = false;
   let updateResult: UpdateCheckResult | null = null;
   let updateMessage = "等待检查。";
 
@@ -63,6 +70,7 @@
     { id: "editor", label: "编辑器", icon: Code2 },
     { id: "hexo", label: "Hexo 配置", icon: FileCog },
     { id: "uploader", label: "图床", icon: UploadCloud },
+    { id: "sync", label: "同步", icon: RefreshCw },
     { id: "publish", label: "发布", icon: Rocket },
     { id: "update", label: "更新", icon: Download },
     { id: "about", label: "关于", icon: Info }
@@ -287,6 +295,92 @@
       updateMessage = `检查失败: ${error}`;
     }
   }
+
+  async function refreshSyncStatus() {
+    if (!project) {
+      syncMessage = "请先打开 Hexo 项目。";
+      syncStatus = null;
+      return;
+    }
+    try {
+      syncStatus = await getContentSyncStatus(project.rootPath, settings.sync);
+      syncMessage = syncStatus.message;
+    } catch (error) {
+      syncMessage = `检查同步状态失败: ${error}`;
+    }
+  }
+
+  async function enableAndInitSync() {
+    if (!project) {
+      syncMessage = "请先打开 Hexo 项目。";
+      return;
+    }
+    syncRunning = true;
+    const next = {
+      ...settings,
+      sync: {
+        ...settings.sync,
+        enabled: true
+      }
+    };
+    try {
+      await commit(next);
+      syncStatus = await initContentSync(project.rootPath, next.sync);
+      syncMessage = syncStatus.message;
+    } catch (error) {
+      syncMessage = `初始化同步失败: ${error}`;
+    } finally {
+      syncRunning = false;
+    }
+  }
+
+  async function pullSync() {
+    if (!project) return;
+    syncRunning = true;
+    try {
+      syncStatus = await pullContentSync(project.rootPath, settings.sync);
+      syncMessage = syncStatus.message;
+    } catch (error) {
+      syncMessage = `拉取同步失败: ${error}`;
+    } finally {
+      syncRunning = false;
+    }
+  }
+
+  async function runSync() {
+    if (!project) return;
+    syncRunning = true;
+    try {
+      syncStatus = await runContentSync(project.rootPath, settings.sync);
+      syncMessage = syncStatus.message;
+      if (syncStatus.status !== "conflict" && syncStatus.status !== "error") {
+        await commit({
+          ...settings,
+          sync: {
+            ...settings.sync,
+            lastSyncAt: new Date().toISOString()
+          }
+        });
+      }
+    } catch (error) {
+      syncMessage = `同步失败: ${error}`;
+    } finally {
+      syncRunning = false;
+    }
+  }
+
+  function syncStatusText(status?: string) {
+    if (!status) return "未检查";
+    if (status === "notConfigured") return "未配置";
+    if (status === "ready") return "已就绪";
+    if (status === "syncing") return "同步中";
+    if (status === "hasLocalChanges") return "有本地变更";
+    if (status === "needsPull") return "需要拉取";
+    if (status === "needsPush") return "需要推送";
+    if (status === "conflict") return "存在冲突";
+    if (status === "error") return "异常";
+    return status;
+  }
 </script>
 
 <aside class="settings-panel">
@@ -410,6 +504,33 @@
         </div>
         <pre class="result-box">{uploadTestResult || (settings.uploader.defaultType === "cloudflare-imgbed" ? "CloudFlare-ImgBed 使用 POST /upload，表单字段 file，上传成功后返回 Markdown。" : "本地图床测试会复制图片到 source/images。")}</pre>
       </section>
+    {:else if activeTab === "sync"}
+      <section class="settings-section">
+        <h3>内容同步</h3>
+        <div class="setting-card">
+          <small>当前项目：{project?.rootPath ?? "未打开项目"}</small>
+          <small>状态：{syncStatusText(syncStatus?.status)}</small>
+          <small>同步分支：{syncStatus?.remoteName ?? settings.sync.remoteName}/{syncStatus?.branchName ?? settings.sync.branchName}</small>
+          <small>隐藏工作区：{syncStatus?.worktreePath ?? "未初始化"}</small>
+          <small>Ahead / Behind：{syncStatus?.ahead ?? 0} / {syncStatus?.behind ?? 0}</small>
+          <small>最近同步：{settings.sync.lastSyncAt ?? "从未同步"}</small>
+          <small>{syncMessage}</small>
+          {#if syncStatus?.conflicts.length}
+            <pre>{syncStatus.conflicts.join("\n")}</pre>
+          {/if}
+        </div>
+        <label class="toggle-row"><input type="checkbox" checked={settings.sync.enabled} on:change={(event) => patch("sync", "enabled", event.currentTarget.checked)} /><span>启用内容同步</span></label>
+        <label><span>Git Remote</span><input value={settings.sync.remoteName} on:input={(event) => patch("sync", "remoteName", event.currentTarget.value)} /></label>
+        <label><span>同步分支</span><input value={settings.sync.branchName} on:input={(event) => patch("sync", "branchName", event.currentTarget.value)} /></label>
+        <label class="toggle-row"><input type="checkbox" checked={settings.sync.autoSaveBeforeSync} on:change={(event) => patch("sync", "autoSaveBeforeSync", event.currentTarget.checked)} /><span>同步前自动保存当前文章</span></label>
+        <div class="button-row">
+          <button disabled={!project || syncRunning} on:click={refreshSyncStatus}><RefreshCw size={16} />检查状态</button>
+          <button disabled={!project || syncRunning} on:click={enableAndInitSync}><GitPullRequest size={16} />初始化同步分支</button>
+          <button disabled={!project || syncRunning || !settings.sync.enabled} on:click={pullSync}>从分支拉取</button>
+          <button disabled={!project || syncRunning || !settings.sync.enabled} on:click={runSync}>同步到分支</button>
+        </div>
+        <pre class="result-box">同步范围：source/_posts、source/_drafts、source/images。冲突时会停止，不会覆盖任一设备的内容。</pre>
+      </section>
     {:else if activeTab === "publish"}
       <section class="settings-section">
         <h3>发布</h3>
@@ -456,4 +577,3 @@
     {/if}
   </div>
 </aside>
-

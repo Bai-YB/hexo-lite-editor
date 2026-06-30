@@ -72,6 +72,14 @@ export interface PublishSettings {
   gitPushAfterDeploy: boolean;
 }
 
+export interface SyncSettings {
+  enabled: boolean;
+  remoteName: string;
+  branchName: string;
+  autoSaveBeforeSync: boolean;
+  lastSyncAt?: string;
+}
+
 export interface UpdateSettings {
   checkUpdateOnStart: boolean;
   updateSource: UpdateSource;
@@ -89,6 +97,7 @@ export interface AppSettings {
   postList: PostListSettings;
   uploader: UploaderSettings;
   publish: PublishSettings;
+  sync: SyncSettings;
   update: UpdateSettings;
   recentProjects: string[];
 }
@@ -161,6 +170,12 @@ export const defaultSettings: AppSettings = {
     cleanBeforeGenerate: false,
     generateBeforeDeploy: true,
     gitPushAfterDeploy: false
+  },
+  sync: {
+    enabled: false,
+    remoteName: "origin",
+    branchName: "content-sync",
+    autoSaveBeforeSync: true
   },
   update: {
     checkUpdateOnStart: false,

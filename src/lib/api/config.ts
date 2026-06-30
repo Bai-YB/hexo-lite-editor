@@ -83,6 +83,12 @@ export function normalizeSettings(input: LooseSettings = {}): AppSettings {
       ...input.publish,
       hexoServerCommand: input.publish?.hexoServerCommand ?? input.hexo_command ?? defaultSettings.publish.hexoServerCommand
     },
+    sync: {
+      ...defaultSettings.sync,
+      ...input.sync,
+      remoteName: sanitizeSyncName(input.sync?.remoteName, defaultSettings.sync.remoteName),
+      branchName: sanitizeSyncName(input.sync?.branchName, defaultSettings.sync.branchName)
+    },
     update: {
       ...defaultSettings.update,
       ...input.update
@@ -108,4 +114,8 @@ function isUploaderType(value: unknown): value is AppSettings["uploader"]["defau
 
 function sanitizeUploaderType(value: unknown): AppSettings["uploader"]["defaultType"] {
   return isUploaderType(value) ? value : defaultSettings.uploader.defaultType;
+}
+
+function sanitizeSyncName(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }

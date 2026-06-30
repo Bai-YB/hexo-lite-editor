@@ -121,6 +121,16 @@ struct UpdateSettings {
     custom_update_url: Option<String>,
 }
 
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContentSyncSettings {
+    enabled: bool,
+    remote_name: String,
+    branch_name: String,
+    auto_save_before_sync: bool,
+    last_sync_at: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateCheckResult {
@@ -130,6 +140,20 @@ struct UpdateCheckResult {
     release_notes: Option<String>,
     download_url: Option<String>,
     release_page_url: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ContentSyncStatus {
+    status: String,
+    message: String,
+    worktree_path: String,
+    remote_name: String,
+    branch_name: String,
+    ahead: i32,
+    behind: i32,
+    has_local_changes: bool,
+    conflicts: Vec<String>,
+    last_sync_at: Option<String>,
 }
 
 #[tauri::command]
@@ -793,6 +817,102 @@ fn git_status(project_path: String) -> Result<CommandResult, String> {
 }
 
 #[tauri::command]
+fn get_content_sync_status(project_path: String, settings: ContentSyncSettings) -> Result<ContentSyncStatus, String> {
+    content_sync_status(&PathBuf::from(project_path), &settings)
+}
+
+#[tauri::command]
+fn init_content_sync(project_path: String, settings: ContentSyncSettings) -> Result<ContentSyncStatus, String> {
+    let project = PathBuf::from(project_path);
+    ensure_content_sync_base(&project, &settings)?;
+    git_fetch(&project, &settings)?;
+    if remote_branch_exists(&project, &settings)? {
+        ensure_content_sync_worktree(&project, &settings)?;
+    } else {
+        create_content_sync_branch(&project, &settings)?;
+    }
+    content_sync_status(&project, &settings)
+}
+
+#[tauri::command]
+fn pull_content_sync(project_path: String, settings: ContentSyncSettings) -> Result<ContentSyncStatus, String> {
+    let project = PathBuf::from(project_path);
+    ensure_content_sync_ready(&project, &settings)?;
+    git_fetch(&project, &settings)?;
+    ensure_content_sync_worktree(&project, &settings)?;
+    let worktree = content_sync_worktree_path(&project);
+    let pull = run_git_in_path(&worktree, &["pull", "--rebase", settings.remote_name.as_str(), settings.branch_name.as_str()])?;
+    if !pull.success {
+        return Ok(content_sync_error_status(
+            &project,
+            &settings,
+            "conflict",
+            format!("同步分支拉取失败，请处理冲突后重试。\n{}", combined_output(&pull)),
+            content_sync_conflicts(&worktree),
+        ));
+    }
+    mirror_sync_content(&worktree, &project)?;
+    content_sync_status(&project, &settings)
+}
+
+#[tauri::command]
+fn push_content_sync(project_path: String, settings: ContentSyncSettings) -> Result<ContentSyncStatus, String> {
+    let project = PathBuf::from(project_path);
+    ensure_content_sync_ready(&project, &settings)?;
+    ensure_content_sync_worktree(&project, &settings)?;
+    let worktree = content_sync_worktree_path(&project);
+    mirror_sync_content(&project, &worktree)?;
+    commit_content_sync_changes(&worktree)?;
+    let push = run_git_in_path(&worktree, &["push", settings.remote_name.as_str(), settings.branch_name.as_str()])?;
+    if !push.success {
+        return Ok(content_sync_error_status(
+            &project,
+            &settings,
+            "error",
+            format!("同步分支推送失败。\n{}", combined_output(&push)),
+            Vec::new(),
+        ));
+    }
+    content_sync_status(&project, &settings)
+}
+
+#[tauri::command]
+fn run_content_sync(project_path: String, settings: ContentSyncSettings) -> Result<ContentSyncStatus, String> {
+    let project = PathBuf::from(project_path);
+    ensure_content_sync_ready(&project, &settings)?;
+    ensure_content_sync_worktree(&project, &settings)?;
+    let worktree = content_sync_worktree_path(&project);
+
+    mirror_sync_content(&project, &worktree)?;
+    commit_content_sync_changes(&worktree)?;
+
+    let pull = run_git_in_path(&worktree, &["pull", "--rebase", settings.remote_name.as_str(), settings.branch_name.as_str()])?;
+    if !pull.success {
+        return Ok(content_sync_error_status(
+            &project,
+            &settings,
+            "conflict",
+            format!("同步分支 rebase 失败，请处理冲突后重试。\n{}", combined_output(&pull)),
+            content_sync_conflicts(&worktree),
+        ));
+    }
+
+    let push = run_git_in_path(&worktree, &["push", settings.remote_name.as_str(), settings.branch_name.as_str()])?;
+    if !push.success {
+        return Ok(content_sync_error_status(
+            &project,
+            &settings,
+            "error",
+            format!("同步分支推送失败。\n{}", combined_output(&push)),
+            Vec::new(),
+        ));
+    }
+
+    mirror_sync_content(&worktree, &project)?;
+    content_sync_status(&project, &settings)
+}
+
+#[tauri::command]
 fn run_terminal_command(project_path: String, command: String) -> Result<CommandResult, String> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
@@ -1156,6 +1276,364 @@ fn open_release_page(url: String) -> Result<(), String> {
     open_url_external(&url)
 }
 
+fn content_sync_status(project: &Path, settings: &ContentSyncSettings) -> Result<ContentSyncStatus, String> {
+    let settings = normalized_sync_settings(settings);
+    if !settings.enabled {
+        return Ok(content_sync_error_status(
+            project,
+            &settings,
+            "notConfigured",
+            "内容同步未启用。".to_string(),
+            Vec::new(),
+        ));
+    }
+    if let Err(error) = ensure_git_project(project) {
+        return Ok(content_sync_error_status(project, &settings, "error", error, Vec::new()));
+    }
+    if let Err(error) = ensure_git_remote(project, &settings.remote_name) {
+        return Ok(content_sync_error_status(project, &settings, "error", error, Vec::new()));
+    }
+
+    let worktree = content_sync_worktree_path(project);
+    if !worktree.join(".git").exists() {
+        return Ok(content_sync_error_status(
+            project,
+            &settings,
+            "notConfigured",
+            "同步分支尚未初始化。".to_string(),
+            Vec::new(),
+        ));
+    }
+
+    let conflicts = content_sync_conflicts(&worktree);
+    if !conflicts.is_empty() {
+        return Ok(content_sync_error_status(
+            project,
+            &settings,
+            "conflict",
+            "同步分支存在冲突，请先手动解决。".to_string(),
+            conflicts,
+        ));
+    }
+
+    let has_local_changes = git_has_changes(&worktree)?;
+    let (ahead, behind) = git_ahead_behind(&worktree, &settings)?;
+    let status = if has_local_changes {
+        "hasLocalChanges"
+    } else if behind > 0 {
+        "needsPull"
+    } else if ahead > 0 {
+        "needsPush"
+    } else {
+        "ready"
+    };
+    let message = match status {
+        "hasLocalChanges" => "同步分支有未提交内容。".to_string(),
+        "needsPull" => format!("远程同步分支有 {behind} 个提交待拉取。"),
+        "needsPush" => format!("本地同步分支有 {ahead} 个提交待推送。"),
+        _ => "内容同步已就绪。".to_string(),
+    };
+
+    Ok(ContentSyncStatus {
+        status: status.to_string(),
+        message,
+        worktree_path: path_string(&worktree),
+        remote_name: settings.remote_name,
+        branch_name: settings.branch_name,
+        ahead,
+        behind,
+        has_local_changes,
+        conflicts: Vec::new(),
+        last_sync_at: settings.last_sync_at,
+    })
+}
+
+fn ensure_content_sync_ready(project: &Path, settings: &ContentSyncSettings) -> Result<(), String> {
+    ensure_content_sync_base(project, settings)?;
+    if !content_sync_worktree_path(project).join(".git").exists() {
+        return Err("同步分支尚未初始化，请先在设置中初始化。".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_content_sync_base(project: &Path, settings: &ContentSyncSettings) -> Result<(), String> {
+    let settings = normalized_sync_settings(settings);
+    if !settings.enabled {
+        return Err("内容同步未启用。".to_string());
+    }
+    ensure_git_project(project)?;
+    ensure_git_remote(project, &settings.remote_name)?;
+    fs::create_dir_all(project.join(".hexo-lite-editor")).map_err(|error| error.to_string())
+}
+
+fn ensure_git_project(project: &Path) -> Result<(), String> {
+    let result = run_git_in_path(project, &["rev-parse", "--is-inside-work-tree"])?;
+    if result.success && result.stdout.trim() == "true" {
+        Ok(())
+    } else {
+        Err("当前 Hexo 项目不是 Git 仓库。".to_string())
+    }
+}
+
+fn ensure_git_remote(project: &Path, remote: &str) -> Result<(), String> {
+    let result = run_git_in_path(project, &["remote", "get-url", remote])?;
+    if result.success {
+        Ok(())
+    } else {
+        Err(format!("当前 Git 仓库没有 remote `{remote}`。"))
+    }
+}
+
+fn git_fetch(project: &Path, settings: &ContentSyncSettings) -> Result<(), String> {
+    let settings = normalized_sync_settings(settings);
+    let result = run_git_in_path(project, &["fetch", settings.remote_name.as_str()])?;
+    if result.success {
+        Ok(())
+    } else {
+        Err(format!("git fetch {} 失败。\n{}", settings.remote_name, combined_output(&result)))
+    }
+}
+
+fn remote_branch_exists(project: &Path, settings: &ContentSyncSettings) -> Result<bool, String> {
+    let settings = normalized_sync_settings(settings);
+    let ref_name = format!("refs/remotes/{}/{}", settings.remote_name, settings.branch_name);
+    let result = run_git_in_path(project, &["rev-parse", "--verify", &ref_name])?;
+    Ok(result.success)
+}
+
+fn ensure_content_sync_worktree(project: &Path, settings: &ContentSyncSettings) -> Result<(), String> {
+    let settings = normalized_sync_settings(settings);
+    let worktree = content_sync_worktree_path(project);
+    let remote_ref = format!("{}/{}", settings.remote_name, settings.branch_name);
+
+    if worktree.join(".git").exists() {
+        let checkout = run_git_in_path(&worktree, &["checkout", settings.branch_name.as_str()])?;
+        if !checkout.success {
+            return Err(format!("切换同步 worktree 分支失败。\n{}", combined_output(&checkout)));
+        }
+        let reset = run_git_in_path(&worktree, &["reset", "--hard", remote_ref.as_str()])?;
+        if !reset.success {
+            return Err(format!("重置同步 worktree 失败。\n{}", combined_output(&reset)));
+        }
+        return Ok(());
+    }
+
+    if worktree.exists() {
+        fs::remove_dir_all(&worktree).map_err(|error| format!("清理无效同步工作区失败: {error}"))?;
+    }
+    let _ = run_git_in_path(project, &["worktree", "prune"]);
+    if let Some(parent) = worktree.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let worktree_text = path_string(&worktree);
+    let result = run_git_in_path(
+        project,
+        &[
+            "worktree",
+            "add",
+            "-B",
+            settings.branch_name.as_str(),
+            worktree_text.as_str(),
+            remote_ref.as_str(),
+        ],
+    )?;
+    if result.success {
+        Ok(())
+    } else {
+        Err(format!("创建同步 worktree 失败。\n{}", combined_output(&result)))
+    }
+}
+
+fn create_content_sync_branch(project: &Path, settings: &ContentSyncSettings) -> Result<(), String> {
+    let settings = normalized_sync_settings(settings);
+    let worktree = content_sync_worktree_path(project);
+    if worktree.exists() {
+        fs::remove_dir_all(&worktree).map_err(|error| format!("清理旧同步工作区失败: {error}"))?;
+    }
+    let _ = run_git_in_path(project, &["worktree", "prune"]);
+    if let Some(parent) = worktree.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let worktree_text = path_string(&worktree);
+    let add = run_git_in_path(project, &["worktree", "add", "--detach", worktree_text.as_str(), "HEAD"])?;
+    if !add.success {
+        return Err(format!("创建同步 worktree 失败。\n{}", combined_output(&add)));
+    }
+    let orphan = run_git_in_path(&worktree, &["checkout", "--orphan", settings.branch_name.as_str()])?;
+    if !orphan.success {
+        return Err(format!("创建同步孤立分支失败。\n{}", combined_output(&orphan)));
+    }
+    let _ = run_git_in_path(&worktree, &["rm", "-rf", "."]);
+    clear_worktree_content(&worktree)?;
+    mirror_sync_content(project, &worktree)?;
+    let add_files = run_git_in_path(&worktree, &["add", "-A"])?;
+    if !add_files.success {
+        return Err(format!("暂存同步内容失败。\n{}", combined_output(&add_files)));
+    }
+    let commit = run_git_in_path(&worktree, &["commit", "--allow-empty", "-m", "init content sync"])?;
+    if !commit.success {
+        return Err(format!("提交同步分支初始化失败。\n{}", combined_output(&commit)));
+    }
+    let push = run_git_in_path(
+        &worktree,
+        &[
+            "push",
+            "-u",
+            settings.remote_name.as_str(),
+            settings.branch_name.as_str(),
+        ],
+    )?;
+    if !push.success {
+        return Err(format!("推送同步分支失败。\n{}", combined_output(&push)));
+    }
+    Ok(())
+}
+
+fn commit_content_sync_changes(worktree: &Path) -> Result<(), String> {
+    let add = run_git_in_path(worktree, &["add", "-A"])?;
+    if !add.success {
+        return Err(format!("暂存同步内容失败。\n{}", combined_output(&add)));
+    }
+    if !git_has_changes(worktree)? {
+        return Ok(());
+    }
+    let message = format!("sync content {}", Local::now().format("%Y-%m-%d %H:%M:%S"));
+    let commit = run_git_in_path(worktree, &["commit", "-m", message.as_str()])?;
+    if commit.success {
+        Ok(())
+    } else {
+        Err(format!("提交同步内容失败。\n{}", combined_output(&commit)))
+    }
+}
+
+fn git_has_changes(cwd: &Path) -> Result<bool, String> {
+    let result = run_git_in_path(cwd, &["status", "--porcelain"])?;
+    Ok(result.success && !result.stdout.trim().is_empty())
+}
+
+fn git_ahead_behind(cwd: &Path, settings: &ContentSyncSettings) -> Result<(i32, i32), String> {
+    let settings = normalized_sync_settings(settings);
+    let upstream = format!("{}/{}", settings.remote_name, settings.branch_name);
+    let output = run_git_in_path(cwd, &["rev-list", "--left-right", "--count", &format!("HEAD...{upstream}")])?;
+    if !output.success {
+        return Ok((0, 0));
+    }
+    let mut parts = output.stdout.split_whitespace();
+    let ahead = parts.next().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
+    let behind = parts.next().and_then(|value| value.parse::<i32>().ok()).unwrap_or(0);
+    Ok((ahead, behind))
+}
+
+fn content_sync_conflicts(worktree: &Path) -> Vec<String> {
+    run_git_in_path(worktree, &["diff", "--name-only", "--diff-filter=U"])
+        .ok()
+        .filter(|result| result.success)
+        .map(|result| result.stdout.lines().map(ToString::to_string).filter(|line| !line.trim().is_empty()).collect())
+        .unwrap_or_default()
+}
+
+fn mirror_sync_content(source_root: &Path, target_root: &Path) -> Result<(), String> {
+    for relative in content_sync_relative_dirs() {
+        let source = source_root.join(relative);
+        let target = target_root.join(relative);
+        if target.exists() {
+            fs::remove_dir_all(&target).map_err(|error| format!("清理同步目录失败 {}: {error}", path_string(&target)))?;
+        }
+        if source.exists() {
+            copy_dir_all(&source, &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_all(source: &Path, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(target).map_err(|error| format!("创建目录失败 {}: {error}", path_string(target)))?;
+    for entry in fs::read_dir(source).map_err(|error| format!("读取目录失败 {}: {error}", path_string(source)))? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_dir_all(&source_path, &target_path)?;
+        } else {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::copy(&source_path, &target_path)
+                .map_err(|error| format!("复制文件失败 {}: {error}", path_string(&source_path)))?;
+        }
+    }
+    Ok(())
+}
+
+fn clear_worktree_content(worktree: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(worktree).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.file_name().and_then(|value| value.to_str()) == Some(".git") {
+            continue;
+        }
+        if path.is_dir() {
+            fs::remove_dir_all(&path).map_err(|error| error.to_string())?;
+        } else {
+            fs::remove_file(&path).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn content_sync_error_status(
+    project: &Path,
+    settings: &ContentSyncSettings,
+    status: &str,
+    message: String,
+    conflicts: Vec<String>,
+) -> ContentSyncStatus {
+    let settings = normalized_sync_settings(settings);
+    ContentSyncStatus {
+        status: status.to_string(),
+        message,
+        worktree_path: path_string(&content_sync_worktree_path(project)),
+        remote_name: settings.remote_name,
+        branch_name: settings.branch_name,
+        ahead: 0,
+        behind: 0,
+        has_local_changes: false,
+        conflicts,
+        last_sync_at: settings.last_sync_at,
+    }
+}
+
+fn content_sync_worktree_path(project: &Path) -> PathBuf {
+    project.join(".hexo-lite-editor").join("content-sync-worktree")
+}
+
+fn content_sync_relative_dirs() -> [&'static str; 3] {
+    ["source/_posts", "source/_drafts", "source/images"]
+}
+
+fn normalized_sync_settings(settings: &ContentSyncSettings) -> ContentSyncSettings {
+    ContentSyncSettings {
+        enabled: settings.enabled,
+        remote_name: if settings.remote_name.trim().is_empty() {
+            "origin".to_string()
+        } else {
+            settings.remote_name.trim().to_string()
+        },
+        branch_name: if settings.branch_name.trim().is_empty() {
+            "content-sync".to_string()
+        } else {
+            settings.branch_name.trim().to_string()
+        },
+        auto_save_before_sync: settings.auto_save_before_sync,
+        last_sync_at: settings.last_sync_at.clone(),
+    }
+}
+
+fn combined_output(result: &CommandResult) -> String {
+    format!("{}{}", result.stdout, result.stderr).trim().to_string()
+}
+
 fn run_npx_hexo(project_path: &str, hexo_args: &[&str]) -> Result<CommandResult, String> {
     let mut args = vec!["hexo"];
     args.extend(hexo_args);
@@ -1164,6 +1642,23 @@ fn run_npx_hexo(project_path: &str, hexo_args: &[&str]) -> Result<CommandResult,
 
 fn run_git(project_path: &str, args: &[&str]) -> Result<CommandResult, String> {
     run_command(project_path, git_command(), args)
+}
+
+fn run_git_in_path(cwd: &Path, args: &[&str]) -> Result<CommandResult, String> {
+    let output = Command::new(git_command())
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .map_err(|error| format!("命令执行失败: {error}"))?;
+    let command_text = format!("git {}", args.join(" "));
+
+    Ok(CommandResult {
+        success: output.status.success(),
+        command: command_text,
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        code: output.status.code(),
+    })
 }
 
 fn append_step_output(label: &str, result: &CommandResult, stdout: &mut String, stderr: &mut String) {
@@ -1580,6 +2075,12 @@ fn default_app_config() -> serde_json::Value {
             "generateBeforeDeploy": true,
             "gitPushAfterDeploy": false
         },
+        "sync": {
+            "enabled": false,
+            "remoteName": "origin",
+            "branchName": "content-sync",
+            "autoSaveBeforeSync": true
+        },
         "update": {
             "checkUpdateOnStart": false,
             "updateSource": "github",
@@ -1636,6 +2137,11 @@ pub fn run() {
             run_hexo_deploy,
             run_hexo_generate_deploy,
             git_status,
+            get_content_sync_status,
+            init_content_sync,
+            pull_content_sync,
+            push_content_sync,
+            run_content_sync,
             run_terminal_command,
             load_app_config,
             save_app_config,

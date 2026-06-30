@@ -23,6 +23,7 @@
   import { openCurrentPostPreview } from "$lib/api/preview";
   import { backupPostContent, createPost, readPostContent, savePostContent, scanPosts, slugifyTitle } from "$lib/api/posts";
   import { validateProject } from "$lib/api/project";
+  import { getContentSyncStatus, runContentSync } from "$lib/api/sync";
   import { runTerminalCommand } from "$lib/api/terminal";
   import {
     saveClipboardImageToProject,
@@ -32,6 +33,7 @@
   import type { CommandResult } from "$lib/types/command";
   import type { HexoProject } from "$lib/types/project";
   import type { Post } from "$lib/types/post";
+  import type { ContentSyncStatus } from "$lib/types/sync";
 
   const SIDEBAR_MIN = 230;
   const SIDEBAR_MAX = 520;
@@ -54,6 +56,8 @@
   let showTerminalPanel = false;
   let terminalRunning = false;
   let terminalOutput: string[] = [];
+  let contentSyncStatus: ContentSyncStatus | null = null;
+  let contentSyncRunning = false;
   let previewRefreshToken = String(Date.now());
   let loading = false;
   let activeResizeKind: "sidebar" | "preview" | "terminal" | null = null;
@@ -406,6 +410,7 @@
       await saveSettings(settings);
       if (log) appendLog(`打开项目: ${project.rootPath}${project.warnings.length ? `\n提示: ${project.warnings.join("、")}` : ""}`);
       await refreshPosts();
+      await refreshContentSyncStatus();
     } catch (error) {
       appendLog(`打开项目失败: ${error}`);
     } finally {
@@ -572,6 +577,51 @@
     }
   }
 
+  async function refreshContentSyncStatus() {
+    if (!project) {
+      contentSyncStatus = null;
+      return;
+    }
+    try {
+      contentSyncStatus = await getContentSyncStatus(project.rootPath, settings.sync);
+    } catch (error) {
+      appendLog(`内容同步状态检查失败: ${error}`);
+    }
+  }
+
+  async function syncContent() {
+    if (!project || !settings.sync.enabled) {
+      appendLog("请先在设置中初始化并启用内容同步。");
+      return;
+    }
+    contentSyncRunning = true;
+    try {
+      if (settings.sync.autoSaveBeforeSync && activePost?.isDirty) {
+        await saveActivePost();
+      }
+      contentSyncStatus = await runContentSync(project.rootPath, settings.sync);
+      appendLog(`内容同步: ${contentSyncStatus.message}`);
+      if (contentSyncStatus.conflicts.length) {
+        appendLog(`同步冲突文件:\n${contentSyncStatus.conflicts.join("\n")}`);
+      }
+      if (contentSyncStatus.status !== "conflict" && contentSyncStatus.status !== "error") {
+        settings = {
+          ...settings,
+          sync: {
+            ...settings.sync,
+            lastSyncAt: new Date().toISOString()
+          }
+        };
+        await saveSettings(settings);
+        await refreshPosts();
+      }
+    } catch (error) {
+      appendLog(`内容同步失败: ${error}`);
+    } finally {
+      contentSyncRunning = false;
+    }
+  }
+
   async function openCurrentPreview() {
     try {
       if (project && !runningServer) {
@@ -645,6 +695,7 @@
     layoutDirty = false;
     await saveSettings(settings);
     applyTheme();
+    await refreshContentSyncStatus();
   }
 
   function appendCommandResult(result: CommandResult) {
@@ -679,6 +730,9 @@
     onGenerate={() => runCommand("generate")}
     onDeploy={() => runCommand("deploy")}
     onGitStatus={() => runCommand("git")}
+    syncStatus={contentSyncStatus?.status ?? "notConfigured"}
+    syncing={contentSyncRunning}
+    onSyncContent={syncContent}
     onToggleSettings={toggleSettingsPanel}
     onToggleLog={toggleLogDrawer}
     onToggleTerminal={toggleTerminalPanel}

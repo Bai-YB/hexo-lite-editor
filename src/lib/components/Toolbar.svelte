@@ -9,6 +9,7 @@
     ListTree,
     MoreHorizontal,
     Play,
+    RefreshCw,
     Rocket,
     Save,
     Settings,
@@ -21,6 +22,8 @@
   export let runningServer = false;
   export let showLogDrawer = false;
   export let showTerminalPanel = false;
+  export let syncStatus = "notConfigured";
+  export let syncing = false;
   export let onOpenProject: () => void = () => {};
   export let onNewPost: () => void = () => {};
   export let onSave: () => void = () => {};
@@ -31,6 +34,7 @@
   export let onGenerate: () => void = () => {};
   export let onDeploy: () => void = () => {};
   export let onGitStatus: () => void = () => {};
+  export let onSyncContent: () => void = () => {};
   export let onToggleSettings: () => void = () => {};
   export let onToggleLog: () => void = () => {};
   export let onToggleTerminal: () => void = () => {};
@@ -54,6 +58,17 @@
     onToggleTerminal();
     menuOpen = false;
   }
+
+  function syncLabel(status: string) {
+    if (syncing) return "同步中";
+    if (status === "ready") return "已同步";
+    if (status === "needsPull") return "待拉取";
+    if (status === "needsPush") return "待推送";
+    if (status === "hasLocalChanges") return "待提交";
+    if (status === "conflict") return "冲突";
+    if (status === "error") return "异常";
+    return "同步";
+  }
 </script>
 
 <svelte:window on:click={closeMenuFromOutside} />
@@ -75,6 +90,14 @@
     <button title="在浏览器打开当前文章" disabled={!hasProject} on:click={onOpenPreview}><ExternalLink size={17} />浏览器</button>
     <button title="生成静态文件" disabled={!hasProject} on:click={onGenerate}><Hammer size={17} />生成</button>
     <button title="Git 状态" disabled={!hasProject} on:click={onGitStatus}><GitBranch size={17} />Git</button>
+    <button
+      title="同步文章和本地图片"
+      disabled={!hasProject || syncing || syncStatus === "notConfigured"}
+      class:active={syncStatus !== "ready" && syncStatus !== "notConfigured"}
+      on:click={onSyncContent}
+    >
+      <RefreshCw size={17} />{syncLabel(syncStatus)}
+    </button>
     <button title="发布博客" disabled={!hasProject} on:click={onDeploy}><Rocket size={17} />发布</button>
 
     <div class="menu-wrap" bind:this={menuWrapElement}>
