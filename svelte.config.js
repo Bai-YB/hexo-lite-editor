@@ -12,6 +12,12 @@ const config = {
     adapter: adapter({
       fallback: "index.html",
     }),
+    alias: {
+      "$app-ui": "src/app",
+      "$features": "src/features",
+      "$platform": "src/platform",
+      "$shared": "src/shared",
+    },
   },
 };
 

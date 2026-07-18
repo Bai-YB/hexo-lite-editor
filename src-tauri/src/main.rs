@@ -2,5 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    hexo_lite_editor_lib::run()
+    if hexo_lite_editor_lib::ensure_webview2_runtime() {
+        hexo_lite_editor_lib::run();
+    }
 }

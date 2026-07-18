@@ -7,6 +7,7 @@ node_modules
 /output
 /.playwright-cli
 /test-results
+/release-artifacts
 .env
 .env.*
 !.env.example

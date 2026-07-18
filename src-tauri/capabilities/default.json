@@ -4,8 +4,14 @@
   "description": "Capability for the main window",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "dialog:default",
-    "opener:default"
+    "core:event:default",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:window:allow-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-unmaximize",
+    "clipboard-manager:allow-write-text"
   ]
 }
