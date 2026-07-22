@@ -1,40 +1,79 @@
-# Hexo Lite Editor
+<div align="center">
+  <img src=".github/assets/app-icon.png" width="112" height="112" alt="Hexo Lite Editor 图标">
+  <h1>Hexo Lite Editor</h1>
+  <p>安静、原生的 Windows Hexo 写作、图片管理与发布工作区。</p>
+  <p><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
+  <p>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Bai-YB/hexo-lite-editor?display_name=tag&style=flat-square"></a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Bai-YB/hexo-lite-editor/total?style=flat-square"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-windows.yml"><img alt="Windows Release" src="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-windows.yml/badge.svg"></a>
+  </p>
+</div>
 
-Hexo Lite Editor 是面向 Windows 10/11 的独立 Hexo 桌面写作与发布工作区，基于 Tauri 2、Svelte 5、TypeScript 与 Rust。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/editor-dark.png">
+  <img src=".github/assets/editor-light.png" alt="Hexo Lite Editor 编辑器、Markdown 源文与即时预览界面">
+</picture>
 
-当前版本：`1.0.3`
+Hexo Lite Editor 把文章编辑、即时预览、图片整理、Hexo 浏览器预览与发布任务收进一个专注的桌面界面。应用本身不内置 Node.js 或 Hexo；只有启动真实博客预览、生成或部署时，才会调用项目已有的环境。
 
 ## 下载
 
-- [Windows x64 安装版（推荐）](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64-setup.exe)
-- [Windows x64 免安装版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64-portable.zip)
-- [Windows x64 MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64.msi)
-- [版本记录](CHANGELOG.md)
+当前稳定版本为 **v1.0.3**，支持 Windows 10/11 x64。
 
-安装版下载后运行 EXE，按向导完成安装。免安装版解压后直接双击 `Hexo Lite Editor.exe`，不需要打开终端。
+| 版本 | 适合场景 | 下载 |
+| --- | --- | --- |
+| 安装版 EXE（推荐） | 日常使用；安装器可补齐 WebView2 | [下载安装版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64-setup.exe) |
+| 便携版 ZIP | 解压即用，不写入安装信息 | [下载便携版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64-portable.zip) |
+| MSI | 企业部署或需要 MSI 的环境 | [下载 MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64.msi) |
 
-本项目当前未使用商业代码签名证书，Windows SmartScreen 可能显示未知发布者提示。请只从本仓库 Releases 下载，并使用 Release 中的 `SHA256SUMS.txt` 校验文件。
+[查看完整 Release 与校验文件](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.3) · [版本记录](CHANGELOG.md)
 
-安装器会在需要时补齐 Microsoft Edge WebView2 Runtime。免安装版若检测不到 WebView2，会在应用界面创建前显示系统提示并引导至微软官方下载页。
+> 项目暂未使用商业代码签名证书，Windows SmartScreen 可能显示“未知发布者”。请只从本仓库 Releases 下载，并用同一 Release 中的 `SHA256SUMS.txt` 校验文件。安装版会在需要时安装 Microsoft Edge WebView2 Runtime；便携版会引导到微软官方下载页。
 
-## 1.0.3 主要变化
+## 为什么使用它
 
-- 编辑器顶栏压缩为单行项目切换与写作操作；左侧导航只保留编辑器、图床、设置和关于。
-- 发布继续保留编辑器主按钮与 `Ctrl + Shift + P`，clean、generate、deploy、Git 状态和预览启停收进紧凑高级菜单。
-- 修复长文章滚轮、PageDown、深色光标和三栏独立滚动；切换文章后恢复正文与预览滚动位置。
-- 右侧提供安全 Markdown 与隔离 Hexo 主题双模式预览；真实文章路由由项目自身 Hexo API 解析。
-- Rust 持有 Hexo Server 状态机，端口就绪后才标记运行；发布任务会无感停服并按原状态恢复。
-- 图床升级为目录型资源浏览器，文件夹、图片、压缩包、文档、音视频和普通文件使用正确图标。
-- 图片双击或 Enter 打开可缩放灯箱；三点、右键和 `Shift + F10` 使用同一动作菜单，不再从图床插入文章。
-- 删除自动任务抽屉，任务摘要保持安静；脱敏 JSONL 日志只在设置的“诊断与日志”中主动查看。
-- 配置升级为 `schemaVersion: 3`，从 V2 自动备份迁移，新增自动预览、草稿预览和日志轮转设置。
-- 关于页只保留简介、版本、主页、许可证和更新检查。
-- 使用 36px 自绘标题栏、88px 导航栏和 Quiet Pro 中性视觉系统，提供浅色、深色与跟随系统模式。
-- Rust 后端持有单活动项目会话。文章、图片和任务通过项目 ID、资源 ID 与 session generation 访问，不再向前端开放任意路径读写。
-- 保存请求绑定文章 ID 与 revision，同一文章串行写入；切换文章、项目和关闭窗口时统一保护未保存内容。
-- Markdown 原始 HTML 默认禁用，DOMPurify 使用严格白名单，生产环境启用固定 CSP。
-- Cloudflare Token 存入系统凭据库，前端只能设置、查询状态或删除，不能读取明文。
-- 本地图床限定 `source/images`，只接受 PNG、JPEG、GIF 与 WebP，删除操作进入系统回收站。
+- **专注写作**：CodeMirror 编辑器、文章/草稿列表、独立滚动的安全即时预览，以及浅色、深色和跟随系统主题。
+- **安全 HTML**：正文中的常用原生 HTML 可以正确渲染；脚本、事件属性、iframe、表单、危险 URL 与越界样式会被 DOMPurify 清理。代码围栏中的 HTML 仍按源码显示。
+- **图片真实性优先**：Markdown 与 HTML 图片统一由 Rust 后端重新验证。远程图片被删除、返回无效 MIME 或网络状态无法确认时，预览显示“图片不可用”，不会回退到旧缓存。
+- **本地图床可配置**：图片目录限定在 Hexo `source/` 下，Markdown 前缀可以按站点结构调整；导入、粘贴、拖放、列表与引用使用同一套配置。
+- **CloudFlare-ImgBed 联动**：兼容 [CloudFlare-ImgBed v2.7.5](https://github.com/MarSeventh/CloudFlare-ImgBed/tree/v2.7.5)，可创建仅含上传、列出和删除权限的 Token。密码只用于临时登录，Token 仅存入系统凭据库。
+- **可靠发布**：在编辑器中启动浏览器预览，或运行 clean、generate、deploy 与 Git 状态检查；保存与发布仍遵循项目自己的 Hexo 配置。
+- **清楚的设置**：常规、编辑体验、图片与图床、Hexo 与发布、诊断与维护五个分类，一次只显示一组设置。
+
+<details>
+<summary><strong>查看更多真实界面截图</strong></summary>
+
+<table>
+  <tr>
+    <td width="50%"><strong>图床资源管理</strong><br><img src=".github/assets/image-bed-light.png" alt="图床资源管理界面"></td>
+    <td width="50%"><strong>五分类设置</strong><br><img src=".github/assets/settings-light.png" alt="设置页面浅色模式"></td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>深色写作界面</strong><br><img src=".github/assets/editor-dark.png" alt="编辑器深色模式"></td>
+    <td width="50%"><strong>深色设置界面</strong><br><img src=".github/assets/settings-dark.png" alt="设置页面深色模式"></td>
+  </tr>
+</table>
+</details>
+
+## 快速开始
+
+1. 下载并启动安装版、便携版或 MSI。
+2. 选择一个包含 Hexo `_config.yml` 的博客目录。
+3. 从左侧文章列表打开文章，编辑 Markdown 或安全的常用 HTML。
+4. 使用右侧即时预览检查正文；需要核对主题时，点击“浏览器预览”打开真实 Hexo 页面。
+5. 保存后点击“发布”，或在高级菜单中单独运行 generate、deploy 等步骤。
+
+应用启动和本地写作不要求 Node.js。浏览器预览、generate 与 deploy 要求目标博客已经安装 Node.js、Hexo 及项目依赖。
+
+## 图片、HTML 与安全边界
+
+即时预览允许常用排版、表格、`details/summary`、`figure/figcaption`、图片和受限内联样式，但不会执行脚本，也不支持 iframe、对象、表单、SVG 或 `<style>` 块。生产构建同时启用固定 CSP。
+
+远程图片只允许无凭据 HTTPS，并会检查重定向、公网地址、真实 MIME 与大小；单图上限 25 MB，单批上限 64 MB。每次主动刷新、切换文章、重新聚焦窗口或图片地址变化时都会重新验证，响应和会话资产均采用 `no-store` 策略。
+
+本地图片目录必须是 `source/` 下的相对路径，拒绝绝对路径、`..` 和符号链接逃逸。CloudFlare-ImgBed 管理员密码不会写入配置、日志或浏览器存储；删除本地 Token 不会远程撤销服务端 Token。
 
 ## 快捷键
 
@@ -46,10 +85,12 @@ Hexo Lite Editor 是面向 Windows 10/11 的独立 Hexo 桌面写作与发布工
 | `Ctrl + F` | 在编辑器中搜索 |
 | `Ctrl + Shift + P` | 发布当前博客 |
 | `Ctrl + ,` | 打开设置 |
-| `Ctrl + 1…4` | 切换四个主工作区 |
+| `Ctrl + 1…4` | 切换编辑器、图床、设置、关于 |
 | `↑ / ↓` | 在聚焦的文章列表中切换文章 |
 
-## 开发与验证
+## 开发与构建
+
+需要 Node.js、pnpm、Rust 和 Tauri 2 的 Windows 构建依赖。
 
 ```bash
 pnpm install
@@ -60,31 +101,23 @@ pnpm build
 pnpm tauri dev
 ```
 
-Rust 检查：
+Rust 检查与桌面安装包构建：
 
 ```bash
-cd src-tauri
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
-```
-
-## 构建 Windows 安装包
-
-```bash
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build
 ```
 
-构建目标固定为 MSI 与 NSIS。生产界面加载安装包内的静态资源，不依赖浏览器、Vite Server 或 Hexo Server。
-
-生成可发布的安装版、MSI、免安装 ZIP、SHA-256 和发行清单：
+生成安装版、MSI、便携版、SHA-256 和发行清单：
 
 ```powershell
 pnpm release:windows
 ```
 
-应用不内置 Node.js、Hexo 或博客依赖。这些依赖只在用户主动执行预览、生成或部署任务时需要，不影响应用本身启动。
+## 反馈与许可证
 
-## 设计参考
+遇到可复现的问题，请提交 [Issue](https://github.com/Bai-YB/hexo-lite-editor/issues)，并附上系统版本、操作步骤和诊断日志中已脱敏的相关片段。安全问题请避免在公开 Issue 中提交凭据或未脱敏日志。
 
-1.0.3 延续参考 Patina 的 Quiet Pro 层级、密度、状态与桌面窗口方法，但不复制其品牌、图标、页面内容或业务组件。
+Hexo Lite Editor 使用 [MIT License](LICENSE) 发布。

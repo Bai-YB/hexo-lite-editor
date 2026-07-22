@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, AssetRecord, RemoteAssetRecord},
+    app::{AppState, AssetRecord, AssetSource, RemoteAssetRecord},
     data::load_config,
     domain::{
         AppError, AppResult, EditorImageInput, ImageImportResult, ImageProvider, LocalImage,
@@ -41,6 +41,7 @@ pub fn import_local_images(
     let root = state.with_project(&project_id, Some(session_generation), |project| {
         Ok(project.root.clone())
     })?;
+    let config = load_config(&state)?.config;
     let Some(files) = app
         .dialog()
         .file()
@@ -50,18 +51,7 @@ pub fn import_local_images(
     else {
         return Ok(Vec::new());
     };
-    let target_dir = root.join("source").join("images");
-    fs::create_dir_all(&target_dir).map_err(|error| AppError::io("创建图片目录失败", error))?;
-    let canonical_target = target_dir
-        .canonicalize()
-        .map_err(|error| AppError::io("验证图片目录失败", error))?;
-    if !canonical_target.starts_with(&root) {
-        return Err(AppError::new(
-            "path_escape",
-            "图片目录指向项目之外。",
-            false,
-        ));
-    }
+    let canonical_target = local_image_directory(&root, &config.image_bed.local_image_dir)?;
 
     for file in files {
         let source = file
@@ -89,7 +79,10 @@ pub fn delete_local_image(
         project
             .assets
             .get(&image_id)
-            .map(|asset| asset.canonical_path.clone())
+            .and_then(|asset| match &asset.source {
+                AssetSource::Disk(path) => Some(path.clone()),
+                AssetSource::Memory(_) => None,
+            })
             .ok_or_else(|| AppError::new("image_not_found", "图片令牌无效或已过期。", true))
     })?;
     trash::delete(&path).map_err(|error| AppError::io("移动图片到回收站失败", error))?;
@@ -113,7 +106,10 @@ pub async fn upload_cloudflare_image(
 ) -> AppResult<Option<UploadResult>> {
     state.with_project(&project_id, Some(session_generation), |_| Ok(()))?;
     let config = load_config(&state)?.config;
-    let endpoint = cloudflare_upload_endpoint(&config.image_bed.cloudflare_api_url)?;
+    let endpoint = cloudflare_upload_endpoint(
+        &config.image_bed.cloudflare_api_url,
+        &config.image_bed.upload_folder,
+    )?;
     let token = cloudflare_token()?;
     let Some(file) = app
         .dialog()
@@ -159,7 +155,10 @@ pub async fn import_editor_images(
     let config = load_config(&state)?.config;
     let remote = if provider == ImageProvider::CloudflareImgbed {
         Some((
-            cloudflare_upload_endpoint(&config.image_bed.cloudflare_api_url)?,
+            cloudflare_upload_endpoint(
+                &config.image_bed.cloudflare_api_url,
+                &config.image_bed.upload_folder,
+            )?,
             cloudflare_token()?,
         ))
     } else {
@@ -170,7 +169,14 @@ pub async fn import_editor_images(
         let file_name = file.name.clone();
         let result = match validate_image_input(&file).and_then(|mime| {
             if provider == ImageProvider::Local {
-                save_local_editor_image(&root, &file.name, &file.bytes).map(|url| (url, mime))
+                save_local_editor_image(
+                    &root,
+                    &config.image_bed.local_image_dir,
+                    &config.image_bed.local_markdown_prefix,
+                    &file.name,
+                    &file.bytes,
+                )
+                .map(|url| (url, mime))
             } else {
                 Ok((String::new(), mime))
             }
@@ -326,7 +332,10 @@ pub fn reveal_local_image(
         project
             .assets
             .get(&image_id)
-            .map(|asset| asset.canonical_path.clone())
+            .and_then(|asset| match &asset.source {
+                AssetSource::Disk(path) => Some(path.clone()),
+                AssetSource::Memory(_) => None,
+            })
             .ok_or_else(|| AppError::new("image_not_found", "图片资源已失效，请刷新后重试。", true))
     })?;
     #[cfg(windows)]
@@ -391,29 +400,101 @@ async fn upload_cloudflare_bytes(
     })
 }
 
-fn save_local_editor_image(root: &Path, file_name: &str, bytes: &[u8]) -> AppResult<String> {
+fn save_local_editor_image(
+    root: &Path,
+    image_dir: &str,
+    markdown_prefix: &str,
+    file_name: &str,
+    bytes: &[u8],
+) -> AppResult<String> {
     let file_name = safe_image_name(file_name)?;
-    let directory = root.join("source").join("images");
-    fs::create_dir_all(&directory).map_err(|error| AppError::io("创建图片目录失败", error))?;
-    let canonical_directory = directory
-        .canonicalize()
-        .map_err(|error| AppError::io("验证图片目录失败", error))?;
-    if !canonical_directory.starts_with(root) {
-        return Err(AppError::new(
-            "path_escape",
-            "图片目录指向项目之外。",
-            false,
-        ));
-    }
+    let canonical_directory = local_image_directory(root, image_dir)?;
     let target = unique_target(&canonical_directory, &file_name);
     crate::platform::atomic_write(&target, bytes)?;
-    let mut url = Url::parse("https://hlex.local/images/").expect("static URL");
-    url.path_segments_mut().expect("base URL").push(
+    local_markdown_url(
+        markdown_prefix,
         target
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("image"),
-    );
+            .strip_prefix(&canonical_directory)
+            .map_err(|_| AppError::new("path_escape", "图片不属于配置目录。", false))?,
+    )
+}
+
+fn local_image_directory(root: &Path, configured: &str) -> AppResult<PathBuf> {
+    let normalized = configured.trim().replace('\\', "/");
+    let segments = normalized.split('/').collect::<Vec<_>>();
+    if segments.len() < 2
+        || segments.first() != Some(&"source")
+        || segments
+            .iter()
+            .any(|segment| segment.is_empty() || matches!(*segment, "." | ".."))
+    {
+        return Err(AppError::invalid(
+            "本地图片目录必须是 source/ 下且不含路径穿越的相对路径。",
+        ));
+    }
+
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| AppError::io("验证项目目录失败", error))?;
+    let mut canonical_directory = canonical_root.clone();
+    for segment in segments {
+        let candidate = canonical_directory.join(segment);
+        if !candidate.exists() {
+            fs::create_dir(&candidate).map_err(|error| AppError::io("创建图片目录失败", error))?;
+        }
+        canonical_directory = candidate
+            .canonicalize()
+            .map_err(|error| AppError::io("验证图片目录失败", error))?;
+        if !canonical_directory.starts_with(&canonical_root) {
+            return Err(AppError::new(
+                "path_escape",
+                "图片目录指向项目之外。",
+                false,
+            ));
+        }
+    }
+    Ok(canonical_directory)
+}
+
+fn local_markdown_url(prefix: &str, relative_path: &Path) -> AppResult<String> {
+    let prefix = prefix.trim();
+    if !prefix.starts_with('/')
+        || prefix.starts_with("//")
+        || prefix.contains('?')
+        || prefix.contains('#')
+        || prefix.contains('%')
+        || prefix.contains('\\')
+        || prefix
+            .split('/')
+            .skip(1)
+            .any(|segment| matches!(segment, "." | ".."))
+    {
+        return Err(AppError::invalid("Markdown 访问前缀无效。"));
+    }
+
+    let mut url = Url::parse("https://hlex.local/").expect("static URL");
+    let base_path = if prefix == "/" {
+        "/".to_string()
+    } else {
+        format!("{}/", prefix.trim_end_matches('/'))
+    };
+    url.set_path(&base_path);
+    {
+        let mut path = url
+            .path_segments_mut()
+            .map_err(|_| AppError::invalid("无法生成 Markdown 图片路径。"))?;
+        path.pop_if_empty();
+        for component in relative_path.components() {
+            let std::path::Component::Normal(segment) = component else {
+                return Err(AppError::invalid("图片相对路径无效。"));
+            };
+            path.push(
+                segment
+                    .to_str()
+                    .ok_or_else(|| AppError::invalid("图片路径不是有效文本。"))?,
+            );
+        }
+    }
     Ok(url.path().to_string())
 }
 
@@ -469,17 +550,22 @@ fn matches_image_signature(mime: &str, bytes: &[u8]) -> bool {
     }
 }
 
-fn cloudflare_upload_endpoint(value: &str) -> AppResult<Url> {
+fn cloudflare_upload_endpoint(value: &str, upload_folder: &str) -> AppResult<Url> {
     let base = validate_cloudflare_url(value)?;
     let mut endpoint = if base.path().trim_end_matches('/').ends_with("/upload") {
         base
     } else {
         cloudflare_api_endpoint(&base, "upload")?
     };
-    endpoint
-        .query_pairs_mut()
+    let mut pairs = endpoint.query_pairs_mut();
+    pairs
         .append_pair("returnFormat", "full")
         .append_pair("uploadNameType", "origin");
+    let folder = upload_folder.trim().trim_matches('/');
+    if !folder.is_empty() {
+        pairs.append_pair("uploadFolder", folder);
+    }
+    drop(pairs);
     Ok(endpoint)
 }
 
@@ -860,26 +946,11 @@ fn list_local_images_impl(
     project_id: &str,
     generation: u64,
 ) -> AppResult<Vec<LocalImage>> {
-    let (root, directory) = state.with_project(project_id, Some(generation), |project| {
-        Ok((
-            project.root.clone(),
-            project.root.join("source").join("images"),
-        ))
+    let root = state.with_project(project_id, Some(generation), |project| {
+        Ok(project.root.clone())
     })?;
-    if !directory.exists() {
-        fs::create_dir_all(&directory)
-            .map_err(|error| AppError::io("创建本地图片目录失败", error))?;
-    }
-    let canonical_directory = directory
-        .canonicalize()
-        .map_err(|error| AppError::io("验证本地图片目录失败", error))?;
-    if !canonical_directory.starts_with(&root) {
-        return Err(AppError::new(
-            "path_escape",
-            "图片目录指向项目之外。",
-            false,
-        ));
-    }
+    let config = load_config(state)?.config;
+    let canonical_directory = local_image_directory(&root, &config.image_bed.local_image_dir)?;
     let mut records = Vec::new();
     for entry in WalkDir::new(&canonical_directory)
         .follow_links(false)
@@ -905,6 +976,12 @@ fn list_local_images_impl(
             .map_err(|_| AppError::new("path_escape", "图片不属于当前项目。", false))?
             .to_string_lossy()
             .replace('\\', "/");
+        let markdown_url = local_markdown_url(
+            &config.image_bed.local_markdown_prefix,
+            canonical
+                .strip_prefix(&canonical_directory)
+                .map_err(|_| AppError::new("path_escape", "图片不属于配置目录。", false))?,
+        )?;
         records.push((
             LocalImage {
                 image_id: token.clone(),
@@ -914,13 +991,14 @@ fn list_local_images_impl(
                     .unwrap_or("image")
                     .to_string(),
                 relative_path,
+                markdown_url,
                 mime: mime.clone(),
                 size: metadata.len(),
                 preview_url: asset_url(&token),
             },
             token,
             AssetRecord {
-                canonical_path: canonical,
+                source: AssetSource::Disk(canonical),
                 mime,
                 generation,
                 expires_at: SystemTime::now() + Duration::from_secs(15 * 60),
@@ -1097,13 +1175,47 @@ mod tests {
         let delete = cloudflare_delete_endpoint(&base, "posts/中文 图片.jpg").unwrap();
         assert!(delete.as_str().contains("/api/manage/delete/posts/"));
         assert!(!delete.as_str().contains("%2F"));
-        let upload = cloudflare_upload_endpoint(base.as_str()).unwrap();
+        let upload = cloudflare_upload_endpoint(base.as_str(), "blog/2026").unwrap();
         assert!(upload.query().unwrap().contains("returnFormat=full"));
+        assert!(upload.query().unwrap().contains("uploadFolder=blog%2F2026"));
         assert_eq!(
             find_url(&json!({ "data": { "src": "/file/a.jpg" } })).as_deref(),
             Some("/file/a.jpg")
         );
         assert!(cloudflare_delete_endpoint(&base, "../config").is_err());
+    }
+
+    #[test]
+    fn validates_local_image_paths_and_generates_encoded_markdown_urls() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().join("blog");
+        fs::create_dir(&root).unwrap();
+
+        let directory = local_image_directory(&root, "source/images").unwrap();
+        assert_eq!(
+            directory,
+            root.join("source/images").canonicalize().unwrap()
+        );
+        assert!(local_image_directory(&root, "../outside").is_err());
+        assert!(local_image_directory(&root, "C:/outside").is_err());
+        assert_eq!(
+            local_markdown_url("/images", Path::new("中文 图片.jpg")).unwrap(),
+            "/images/%E4%B8%AD%E6%96%87%20%E5%9B%BE%E7%89%87.jpg"
+        );
+        assert!(local_markdown_url("/images/../private", Path::new("a.jpg")).is_err());
+
+        let linked_root = temp.path().join("linked-blog");
+        let outside = temp.path().join("outside");
+        fs::create_dir(&linked_root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(&outside, linked_root.join("source"));
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside, linked_root.join("source"));
+        if linked.is_ok() {
+            assert!(local_image_directory(&linked_root, "source/images").is_err());
+            assert!(!outside.join("images").exists());
+        }
     }
 
     #[test]

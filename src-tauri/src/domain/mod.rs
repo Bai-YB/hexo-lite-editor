@@ -235,23 +235,23 @@ pub struct HexoConfig {
     pub auto_start_preview: bool,
     #[serde(default = "default_true")]
     pub preview_drafts: bool,
-    #[serde(default)]
-    pub default_preview_mode: PreviewMode,
-}
-
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum PreviewMode {
-    #[default]
-    Markdown,
-    Theme,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageBedConfig {
     pub default_provider: ImageProvider,
+    #[serde(default = "default_local_image_dir")]
+    pub local_image_dir: String,
+    #[serde(default = "default_local_markdown_prefix")]
+    pub local_markdown_prefix: String,
+    #[serde(default)]
+    pub cloudflare_name: String,
     pub cloudflare_api_url: String,
+    #[serde(default)]
+    pub cloudflare_token_id: Option<String>,
+    #[serde(default = "default_upload_folder")]
+    pub upload_folder: String,
     pub auto_insert_markdown: bool,
 }
 
@@ -291,6 +291,66 @@ impl Default for DiagnosticsConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_local_image_dir() -> String {
+    "source/images".to_string()
+}
+
+fn default_local_markdown_prefix() -> String {
+    "/images".to_string()
+}
+
+fn default_upload_folder() -> String {
+    "blog".to_string()
+}
+
+fn validate_local_image_dir(value: &str) -> AppResult<()> {
+    let normalized = value.trim().replace('\\', "/");
+    let segments = normalized.split('/').collect::<Vec<_>>();
+    if segments.len() < 2
+        || segments.first() != Some(&"source")
+        || segments
+            .iter()
+            .any(|segment| segment.is_empty() || matches!(*segment, "." | ".."))
+    {
+        return Err(AppError::invalid(
+            "本地图片目录必须是 source/ 下且不含路径穿越的相对路径。",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_local_markdown_prefix(value: &str) -> AppResult<()> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with('/')
+        || trimmed.starts_with("//")
+        || trimmed.contains('?')
+        || trimmed.contains('#')
+        || trimmed.contains('%')
+        || trimmed.contains('\\')
+        || trimmed
+            .split('/')
+            .skip(1)
+            .any(|segment| matches!(segment, "." | ".."))
+    {
+        return Err(AppError::invalid(
+            "Markdown 访问前缀必须是不含查询参数、片段或路径穿越的站点绝对路径。",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_upload_folder(value: &str) -> AppResult<()> {
+    let trimmed = value.trim().trim_matches('/');
+    if trimmed.contains('\\')
+        || trimmed
+            .split('/')
+            .any(|segment| matches!(segment, "." | ".."))
+    {
+        return Err(AppError::invalid("远程上传目录不能包含路径穿越。"));
+    }
+    Ok(())
 }
 
 fn default_log_retention_days() -> u8 {
@@ -338,11 +398,15 @@ impl Default for AppConfigV3 {
                 preview_port: 4_000,
                 auto_start_preview: false,
                 preview_drafts: true,
-                default_preview_mode: PreviewMode::Markdown,
             },
             image_bed: ImageBedConfig {
                 default_provider: ImageProvider::Local,
+                local_image_dir: default_local_image_dir(),
+                local_markdown_prefix: default_local_markdown_prefix(),
+                cloudflare_name: String::new(),
                 cloudflare_api_url: String::new(),
+                cloudflare_token_id: None,
+                upload_folder: default_upload_folder(),
                 auto_insert_markdown: true,
             },
             publish: PublishConfig {
@@ -393,6 +457,9 @@ impl AppConfigV3 {
         if ![10, 20, 50].contains(&self.diagnostics.max_log_storage_mb) {
             return Err(AppError::invalid("日志空间上限只能是 10、20 或 50 MB。"));
         }
+        validate_local_image_dir(&self.image_bed.local_image_dir)?;
+        validate_local_markdown_prefix(&self.image_bed.local_markdown_prefix)?;
+        validate_upload_folder(&self.image_bed.upload_folder)?;
         let image_api = self.image_bed.cloudflare_api_url.trim();
         if !image_api.is_empty() {
             let url = url::Url::parse(image_api)
@@ -424,6 +491,48 @@ pub struct ConfigLoadResult {
 #[serde(rename_all = "camelCase")]
 pub struct CredentialStatus {
     pub configured: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcquireCloudflareImgbedTokenRequest {
+    pub base_url: String,
+    #[serde(default)]
+    pub admin_username: Option<String>,
+    #[serde(default)]
+    pub admin_password: Option<String>,
+    #[serde(default)]
+    pub token_name: Option<String>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub permissions: Option<Vec<String>>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub auto_delete: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcquireCloudflareImgbedTokenResult {
+    pub configured: bool,
+    pub token_id: String,
+    pub token_name: String,
+    pub owner: String,
+    pub permissions: Vec<String>,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImgBedConnectionTestResult {
+    pub ok: bool,
+    pub base_url: String,
+    pub list_endpoint: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -487,9 +596,36 @@ pub struct LocalImage {
     pub image_id: String,
     pub name: String,
     pub relative_path: String,
+    pub markdown_url: String,
     pub mime: String,
     pub size: u64,
     pub preview_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveRemotePreviewImagesRequest {
+    pub project_id: String,
+    pub session_generation: u64,
+    pub urls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RemotePreviewImageState {
+    Ready,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePreviewImageResult {
+    pub original_url: String,
+    pub state: RemotePreviewImageState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -675,5 +811,50 @@ mod tests {
         let mut config = AppConfigV3::default();
         config.image_bed.cloudflare_api_url = "http://example.com/upload".to_string();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_local_image_and_markdown_paths() {
+        for value in ["C:/images", "/source/images", "source/../private", "images"] {
+            let mut config = AppConfigV3::default();
+            config.image_bed.local_image_dir = value.to_string();
+            assert!(config.validate().is_err(), "accepted local path: {value}");
+        }
+        for value in [
+            "images",
+            "/images?size=2",
+            "/images#latest",
+            "/images/../private",
+            "//cdn.example.com/images",
+            "/images/%2e%2e/private",
+        ] {
+            let mut config = AppConfigV3::default();
+            config.image_bed.local_markdown_prefix = value.to_string();
+            assert!(
+                config.validate().is_err(),
+                "accepted markdown prefix: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn token_result_serialization_never_contains_a_secret() {
+        let result = AcquireCloudflareImgbedTokenResult {
+            configured: true,
+            token_id: "token-id-only".to_string(),
+            token_name: "Hexo Lite Editor".to_string(),
+            owner: "admin".to_string(),
+            permissions: vec![
+                "upload".to_string(),
+                "list".to_string(),
+                "delete".to_string(),
+            ],
+            created_at: "2026-07-22T00:00:00Z".to_string(),
+            expires_at: None,
+        };
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(!serialized.contains("secret-value"));
+        assert!(!serialized.contains("password"));
+        assert!(!serialized.contains("adminPassword"));
     }
 }

@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type {
+  AcquireCloudflareImgbedTokenRequest,
+  AcquireCloudflareImgbedTokenResult,
   AppConfigV3,
   AppError,
   ArticleSummary,
@@ -12,12 +14,15 @@ import type {
   FrontMatterResult,
   EditorImageInput,
   ImageImportResult,
+  ImgBedConnectionTestResult,
   LocalImage,
   OpenProjectResult,
   ProjectSessionView,
   RuntimeInfo,
   RecentProjectView,
   RemoteAssetPage,
+  RemotePreviewImageResult,
+  ResolveRemotePreviewImagesRequest,
   PreviewServerView,
   SaveDocumentRequest,
   SaveDocumentResult,
@@ -205,6 +210,19 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.revealLocalImage();
     return call<void>("reveal_local_image", { projectId, sessionGeneration, imageId });
   },
+  resolveRemotePreviewImages(request: ResolveRemotePreviewImagesRequest) {
+    if (isBrowserDemo()) return browserMock.resolveRemotePreviewImages(request.urls);
+    if (!isTauri()) {
+      return Promise.resolve<RemotePreviewImageResult[]>(
+        request.urls.map((originalUrl) => ({
+          originalUrl,
+          state: "unavailable",
+          message: "桌面后端不可用。"
+        }))
+      );
+    }
+    return call<RemotePreviewImageResult[]>("resolve_remote_preview_images", { request });
+  },
   async writeClipboard(text: string) {
     if (!isTauri()) {
       await navigator.clipboard.writeText(text);
@@ -223,6 +241,18 @@ export const platform = {
   credentialDelete() {
     if (isBrowserDemo()) return browserMock.credentialDelete();
     return call<CredentialStatus>("credential_delete");
+  },
+  acquireCloudflareImgbedToken(request: AcquireCloudflareImgbedTokenRequest) {
+    if (isBrowserDemo()) return browserMock.acquireCloudflareImgbedToken(request);
+    return call<AcquireCloudflareImgbedTokenResult>("acquire_cloudflare_imgbed_token", { request });
+  },
+  testCloudflareImgbedToken(baseUrl: string) {
+    if (isBrowserDemo()) return browserMock.testCloudflareImgbedToken(baseUrl);
+    return call<ImgBedConnectionTestResult>("test_cloudflare_imgbed_token", { baseUrl });
+  },
+  cleanupBeforeExit() {
+    if (isBrowserDemo() || !isTauri()) return Promise.resolve();
+    return call<void>("cleanup_before_exit");
   },
   getPreviewStatus(projectId: string, sessionGeneration: number) {
     if (isBrowserDemo()) return browserMock.getPreviewStatus(projectId, sessionGeneration);

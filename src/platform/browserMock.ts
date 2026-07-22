@@ -1,5 +1,7 @@
 import { defaultConfig } from "$shared/types/app";
 import type {
+  AcquireCloudflareImgbedTokenRequest,
+  AcquireCloudflareImgbedTokenResult,
   AppConfigV3,
   ArticleSummary,
   DocumentSnapshot,
@@ -9,6 +11,7 @@ import type {
   PreviewServerView,
   RemoteAssetItem,
   RemoteAssetPage,
+  RemotePreviewImageResult,
   TaskLogPage,
   TaskLogSummary,
   SaveDocumentRequest,
@@ -51,6 +54,7 @@ const localImages: LocalImage[] = Array.from({ length: 10 }, (_, index) => ({
   imageId: `local-${index + 1}`,
   name: ["安静的桌面.jpg", "夏日街道.jpg", "窗边咖啡.jpg", "山间晨雾.jpg", "代码笔记.jpg", "书桌一角.jpg", "夜晚灯光.jpg", "旅途车站.jpg", "蓝色海面.jpg", "秋日树影.jpg"][index],
   relativePath: `source/images/photo-${index + 1}.jpg`,
+  markdownUrl: `/images/photo-${index + 1}.jpg`,
   mime: "image/jpeg",
   size: 180000 + index * 32768,
   previewUrl: image(`local-${index + 1}`)
@@ -104,6 +108,10 @@ export const browserMock = {
   listArticles: async () => structuredClone(articles),
   loadDocument: async (projectId: string, articleId: string): Promise<DocumentSnapshot> => ({ projectId, articleId, content: documents.get(articleId) ?? "", revision: 1, sessionGeneration: 1 }),
   saveDocument: async (request: SaveDocumentRequest) => {
+    if (typeof document !== "undefined") {
+      const current = Number(document.documentElement.dataset.editorSaveCalls ?? "0");
+      document.documentElement.dataset.editorSaveCalls = String(current + 1);
+    }
     if (typeof location !== "undefined" && new URLSearchParams(location.search).get("saveFail") === "1") {
       throw { code: "save_failed", message: "模拟保存失败。", recoverable: true };
     }
@@ -118,6 +126,12 @@ export const browserMock = {
   importLocalImages: async () => structuredClone(localImages),
   deleteLocalImage: async () => undefined,
   revealLocalImage: async () => undefined,
+  resolveRemotePreviewImages: async (urls: string[]): Promise<RemotePreviewImageResult[]> =>
+    urls.map((originalUrl) => ({
+      originalUrl,
+      state: "ready",
+      previewUrl: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
+    })),
   uploadCloudflareImage: async () => ({ url: remoteAssets[3].url!, markdown: `![${remoteAssets[3].name}](${remoteAssets[3].url})`, fileName: remoteAssets[3].fileName }),
   listCloudflareAssets: async (_offset: number, _count: number, search: string, directory: string): Promise<RemoteAssetPage> => {
     const normalized = directory.replace(/^\/+|\/+$/g, "");
@@ -138,6 +152,23 @@ export const browserMock = {
   credentialStatus: async () => ({ configured: true }),
   credentialSet: async () => ({ configured: true }),
   credentialDelete: async () => ({ configured: false }),
+  acquireCloudflareImgbedToken: async (
+    request: AcquireCloudflareImgbedTokenRequest
+  ): Promise<AcquireCloudflareImgbedTokenResult> => ({
+    configured: true,
+    tokenId: "mock-token-id",
+    tokenName: request.tokenName || "Hexo Lite Editor",
+    owner: request.owner || "Hexo Lite Editor",
+    permissions: request.permissions || ["upload", "list", "delete"],
+    createdAt: new Date().toISOString(),
+    expiresAt: request.expiresAt ?? null
+  }),
+  testCloudflareImgbedToken: async (baseUrl: string) => ({
+    ok: true,
+    baseUrl: baseUrl.replace(/\/+$/, ""),
+    listEndpoint: `${baseUrl.replace(/\/+$/, "")}/api/manage/list?start=0&count=1`,
+    message: "Cloudflare-ImgBed 连接正常。"
+  }),
   getPreviewStatus: async (_projectId?: string, _sessionGeneration?: number) => structuredClone(preview),
   startPreviewServer: async (_projectId?: string, _sessionGeneration?: number) => {
     preview = { ...preview, state: "starting", error: undefined };

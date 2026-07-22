@@ -21,16 +21,16 @@
   import ErrorState from "$shared/components/ErrorState.svelte";
   import LoadingState from "$shared/components/LoadingState.svelte";
   import ModalDialog from "$shared/components/ModalDialog.svelte";
-  import { renderSafeMarkdown } from "$shared/markdown/safeMarkdown";
+  import { extractRemoteImageUrls, renderSafeMarkdown } from "$shared/markdown/safeMarkdown";
   import { platform, normalizeError } from "$platform/tauri";
-  import { isSafeThemePreviewUrl, previewStateLabel } from "./previewModel";
+  import { previewStateLabel } from "./previewModel";
   import type {
     AppConfigV3,
     ArticleKind,
     ArticleSummary,
     ProjectSessionView,
     RecentProjectView,
-    PreviewMode,
+    SettingsSectionId,
     PreviewServerView,
     TaskType
   } from "$shared/types/app";
@@ -49,9 +49,10 @@
   export let onPreview: (openInBrowser?: boolean) => Promise<string> = async () => "";
   export let onTogglePreviewServer: () => void = () => {};
   export let onOpenPreviewHome: () => void = () => {};
-  export let onOpenSettings: () => void = () => {};
+  export let onOpenSettings: (section?: SettingsSectionId) => void = () => {};
   export let previewServer: PreviewServerView | null = null;
   export let taskBusy = false;
+  export let autoSaveSuspended = false;
 
   const store = editorStore;
   let editorState: EditorSessionState = store.getState();
@@ -84,10 +85,12 @@
   let imageInput: HTMLInputElement;
   let projectMenuOpen = false;
   let advancedMenuOpen = false;
-  let previewMode: PreviewMode = config.hexo.defaultPreviewMode;
-  let themePreviewUrl = "";
-  let themePreviewLoading = false;
-  let themePreviewError = "";
+  let remotePreviewAssets: Record<string, string | null> = {};
+  let remotePreviewPending = false;
+  let remoteImageUrls: string[] = [];
+  let remoteImageKey = "";
+  let lastValidatedImageKey = "";
+  let imageValidationSequence = 0;
   let editorScrollTop = 0;
   let markdownPreview: HTMLElement;
   const editorScrollByArticle = new Map<string, number>();
@@ -101,6 +104,7 @@
   onMount(() => {
     window.addEventListener("pointerdown", closeEditorMenus);
     window.addEventListener("keydown", closeEditorMenus);
+    window.addEventListener("focus", handleWindowFocus);
     if (!session) return;
     void loadPreviewAssets(session);
     if (!store.getState().snapshot && articles.length) void openArticle(articles[0]);
@@ -111,6 +115,7 @@
     clearTimeout(autoSaveTimer);
     window.removeEventListener("pointerdown", closeEditorMenus);
     window.removeEventListener("keydown", closeEditorMenus);
+    window.removeEventListener("focus", handleWindowFocus);
   });
 
   function closeEditorMenus(event: Event) {
@@ -121,7 +126,18 @@
     advancedMenuOpen = false;
   }
 
-  $: previewHtml = renderSafeMarkdown(editorState.content, previewAssets);
+  $: remoteImageUrls = extractRemoteImageUrls(editorState.content, previewAssets);
+  $: remoteImageKey = `${activeArticleId ?? ""}\u0000${remoteImageUrls.join("\u0000")}`;
+  $: if (session && editorState.snapshot && remoteImageKey !== lastValidatedImageKey) {
+    lastValidatedImageKey = remoteImageKey;
+    void refreshRemotePreviewImages();
+  }
+  $: previewHtml = renderSafeMarkdown(
+    editorState.content,
+    previewAssets,
+    remotePreviewAssets,
+    remotePreviewPending
+  );
   $: availableCategories = [...new Set(articles.flatMap((article) => article.categories))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   $: availableTags = [...new Set(articles.flatMap((article) => article.tags))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   $: filteredArticles = articles
@@ -145,6 +161,8 @@
     activeArticleId = null;
     store.clear();
     previewAssets = {};
+    remotePreviewAssets = {};
+    lastValidatedImageKey = "";
     if (session) {
       void loadPreviewAssets(session);
       if (articles.length) void openArticle(articles[0]);
@@ -153,7 +171,7 @@
 
   $: {
     clearTimeout(autoSaveTimer);
-    if (config.general.autoSave && editorState.dirty && !editorState.saving) {
+    if (!autoSaveSuspended && config.general.autoSave && editorState.dirty && !editorState.saving) {
       autoSaveTimer = setTimeout(() => void saveCurrent(), config.general.autoSaveDelayMs);
     }
   }
@@ -181,6 +199,8 @@
       activeArticleId = article.articleId;
       editorScrollTop = editorScrollByArticle.get(article.articleId) ?? 0;
       store.load(snapshot);
+      remotePreviewAssets = {};
+      lastValidatedImageKey = "";
       requestAnimationFrame(() => {
         if (markdownPreview) markdownPreview.scrollTop = previewScrollByArticle.get(article.articleId) ?? 0;
       });
@@ -198,10 +218,17 @@
       for (const image of localImages) {
         const relative = image.relativePath.replace(/\\/g, "/");
         const imageRelative = relative.replace(/^source\//, "");
+        const markdownUrl = image.markdownUrl.replace(/\\/g, "/");
         next[relative] = image.previewUrl;
         next[`/${relative}`] = image.previewUrl;
         next[imageRelative] = image.previewUrl;
         next[`/${imageRelative}`] = image.previewUrl;
+        next[markdownUrl] = image.previewUrl;
+        try {
+          next[decodeURI(markdownUrl)] = image.previewUrl;
+        } catch {
+          // The backend emits encoded URLs; keep the raw key if an old record is malformed.
+        }
       }
       if (session?.projectId === project.projectId) previewAssets = next;
     } catch {
@@ -264,7 +291,6 @@
     const next = await platform.listArticles(session.projectId, session.generation);
     articles = next;
     onArticlesChange(next);
-    if (previewMode === "theme") void refreshThemePreview();
   }
 
   function openCreateDialog() {
@@ -343,6 +369,7 @@
       if (failed.length) onNotice(`${successes.length} 张图片已处理，${failed.length} 张失败：${failed[0].error?.message}`);
       else onNotice(`${successes.length} 张图片已处理${config.imageBed.autoInsertMarkdown ? "并插入文章" : ""}。`);
       if (config.imageBed.defaultProvider === "local") void loadPreviewAssets(session);
+      setTimeout(() => void refreshRemotePreviewImages(true), 0);
     } catch (error) {
       onNotice(normalizeError(error).message);
     }
@@ -356,28 +383,49 @@
     onConfigChange(next);
   }
 
-  async function changePreviewMode(mode: PreviewMode) {
-    previewMode = mode;
-    if (mode === "theme") await refreshThemePreview();
+  function handleWindowFocus() {
+    if (editorState.snapshot) void refreshRemotePreviewImages(true);
   }
 
-  async function refreshThemePreview() {
-    if (!editorState.snapshot) return;
-    themePreviewLoading = true;
-    themePreviewError = "";
+  async function refreshRemotePreviewImages(force = false) {
+    if (!session || !editorState.snapshot) return;
+    const urls = extractRemoteImageUrls(editorState.content, previewAssets);
+    const validationKey = `${activeArticleId ?? ""}\u0000${urls.join("\u0000")}`;
+    if (!force && validationKey !== remoteImageKey) return;
+    const sequence = ++imageValidationSequence;
+    const expectedArticleId = activeArticleId;
+    const expectedProjectId = session.projectId;
+    const expectedGeneration = session.generation;
+    remotePreviewPending = urls.length > 0;
+    remotePreviewAssets = Object.fromEntries(urls.map((url) => [url, null]));
+    if (!urls.length) return;
     try {
-      const url = await onPreview(false);
-      const parsed = new URL(url);
-      if (!isSafeThemePreviewUrl(parsed.toString())) {
-        throw new Error("主题预览地址不是受控的本机地址。");
-      }
-      themePreviewUrl = parsed.toString();
-    } catch (error) {
-      themePreviewUrl = "";
-      themePreviewError = normalizeError(error).message;
+      const results = await platform.resolveRemotePreviewImages({
+        projectId: expectedProjectId,
+        sessionGeneration: expectedGeneration,
+        urls
+      });
+      if (
+        sequence !== imageValidationSequence
+        || activeArticleId !== expectedArticleId
+        || session?.projectId !== expectedProjectId
+        || session.generation !== expectedGeneration
+      ) return;
+      remotePreviewAssets = Object.fromEntries(
+        results.map((result) => [
+          result.originalUrl,
+          result.state === "ready" ? result.previewUrl ?? null : null
+        ])
+      );
+    } catch {
+      if (sequence === imageValidationSequence) remotePreviewAssets = Object.fromEntries(urls.map((url) => [url, null]));
     } finally {
-      themePreviewLoading = false;
+      if (sequence === imageValidationSequence) remotePreviewPending = false;
     }
+  }
+
+  function handlePreviewImageError(event: Event) {
+    if (event.target instanceof HTMLImageElement) void refreshRemotePreviewImages(true);
   }
 
   async function runAdvanced(kind: TaskType) {
@@ -476,7 +524,7 @@
     </div>
     <div class="toolbar-spacer"></div>
     {#if session}
-      <button class="button quiet" type="button" on:click={() => void onPreview(true)}><Server size={16} />预览</button>
+      <button class="button quiet" type="button" on:click={() => void onPreview(true)}><Server size={16} />浏览器预览</button>
       <button class="button quiet" type="button" on:click={openCreateDialog}><FilePlus2 size={16} />新建</button>
       <button class="icon-button" type="button" disabled={!editorState.snapshot} title="选择图片并插入" aria-label="选择图片并插入" on:click={() => imageInput?.click()}><ImagePlus size={17} /></button>
       <button class="button quiet" type="button" disabled={!editorState.dirty || editorState.saving} on:click={saveCurrent}><Save size={16} />{editorState.saving ? "保存中" : "保存"}</button>
@@ -492,7 +540,7 @@
             <div class="menu-separator"></div>
             <button type="button" on:click={() => { advancedMenuOpen = false; onTogglePreviewServer(); }}>{previewServer?.state === "running" ? "停止本地预览" : "启动本地预览"}</button>
             <button type="button" on:click={() => { advancedMenuOpen = false; onOpenPreviewHome(); }}>打开博客首页</button>
-            <button type="button" on:click={() => { advancedMenuOpen = false; onOpenSettings(); }}>诊断与日志</button>
+            <button type="button" on:click={() => { advancedMenuOpen = false; onOpenSettings("maintenance"); }}>诊断与日志</button>
           </div>
         {/if}
       </div>
@@ -588,25 +636,15 @@
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <section class="preview-pane" aria-label="文章预览">
             <div class="preview-mode-bar">
-              <div class="segmented compact" aria-label="预览模式">
-                <button class:active={previewMode === "markdown"} type="button" on:click={() => void changePreviewMode("markdown")}>Markdown</button>
-                <button class:active={previewMode === "theme"} type="button" on:click={() => void changePreviewMode("theme")}>主题预览</button>
-              </div>
-              {#if previewMode === "theme"}<button class="icon-button small" type="button" title="刷新主题预览" aria-label="刷新主题预览" on:click={refreshThemePreview}><RefreshCw size={14} /></button>{/if}
+              <strong>即时预览</strong>
+              <span>{remotePreviewPending ? "正在验证远程图片" : "HTML 已安全渲染"}</span>
+              <button class="icon-button small" type="button" title="重新验证远程图片" aria-label="刷新图片" disabled={remotePreviewPending} on:click={() => void refreshRemotePreviewImages(true)}><RefreshCw size={14} /></button>
             </div>
             {#if !editorState.snapshot}
               <EmptyState title="暂无预览" description="打开文章后显示渲染结果。" />
-            {:else if previewMode === "markdown"}
-              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-              <article class="markdown-preview" bind:this={markdownPreview} on:scroll={recordPreviewScroll} on:click={handlePreviewInteraction} on:keydown={handlePreviewInteraction}>{@html previewHtml}</article>
-            {:else if themePreviewLoading}
-              <LoadingState label={previewServer?.state === "starting" ? "正在启动 Hexo 预览" : "正在解析文章主题路由"} />
-            {:else if themePreviewError}
-              <ErrorState message={themePreviewError}><button class="button" type="button" on:click={refreshThemePreview}>重试</button></ErrorState>
-            {:else if themePreviewUrl}
-              <iframe class="theme-preview-frame" title="Hexo 主题预览" src={themePreviewUrl} sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>
             {:else}
-              <EmptyState title="主题预览尚未加载" description="仅在保存文章后读取真实 Hexo 主题页面。"><button class="button" type="button" on:click={refreshThemePreview}>加载主题预览</button></EmptyState>
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <article class="markdown-preview" bind:this={markdownPreview} on:scroll={recordPreviewScroll} on:click={handlePreviewInteraction} on:keydown={handlePreviewInteraction} on:error|capture={handlePreviewImageError}>{@html previewHtml}</article>
             {/if}
           </section>
         {/if}

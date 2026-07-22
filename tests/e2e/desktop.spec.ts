@@ -54,6 +54,24 @@ test("Ctrl+Shift+P 单次发布并在保存失败时中止", async ({ page }) =>
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
 });
 
+test("重复点击关闭只显示一个未保存确认框", async ({ page }) => {
+  await page.locator(".cm-content").click();
+  await page.keyboard.type("准备关闭的未保存内容");
+  await page.locator(".window-control.close").evaluate((button: HTMLButtonElement) => {
+    button.click();
+    button.click();
+  });
+
+  const dialog = page.getByRole("dialog", { name: "退出 Hexo Lite Editor？" });
+  await expect(dialog).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: "保存并退出" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "不保存退出" })).toBeVisible();
+  await page.waitForTimeout(2200);
+  expect(await page.evaluate(() => document.documentElement.dataset.editorSaveCalls)).toBeUndefined();
+  await dialog.getByRole("button", { name: "取消" }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
 test("Cloudflare 资源按目录显示文件夹、压缩包和图片灯箱", async ({ page }) => {
   await page.getByRole("button", { name: "图床" }).click();
   await page.getByRole("button", { name: /本地图片/ }).click();
@@ -84,24 +102,97 @@ test("Cloudflare 资源按目录显示文件夹、压缩包和图片灯箱", asy
   await page.keyboard.press("Escape");
 });
 
-test("主题预览使用受限的 loopback iframe", async ({ page }) => {
-  await page.getByRole("button", { name: "主题预览" }).click();
-  const frame = page.locator("iframe.theme-preview-frame");
-  await expect(frame).toBeVisible({ timeout: 10_000 });
-  await expect(frame).toHaveAttribute("src", /^http:\/\/127\.0\.0\.1:4000\//);
-  await expect(frame).toHaveAttribute("sandbox", "allow-scripts allow-same-origin");
-  expect(await frame.getAttribute("sandbox")).not.toContain("allow-top-navigation");
-  await expect(page.locator(".task-drawer")).toHaveCount(0);
+test("只保留即时预览和系统浏览器预览入口", async ({ page }) => {
+  await expect(page.getByText("即时预览", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "主题预览" })).toHaveCount(0);
+  await expect(page.locator("iframe.theme-preview-frame")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "浏览器预览" })).toBeVisible();
+  await expect(page.locator(".markdown-preview img")).not.toHaveAttribute("src", /^https?:\/\//);
 });
 
 test("诊断页主动读取日志，关于页保持精简", async ({ page }) => {
   await page.getByRole("button", { name: "设置" }).click();
-  await expect(page.getByRole("heading", { name: "诊断与日志" })).toBeVisible();
+  await page.getByRole("button", { name: /诊断与维护/ }).click();
   await expect(page.getByText("目前没有日志")).toBeVisible();
   await page.getByRole("button", { name: "关于" }).click();
   await expect(page.getByText("版本 1.0.3")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);
   await expect(page.getByText("操作系统")).toHaveCount(0);
+});
+
+test("设置分类状态持久化，未保存标记和图床来源正确联动", async ({ page }) => {
+  await page.getByRole("button", { name: "设置" }).click();
+  const editingNav = page.getByRole("button", { name: /编辑体验/ });
+  await editingNav.click();
+  await expect(editingNav).toHaveAttribute("aria-current", "page");
+  await page.getByRole("button", { name: "关于" }).click();
+  await page.getByRole("button", { name: "设置" }).click();
+  await expect(page.getByRole("button", { name: /编辑体验/ })).toHaveAttribute("aria-current", "page");
+
+  await page.getByRole("button", { name: /图片与图床/ }).click();
+  const imageBed = page.locator(".settings-content-panel");
+  await expect(imageBed.getByText("图片保存目录")).toBeVisible();
+  await expect(imageBed.getByText("图床名称")).toHaveCount(0);
+  await imageBed.locator("select").selectOption("cloudflare-imgbed");
+  await expect(page.getByRole("button", { name: /图片与图床/ }).locator(".settings-dirty-dot")).toBeVisible();
+  await expect(imageBed.getByText("图片保存目录")).toHaveCount(0);
+  await expect(imageBed.getByText("图床名称")).toBeVisible();
+
+  const cloudflareInputs = imageBed.locator('[data-provider="cloudflare-imgbed"] input');
+  await cloudflareInputs.nth(0).fill("博客图床");
+  await cloudflareInputs.nth(1).fill("https://img.example.com");
+  await imageBed.getByRole("button", { name: /获取/ }).click();
+  const tokenDialog = page.getByRole("dialog", { name: "获取 Cloudflare-ImgBed Token" });
+  await expect(tokenDialog).toBeVisible();
+  await tokenDialog.getByLabel("管理员用户名").fill("admin");
+  await tokenDialog.getByLabel("管理员密码").fill("temporary-secret");
+  await tokenDialog.getByRole("button", { name: "获取并保存" }).click();
+  await expect(tokenDialog).toHaveCount(0);
+  await expect(page.getByText("Token 已创建并保存到系统凭据库。")).toBeVisible();
+
+  await imageBed.getByRole("button", { name: "测试连接" }).click();
+  await expect(imageBed.getByText("Cloudflare-ImgBed 连接正常。")).toBeVisible();
+  await imageBed.getByRole("button", { name: /重新获取|一键获取 Token/ }).click();
+  await expect(tokenDialog.getByLabel("管理员密码")).toHaveValue("");
+  await tokenDialog.getByRole("button", { name: "取消" }).click();
+
+  await imageBed.getByRole("button", { name: "删除本地 Token" }).click();
+  await expect(imageBed.getByText("Token 未配置")).toBeVisible();
+  await imageBed.locator("select").selectOption("local");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+});
+
+test("设置分类切换时内容宽度保持稳定", async ({ page }) => {
+  await page.getByRole("button", { name: "设置" }).click();
+  const settingsPage = page.locator(".settings-page");
+  const layout = page.locator(".settings-layout");
+
+  for (const viewport of [{ width: 1360, height: 860 }, { width: 1120, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole("button", { name: /常规/ }).click();
+    const generalBox = await layout.boundingBox();
+    const generalClientWidth = await settingsPage.evaluate((element) => element.clientWidth);
+
+    await page.getByRole("button", { name: /编辑体验/ }).click();
+    const editingBox = await layout.boundingBox();
+    const editingClientWidth = await settingsPage.evaluate((element) => element.clientWidth);
+
+    expect(generalBox).not.toBeNull();
+    expect(editingBox).not.toBeNull();
+    expect(editingBox!.x).toBeCloseTo(generalBox!.x, 1);
+    expect(editingBox!.width).toBeCloseTo(generalBox!.width, 1);
+    expect(editingClientWidth).toBe(generalClientWidth);
+  }
+
+  await expect(settingsPage).toHaveCSS("scrollbar-gutter", "stable");
+});
+
+test("页面过渡在 200ms 内结束且离场页不拦截点击", async ({ page }) => {
+  await page.getByRole("button", { name: "设置" }).click();
+  await expect(page.locator('.page-transition[data-page-key="settings"]')).toBeVisible();
+  await page.getByRole("button", { name: "关于" }).click();
+  await expect(page.getByRole("heading", { name: "关于" })).toBeVisible({ timeout: 200 });
+  await expect(page.locator('.page-transition[style*="pointer-events: none"]')).toHaveCount(0, { timeout: 250 });
 });
 
 test("深色模式光标 token 可见并生成双尺寸回归截图", async ({ page }) => {
@@ -123,6 +214,7 @@ test("欢迎页、图床、设置和关于生成浅色深色回归截图", async
   const captureModes = async (name: string) => {
     for (const mode of ["light", "dark"] as const) {
       await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, mode);
+      await page.waitForTimeout(220);
       await page.screenshot({ path: `output/playwright/${name}-1360x860-${mode}.png`, fullPage: true });
     }
   };

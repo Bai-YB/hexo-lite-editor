@@ -7,12 +7,3 @@ export function previewStateLabel(state?: PreviewServerState) {
   if (state === "error") return "异常";
   return "已停止";
 }
-
-export function isSafeThemePreviewUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" && url.hostname === "127.0.0.1";
-  } catch {
-    return false;
-  }
-}

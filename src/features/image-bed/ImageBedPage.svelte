@@ -84,7 +84,7 @@
     id: image.imageId,
     kind: "image",
     name: image.name,
-    reference: `/${image.relativePath.replace(/\\/g, "/").replace(/^source\//, "")}`,
+    reference: image.markdownUrl,
     previewUrl: image.previewUrl,
     size: image.size,
     item: image
@@ -109,7 +109,7 @@
   $: previewableAssets = visibleAssets.filter((asset) => asset.kind === "image" && asset.previewUrl);
   $: lightboxAsset = lightboxIndex >= 0 ? previewableAssets[lightboxIndex] : undefined;
   $: if (session && credentialReady) {
-    const key = `${session.projectId}:${session.generation}:${provider}:${credential.configured}:${config.imageBed.cloudflareApiUrl}:${directory}:${appliedQuery}:${remoteOffset}`;
+    const key = `${session.projectId}:${session.generation}:${provider}:${credential.configured}:${config.imageBed.localImageDir}:${config.imageBed.localMarkdownPrefix}:${config.imageBed.cloudflareApiUrl}:${directory}:${appliedQuery}:${remoteOffset}`;
     if (loadedKey !== key) {
       loadedKey = key;
       void loadCurrent();
@@ -217,7 +217,7 @@
     try {
       if (provider === "local") {
         localImages = await platform.importLocalImages(session.projectId, session.generation);
-        onNotice("图片已导入 source/images。");
+        onNotice(`图片已导入 ${config.imageBed.localImageDir}。`);
       } else {
         const result = await platform.uploadCloudflareImage(session.projectId, session.generation);
         if (result) {
@@ -389,7 +389,7 @@
   <PageHeader title="图床" description="按目录浏览本地图片和 Cloudflare-ImgBed 资源。">
     <div class="source-switcher-wrap">
       <button class="source-switcher" type="button" aria-expanded={sourceMenuOpen} on:click={() => (sourceMenuOpen = !sourceMenuOpen)}><span>{provider === "local" ? "本地图片" : "Cloudflare-ImgBed"}</span><ChevronDown size={14} /></button>
-      {#if sourceMenuOpen}<div class="source-menu quiet-menu"><button class:active={provider === "local"} type="button" on:click={() => selectProvider("local")}>本地图片<small>source/images</small></button><button class:active={provider === "cloudflare-imgbed"} type="button" on:click={() => selectProvider("cloudflare-imgbed")}>Cloudflare-ImgBed<small>远程目录与文件</small></button></div>{/if}
+      {#if sourceMenuOpen}<div class="source-menu quiet-menu"><button class:active={provider === "local"} type="button" on:click={() => selectProvider("local")}>本地图片<small>{config.imageBed.localImageDir}</small></button><button class:active={provider === "cloudflare-imgbed"} type="button" on:click={() => selectProvider("cloudflare-imgbed")}>Cloudflare-ImgBed<small>远程目录与文件</small></button></div>{/if}
     </div>
     <button class="icon-button" type="button" disabled={!session || loading} title="刷新" aria-label="刷新资源" on:click={() => { loadedKey = ""; }}><RefreshCw size={16} /></button>
     <button class="button primary" type="button" disabled={!session || (provider === "cloudflare-imgbed" && !credential.configured)} on:click={importOrUpload}>{#if provider === "local"}<Import size={16} />导入{:else}<Upload size={16} />上传图片{/if}</button>
@@ -438,7 +438,7 @@
 {#if context}
   <div bind:this={contextMenu} class="asset-context-menu quiet-menu" role="menu" style={`left:${context.x}px;top:${context.y}px`}>
     {#if context.asset.kind === "image" && context.asset.reference}<button type="button" role="menuitem" on:click={() => copyText(markdownFor(context!.asset), "Markdown 已复制。") }><Copy size={14} />复制 Markdown</button>{/if}
-    {#if context.asset.reference}<button type="button" role="menuitem" on:click={() => copyText(context!.asset.reference!, context!.asset.source === "remote" ? "链接已复制。" : "图片引用已复制。") }><Copy size={14} />{context.asset.source === "remote" ? "复制链接" : "复制 /images 引用"}</button>{/if}
+    {#if context.asset.reference}<button type="button" role="menuitem" on:click={() => copyText(context!.asset.reference!, context!.asset.source === "remote" ? "链接已复制。" : "图片引用已复制。") }><Copy size={14} />{context.asset.source === "remote" ? "复制链接" : "复制 Markdown 路径"}</button>{/if}
     {#if context.asset.source === "local"}<button type="button" role="menuitem" on:click={() => revealLocal(context!.asset)}><FolderOpen size={14} />在文件夹中显示</button>{/if}
     {#if context.asset.kind === "image"}<button type="button" role="menuitem" on:click={() => { const asset = context!.asset; const opener = context!.opener; context = null; void openLightbox(asset, opener); }}><Maximize2 size={14} />查看大图</button>{/if}
     {#if context.asset.kind !== "folder"}<div class="menu-separator"></div><button class="danger" type="button" role="menuitem" on:click={() => { deleting = context!.asset; context = null; }}><Trash2 size={14} />{context.asset.source === "local" ? "移到回收站" : "删除远程资源"}</button>{/if}

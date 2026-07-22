@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Mutex, RwLock,
+        Arc, Mutex, RwLock,
     },
     time::SystemTime,
 };
@@ -21,8 +21,14 @@ pub struct ArticleRecord {
 }
 
 #[derive(Debug, Clone)]
+pub enum AssetSource {
+    Disk(PathBuf),
+    Memory(Arc<Vec<u8>>),
+}
+
+#[derive(Debug, Clone)]
 pub struct AssetRecord {
-    pub canonical_path: PathBuf,
+    pub source: AssetSource,
     pub mime: String,
     pub generation: u64,
     pub expires_at: SystemTime,

@@ -328,4 +328,59 @@ mod tests {
                 .starts_with("config-v3.corrupt-")
         }));
     }
+
+    #[test]
+    fn loads_v103_config_with_incremental_image_defaults_without_corrupt_backup() {
+        let temp = TempDir::new().unwrap();
+        let state = AppState::new(temp.path());
+        let mut value = serde_json::to_value(AppConfigV3::default()).unwrap();
+        let image_bed = value["imageBed"].as_object_mut().unwrap();
+        image_bed.remove("localImageDir");
+        image_bed.remove("localMarkdownPrefix");
+        image_bed.remove("cloudflareName");
+        image_bed.remove("cloudflareTokenId");
+        image_bed.remove("uploadFolder");
+        fs::write(
+            &state.config_path,
+            serde_json::to_vec_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = load_config(&state).unwrap();
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(loaded.config.image_bed.local_image_dir, "source/images");
+        assert_eq!(loaded.config.image_bed.local_markdown_prefix, "/images");
+        assert_eq!(loaded.config.image_bed.upload_folder, "blog");
+        assert!(!fs::read_dir(temp.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("config-v3.corrupt-")
+        }));
+    }
+
+    #[test]
+    fn ignores_removed_preview_mode_in_v103_config_without_corrupt_backup() {
+        let temp = TempDir::new().unwrap();
+        let state = AppState::new(temp.path());
+        let mut value = serde_json::to_value(AppConfigV3::default()).unwrap();
+        value["hexo"]["defaultPreviewMode"] = json!("theme");
+        fs::write(
+            &state.config_path,
+            serde_json::to_vec_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = load_config(&state).unwrap();
+        assert!(loaded.warnings.is_empty());
+        assert_eq!(loaded.config.hexo.preview_port, 4_000);
+        assert!(!fs::read_dir(temp.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("config-v3.corrupt-")
+        }));
+    }
 }

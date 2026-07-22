@@ -1,7 +1,8 @@
 export type AppPage = "editor" | "imageBed" | "settings" | "about";
+export type ImageBedProvider = "local" | "cloudflare-imgbed";
 export type ThemeMode = "light" | "dark" | "system";
-export type PreviewMode = "markdown" | "theme";
 export type PreviewServerState = "starting" | "running" | "stopping" | "stopped" | "error";
+export type SettingsSectionId = "general" | "editing" | "images" | "hexoPublish" | "maintenance";
 export type ArticleKind = "post" | "draft";
 export type TaskType =
   | "clean"
@@ -115,6 +116,39 @@ export interface CredentialStatus {
   configured: boolean;
 }
 
+export interface AcquireCloudflareImgbedTokenRequest {
+  baseUrl: string;
+  adminUsername?: string;
+  adminPassword?: string;
+  tokenName?: string;
+  owner?: string;
+  permissions?: Array<"upload" | "list" | "delete">;
+  expiresAt?: string | null;
+  autoDelete?: boolean;
+}
+
+export interface AcquireCloudflareImgbedTokenResult {
+  configured: boolean;
+  tokenId: string;
+  tokenName: string;
+  owner: string;
+  permissions: Array<"upload" | "list" | "delete">;
+  createdAt: string;
+  expiresAt?: string | null;
+}
+
+export interface ImgBedConnectionTestResult {
+  ok: boolean;
+  baseUrl: string;
+  listEndpoint: string;
+  message: string;
+}
+
+export interface CloseWindowState {
+  hasUnsavedChanges: boolean;
+  isClosing: boolean;
+}
+
 export interface AppConfigV3 {
   schemaVersion: 3;
   general: {
@@ -146,11 +180,15 @@ export interface AppConfigV3 {
     previewPort: number;
     autoStartPreview: boolean;
     previewDrafts: boolean;
-    defaultPreviewMode: PreviewMode;
   };
   imageBed: {
-    defaultProvider: "local" | "cloudflare-imgbed";
+    defaultProvider: ImageBedProvider;
+    localImageDir: string;
+    localMarkdownPrefix: string;
+    cloudflareName: string;
     cloudflareApiUrl: string;
+    cloudflareTokenId?: string;
+    uploadFolder: string;
     autoInsertMarkdown: boolean;
   };
   publish: {
@@ -177,9 +215,25 @@ export interface LocalImage {
   imageId: string;
   name: string;
   relativePath: string;
+  markdownUrl: string;
   mime: string;
   size: number;
   previewUrl: string;
+}
+
+export interface ResolveRemotePreviewImagesRequest {
+  projectId: string;
+  sessionGeneration: number;
+  urls: string[];
+}
+
+export type RemotePreviewImageState = "ready" | "unavailable";
+
+export interface RemotePreviewImageResult {
+  originalUrl: string;
+  state: RemotePreviewImageState;
+  previewUrl?: string;
+  message?: string;
 }
 
 export interface UploadResult {
@@ -304,12 +358,15 @@ export const defaultConfig: AppConfigV3 = {
   hexo: {
     previewPort: 4000,
     autoStartPreview: false,
-    previewDrafts: true,
-    defaultPreviewMode: "markdown"
+    previewDrafts: true
   },
   imageBed: {
     defaultProvider: "local",
+    localImageDir: "source/images",
+    localMarkdownPrefix: "/images",
+    cloudflareName: "",
     cloudflareApiUrl: "",
+    uploadFolder: "blog",
     autoInsertMarkdown: true
   },
   publish: {

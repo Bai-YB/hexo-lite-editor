@@ -1,5 +1,5 @@
 use crate::{
-    app::{ArticleRecord, AssetRecord},
+    app::{ArticleRecord, AssetRecord, AssetSource},
     domain::{
         AppError, AppResult, ArticleCover, ArticleCoverSource, ArticleKind, ArticleSummary,
         FrontMatterResult,
@@ -282,7 +282,7 @@ fn resolve_cover_url(
         Some((
             token,
             AssetRecord {
-                canonical_path: canonical,
+                source: AssetSource::Disk(canonical),
                 mime,
                 generation: 0,
                 expires_at: SystemTime::now() + Duration::from_secs(15 * 60),

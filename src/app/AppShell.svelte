@@ -6,15 +6,18 @@
   import NavRail from "./NavRail.svelte";
   import LoadingState from "$shared/components/LoadingState.svelte";
   import ModalDialog from "$shared/components/ModalDialog.svelte";
+  import PageTransition from "$shared/components/PageTransition.svelte";
   import { isTauri, normalizeError, platform } from "$platform/tauri";
   import { defaultConfig } from "$shared/types/app";
   import type {
     AppConfigV3,
     AppPage,
     ArticleSummary,
+    CloseWindowState,
     ProjectSessionView,
     PreviewServerView,
     RecentProjectView,
+    SettingsSectionId,
     TaskEvent
   } from "$shared/types/app";
   import { EditorSessionStore } from "$features/editor/EditorSessionStore";
@@ -48,8 +51,12 @@
   let guardAction: (() => void | Promise<void>) | null = null;
   let guardDescription = "";
   let guardBusy = false;
-  let guardSource: "editor" | "settings" = "editor";
+  let guardSource: "editor" | "settings" | "both" = "editor";
+  let guardIsClosing = false;
+  let allowWindowClose = false;
+  let closeWindowState: CloseWindowState = { hasUnsavedChanges: false, isClosing: false };
   let previewServer: PreviewServerView | null = null;
+  let settingsInitialSection: SettingsSectionId | null = null;
 
   const unsubscribeEditor = editorStore.subscribe((state) => {
     dirty = state.dirty;
@@ -90,14 +97,15 @@
     });
     if (isTauri()) {
       unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
+        if (allowWindowClose) return;
         const settingsDirty = settingsController?.hasDirty() ?? false;
-        if (!dirty && !settingsDirty) return;
+        const editorDirty = editorStore.hasDirty();
+        if (!editorDirty && !settingsDirty) {
+          void platform.cleanupBeforeExit().catch(console.error);
+          return;
+        }
         event.preventDefault();
-        requestGuard(
-          settingsDirty ? "关闭窗口前需要处理未保存的设置。" : "关闭窗口前需要处理当前文章的未保存内容。",
-          async () => { await getCurrentWindow().close(); },
-          settingsDirty ? "settings" : "editor"
-        );
+        requestClose();
       });
     }
   });
@@ -136,8 +144,9 @@
     }
   }
 
-  function navigate(next: AppPage) {
+  function navigate(next: AppPage, settingsSection: SettingsSectionId | null = null) {
     if (next === page) return;
+    if (next === "settings") settingsInitialSection = settingsSection;
     if (page === "settings" && settingsController?.hasDirty()) {
       requestGuard("离开设置前需要保存或放弃本次设置修改。", () => { page = next; }, "settings");
       return;
@@ -194,11 +203,38 @@
 
   function requestClose() {
     const settingsDirty = settingsController?.hasDirty() ?? false;
-    requestGuard(
-      settingsDirty ? "关闭窗口前需要处理未保存的设置。" : "关闭窗口前需要处理当前文章的未保存内容。",
-      async () => { if (isTauri()) await getCurrentWindow().close(); },
-      settingsDirty ? "settings" : "editor"
-    );
+    const editorDirty = editorStore.hasDirty();
+    closeWindowState = {
+      ...closeWindowState,
+      hasUnsavedChanges: settingsDirty || editorDirty
+    };
+    if (!closeWindowState.hasUnsavedChanges) {
+      void closeWindowNow();
+      return;
+    }
+    if (guardAction && guardIsClosing) return;
+    guardDescription = settingsDirty && editorDirty
+      ? "当前文章和设置都有未保存修改。"
+      : settingsDirty
+        ? "设置中有未保存修改。"
+        : "当前文章有未保存修改。";
+    guardSource = settingsDirty && editorDirty ? "both" : settingsDirty ? "settings" : "editor";
+    guardIsClosing = true;
+    guardAction = closeWindowNow;
+  }
+
+  async function closeWindowNow() {
+    if (closeWindowState.isClosing) return;
+    allowWindowClose = true;
+    closeWindowState = { ...closeWindowState, isClosing: true };
+    void platform.cleanupBeforeExit().catch(console.error);
+    try {
+      if (isTauri()) await getCurrentWindow().destroy();
+    } catch (error) {
+      allowWindowClose = false;
+      closeWindowState = { ...closeWindowState, isClosing: false };
+      throw error;
+    }
   }
 
   function requestGuard(
@@ -214,24 +250,32 @@
     guardDescription = description;
     guardAction = action;
     guardSource = source;
+    guardIsClosing = false;
   }
 
   async function resolveGuard(choice: "save" | "discard" | "cancel") {
     if (choice === "cancel") {
       guardAction = null;
+      guardIsClosing = false;
       return;
     }
     guardBusy = true;
+    const action = guardAction;
     try {
-      if (guardSource === "settings") {
+      if (guardSource === "settings" || guardSource === "both") {
         if (choice === "save") await settingsController?.save();
         else settingsController?.discard();
-      } else if (choice === "save") await editorStore.save();
-      else editorStore.discard();
-      const action = guardAction;
+      }
+      if (guardSource === "editor" || guardSource === "both") {
+        if (choice === "save") await editorStore.save();
+        else editorStore.discard();
+      }
       guardAction = null;
       await action?.();
+      if (!closeWindowState.isClosing) guardIsClosing = false;
     } catch (error) {
+      guardAction = action;
+      if (!closeWindowState.isClosing) guardIsClosing = action === closeWindowNow;
       showNotice(normalizeError(error).message);
     } finally {
       guardBusy = false;
@@ -363,11 +407,13 @@
       {#if !configLoaded}
         <LoadingState label="正在初始化桌面工作区" />
       {:else}
-        {#await pagePromise}
-          <LoadingState label="正在加载页面" />
-        {:then module}
-          {@const Page = module.default}
-          <Page
+        {#key page}
+          <PageTransition pageKey={page}>
+            {#await pagePromise}
+              <LoadingState label="正在加载页面" />
+            {:then module}
+              {@const Page = module.default}
+              <Page
             {session}
             {articles}
             {config}
@@ -375,6 +421,8 @@
             {editorStore}
             {recentProjects}
             {previewServer}
+            initialSection={settingsInitialSection}
+            autoSaveSuspended={guardIsClosing}
             taskBusy={Boolean(activeTask)}
             onOpenProject={openProject}
             onOpenRecentProject={openRecent}
@@ -390,9 +438,11 @@
             onTogglePreviewServer={togglePreviewServer}
             onOpenPreviewHome={openPreviewHome}
             onNotice={showNotice}
-            onOpenSettings={() => navigate("settings")}
-          />
-        {/await}
+            onOpenSettings={() => navigate("settings", "maintenance")}
+              />
+            {/await}
+          </PageTransition>
+        {/key}
       {/if}
       {#if activeTask}
         <div class="task-indicator" role="status" aria-live="polite">
@@ -407,11 +457,19 @@
 </div>
 
 {#if guardAction}
-  <ModalDialog title="有未保存的内容" description={guardDescription} onClose={() => resolveGuard("cancel")}>
+  <ModalDialog
+    title={guardIsClosing ? "退出 Hexo Lite Editor？" : "有未保存的内容"}
+    description={guardDescription}
+    onClose={() => !guardBusy && resolveGuard("cancel")}
+  >
     <svelte:fragment slot="actions">
-      <button class="button" type="button" disabled={guardBusy} on:click={() => resolveGuard("cancel")}>取消</button>
-      <button class="button danger" type="button" disabled={guardBusy} on:click={() => resolveGuard("discard")}>放弃</button>
-      <button class="button primary" type="button" data-autofocus disabled={guardBusy} on:click={() => resolveGuard("save")}>{guardBusy ? "处理中" : "保存并继续"}</button>
+      <button class="button" type="button" disabled={guardBusy || closeWindowState.isClosing} on:click={() => resolveGuard("cancel")}>取消</button>
+      <button class="button danger" type="button" disabled={guardBusy || closeWindowState.isClosing} on:click={() => resolveGuard("discard")}>
+        {guardIsClosing ? "不保存退出" : "放弃"}
+      </button>
+      <button class="button primary" type="button" data-autofocus disabled={guardBusy || closeWindowState.isClosing} on:click={() => resolveGuard("save")}>
+        {guardBusy ? "处理中" : guardIsClosing ? "保存并退出" : "保存并继续"}
+      </button>
     </svelte:fragment>
   </ModalDialog>
 {/if}

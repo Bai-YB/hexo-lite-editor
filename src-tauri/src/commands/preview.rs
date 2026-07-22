@@ -226,7 +226,7 @@ pub async fn resolve_article_preview_url(
     if preview.state != PreviewServerState::Running {
         return Err(AppError::new(
             "preview_not_running",
-            "请先启动 Hexo 主题预览。",
+            "请先启动 Hexo 浏览器预览服务。",
             true,
         ));
     }
