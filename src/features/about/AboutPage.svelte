@@ -7,7 +7,7 @@
 
   export let onNotice: (message: string) => void = () => {};
 
-  let version = "1.0.3";
+  let version = "1.0.4";
   let update: UpdateCheckResult | null = null;
   let checking = false;
 
@@ -15,7 +15,7 @@
     try {
       version = (await platform.runtimeInfo()).version;
     } catch {
-      version = "1.0.3";
+      version = "1.0.4";
     }
   });
 

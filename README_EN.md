@@ -20,15 +20,15 @@ Hexo Lite Editor brings article editing, live preview, image organization, brows
 
 ## Download
 
-The current stable release is **v1.0.3** for Windows 10/11 x64.
+The current stable release is **v1.0.4** for Windows 10/11 x64.
 
 | Package | Best for | Download |
 | --- | --- | --- |
-| Setup EXE (recommended) | Everyday use; can install WebView2 when needed | [Download setup](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64-setup.exe) |
-| Portable ZIP | Extract and run without installation | [Download portable](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64-portable.zip) |
-| MSI | Managed environments that require MSI | [Download MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64.msi) |
+| Setup EXE (recommended) | Everyday use; can install WebView2 when needed | [Download setup](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64-setup.exe) |
+| Portable ZIP | Extract and run without installation | [Download portable](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64-portable.zip) |
+| MSI | Managed environments that require MSI | [Download MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64.msi) |
 
-[Full release and checksums](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.3) · [Changelog](CHANGELOG.md)
+[Full release and checksums](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.4) · [Changelog](CHANGELOG.md)
 
 > The project is not signed with a commercial code-signing certificate yet, so Windows SmartScreen may show an “Unknown publisher” warning. Download only from this repository and verify files against `SHA256SUMS.txt` in the same release. The installer can bootstrap Microsoft Edge WebView2 Runtime; the portable build links to Microsoft's official download when WebView2 is missing.
 

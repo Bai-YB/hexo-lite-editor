@@ -115,7 +115,7 @@ test("诊断页主动读取日志，关于页保持精简", async ({ page }) => 
   await page.getByRole("button", { name: /诊断与维护/ }).click();
   await expect(page.getByText("目前没有日志")).toBeVisible();
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByText("版本 1.0.3")).toBeVisible();
+  await expect(page.getByText("版本 1.0.4")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);
   await expect(page.getByText("操作系统")).toHaveCount(0);
 });

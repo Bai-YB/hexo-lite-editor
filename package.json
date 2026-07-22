@@ -1,6 +1,6 @@
 {
   "name": "hexo-lite-editor",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "A quiet, native desktop workspace for Hexo publishing.",
   "type": "module",
   "scripts": {

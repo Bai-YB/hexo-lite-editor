@@ -20,15 +20,15 @@ Hexo Lite Editor 把文章编辑、即时预览、图片整理、Hexo 浏览器�
 
 ## 下载
 
-当前稳定版本为 **v1.0.3**，支持 Windows 10/11 x64。
+当前稳定版本为 **v1.0.4**，支持 Windows 10/11 x64。
 
 | 版本 | 适合场景 | 下载 |
 | --- | --- | --- |
-| 安装版 EXE（推荐） | 日常使用；安装器可补齐 WebView2 | [下载安装版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64-setup.exe) |
-| 便携版 ZIP | 解压即用，不写入安装信息 | [下载便携版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64-portable.zip) |
-| MSI | 企业部署或需要 MSI 的环境 | [下载 MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.3/Hexo-Lite-Editor_1.0.3_windows-x64.msi) |
+| 安装版 EXE（推荐） | 日常使用；安装器可补齐 WebView2 | [下载安装版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64-setup.exe) |
+| 便携版 ZIP | 解压即用，不写入安装信息 | [下载便携版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64-portable.zip) |
+| MSI | 企业部署或需要 MSI 的环境 | [下载 MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64.msi) |
 
-[查看完整 Release 与校验文件](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.3) · [版本记录](CHANGELOG.md)
+[查看完整 Release 与校验文件](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.4) · [版本记录](CHANGELOG.md)
 
 > 项目暂未使用商业代码签名证书，Windows SmartScreen 可能显示“未知发布者”。请只从本仓库 Releases 下载，并用同一 Release 中的 `SHA256SUMS.txt` 校验文件。安装版会在需要时安装 Microsoft Edge WebView2 Runtime；便携版会引导到微软官方下载页。
 

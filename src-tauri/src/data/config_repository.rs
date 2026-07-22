@@ -56,7 +56,7 @@ pub fn load_config(state: &AppState) -> AppResult<ConfigLoadResult> {
         return Ok(ConfigLoadResult {
             config,
             warnings: vec![
-                "已迁移 1.0.2 配置；原配置已备份，预览与日志使用 1.0.3 安全默认值。".to_string(),
+                "已迁移 1.0.2 配置；原配置已备份，预览与日志使用当前安全默认值。".to_string(),
             ],
         });
     }

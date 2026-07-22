@@ -294,7 +294,7 @@ export const platform = {
   runtimeInfo() {
     if (!isTauri()) {
       return Promise.resolve<RuntimeInfo>({
-        version: "1.0.3",
+        version: "1.0.4",
         operatingSystem: navigator.platform,
         architecture: "browser preview",
         webview: navigator.userAgent

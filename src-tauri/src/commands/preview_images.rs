@@ -217,7 +217,7 @@ async fn public_client_for(url: &Url) -> Result<Client, String> {
     let mut builder = Client::builder()
         .redirect(Policy::none())
         .timeout(Duration::from_secs(15))
-        .user_agent("Hexo-Lite-Editor/1.0.3")
+        .user_agent("Hexo-Lite-Editor/1.0.4")
         .no_proxy();
     if host.parse::<IpAddr>().is_err() {
         builder = builder.resolve(host, addresses[0]);
