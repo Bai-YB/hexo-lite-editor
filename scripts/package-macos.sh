@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "--" ]]; then
+  shift
+fi
 version="${1:-1.0.4}"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
   echo "Invalid release version: $version" >&2
