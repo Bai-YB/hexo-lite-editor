@@ -34,8 +34,13 @@ dmg_name="Hexo-Lite-Editor_${version}_macos-universal.dmg"
 ditto -c -k --sequesterRsrc --keepParent "$app_source" "$output_dir/$app_zip"
 cp "$dmg_source" "$output_dir/$dmg_name"
 
-codesign --verify --deep --strict "$app_source"
-spctl --assess --type execute "$app_source" || true
+code_signed=false
+if codesign --verify --deep --strict "$app_source" 2>/dev/null; then
+  code_signed=true
+  spctl --assess --type execute "$app_source" || true
+else
+  echo "Unsigned development build; Gatekeeper may require Finder > Open on first launch."
+fi
 
 commit="$(git -C "$repo_root" rev-parse HEAD)"
 architecture="$(lipo -archs "$app_source/Contents/MacOS/hexo-lite-editor")"
@@ -52,6 +57,7 @@ cat > "$output_dir/release-manifest-macos.json" <<EOF
   "architecture": "$architecture",
   "sourceCommit": "$commit",
   "generatedAt": "$generated_at",
+  "codeSigned": $code_signed,
   "notarized": false,
   "assets": ["$dmg_name", "$app_zip"]
 }
