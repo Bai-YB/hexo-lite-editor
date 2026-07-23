@@ -67,7 +67,15 @@ jobs:
           if-no-files-found: ignore
 
       - name: Build universal macOS app and DMG
-        run: pnpm release:macos -- "${{ inputs.version || '1.0.4' }}"
+        run: pnpm release:macos -- "${{ inputs.version || '1.0.4' }}" 2>&1 | tee macos-package.log
+
+      - name: Upload package diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-package-diagnostics
+          path: macos-package.log
+          if-no-files-found: ignore
 
       - name: Inspect application bundle
         run: |
