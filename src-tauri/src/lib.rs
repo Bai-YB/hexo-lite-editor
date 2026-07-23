@@ -117,6 +117,8 @@ pub fn run() {
             let _ = data::cleanup_task_logs(&state);
             app.manage(state);
             if let Some(window) = app.get_webview_window("main") {
+                // Start each app session without WebView's persisted HTTP image cache.
+                let _ = window.clear_all_browsing_data();
                 let _ = window.set_icon(WINDOW_ICON.clone());
             }
             Ok(())

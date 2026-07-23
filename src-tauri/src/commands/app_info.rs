@@ -22,11 +22,16 @@ struct GithubRelease {
 
 #[tauri::command]
 pub fn runtime_info(app: AppHandle) -> RuntimeInfo {
+    let webview = match std::env::consts::OS {
+        "windows" => "Microsoft Edge WebView2 / Tauri WebView",
+        "macos" => "Apple WebKit / Tauri WebView",
+        _ => "WebKitGTK / Tauri WebView",
+    };
     RuntimeInfo {
         version: app.package_info().version.to_string(),
         operating_system: std::env::consts::OS.to_string(),
         architecture: std::env::consts::ARCH.to_string(),
-        webview: "Microsoft Edge WebView2 / Tauri WebView".to_string(),
+        webview: webview.to_string(),
     }
 }
 

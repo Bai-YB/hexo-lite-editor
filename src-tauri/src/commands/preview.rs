@@ -6,12 +6,12 @@ use crate::{
         TaskStream, TaskType,
     },
     engine::build_task_steps,
+    platform::command_path,
 };
 use chrono::Local;
 use process_wrap::tokio::*;
 use serde::Deserialize;
 use std::{
-    path::Path,
     process::Stdio,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -21,13 +21,17 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, BufReader},
+    io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader},
     net::TcpStream,
     sync::oneshot,
 };
 use uuid::Uuid;
 
 const PREVIEW_READY_TIMEOUT: Duration = Duration::from_secs(20);
+const ROUTE_HELPER_SCRIPT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/resources/resolve-hexo-route.cjs"
+));
 
 #[tauri::command]
 pub fn get_preview_status(
@@ -237,16 +241,16 @@ pub async fn resolve_article_preview_url(
             true,
         ));
     }
-    let helper = preview_helper_path(&app)?;
-    let output = tokio::process::Command::new("node")
-        .arg(helper)
-        .arg(&root)
-        .arg(&relative_path)
-        .stdin(Stdio::null())
+    let mut route_process = tokio::process::Command::new("node")
+        // Execute through stdin so platform-specific path quoting cannot alter the helper.
+        .arg("-")
+        .current_dir(&root)
+        .env("HLEX_REQUESTED_SOURCE", &relative_path)
+        .env("PATH", command_path())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .await
+        .spawn()
         .map_err(|error| {
             AppError::new(
                 "preview_route_runtime_missing",
@@ -254,6 +258,25 @@ pub async fn resolve_article_preview_url(
                 true,
             )
         })?;
+    if let Some(mut stdin) = route_process.stdin.take() {
+        stdin
+            .write_all(ROUTE_HELPER_SCRIPT.as_bytes())
+            .await
+            .map_err(|error| {
+                AppError::new(
+                    "preview_route_runtime_missing",
+                    format!("鏃犳硶鍐欏叆 Hexo 璺敱瑙ｆ瀽鍣細{error}"),
+                    true,
+                )
+            })?;
+    }
+    let output = route_process.wait_with_output().await.map_err(|error| {
+        AppError::new(
+            "preview_route_runtime_missing",
+            format!("鏃犳硶杩愯 Hexo 璺敱瑙ｆ瀽鍣細{error}"),
+            true,
+        )
+    })?;
     if !output.status.success() {
         let error = redact_log_line(&String::from_utf8_lossy(&output.stderr));
         return Err(AppError::new(
@@ -307,6 +330,7 @@ async fn run_preview_process(
         command
             .args(&step.args)
             .current_dir(&root)
+            .env("PATH", command_path())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -605,6 +629,7 @@ async fn port_is_ready(port: u16) -> bool {
     .is_ok_and(|result| result.is_ok())
 }
 
+#[allow(dead_code)]
 fn preview_helper_path(app: &AppHandle) -> AppResult<std::path::PathBuf> {
     let bundled = app
         .path()
@@ -615,7 +640,7 @@ fn preview_helper_path(app: &AppHandle) -> AppResult<std::path::PathBuf> {
     if bundled.is_file() {
         return Ok(bundled);
     }
-    let development = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let development = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("resources")
         .join("resolve-hexo-route.cjs");
     if development.is_file() {

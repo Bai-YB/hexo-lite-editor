@@ -49,7 +49,6 @@ export interface ArticleCover {
     | "banner"
     | "thumbnail"
     | "indexImg"
-    | "firstImage"
     | "placeholder";
   previewUrl?: string;
   alt: string;
@@ -174,6 +173,7 @@ export interface AppConfigV3 {
   layout: {
     articleListWidth: number;
     previewWidth: number;
+    previewRatio: number;
     previewVisible: boolean;
   };
   hexo: {
@@ -354,7 +354,7 @@ export const defaultConfig: AppConfigV3 = {
     tabSize: 2
   },
   articleList: { showCover: true },
-  layout: { articleListWidth: 280, previewWidth: 380, previewVisible: true },
+  layout: { articleListWidth: 280, previewWidth: 380, previewRatio: 0.5, previewVisible: true },
   hexo: {
     previewPort: 4000,
     autoStartPreview: false,

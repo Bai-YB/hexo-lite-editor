@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
+    "release:macos": "bash scripts/package-macos.sh",
     "tauri": "tauri"
   },
   "license": "MIT",

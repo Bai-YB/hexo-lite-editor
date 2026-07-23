@@ -12,8 +12,7 @@
     Search,
     Server,
     SlidersHorizontal,
-    MoreHorizontal,
-    RefreshCw
+    MoreHorizontal
   } from "@lucide/svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
   import type { EditorSessionStore, EditorSessionState } from "./EditorSessionStore";
@@ -23,6 +22,7 @@
   import ModalDialog from "$shared/components/ModalDialog.svelte";
   import { extractRemoteImageUrls, renderSafeMarkdown } from "$shared/markdown/safeMarkdown";
   import { platform, normalizeError } from "$platform/tauri";
+  import { shortcutLabel } from "$platform/os";
   import { previewStateLabel } from "./previewModel";
   import type {
     AppConfigV3,
@@ -81,7 +81,8 @@
   let createError = "";
   let creating = false;
   let articleWidth = config.layout.articleListWidth;
-  let previewWidth = config.layout.previewWidth;
+  let previewRatio = config.layout.previewRatio ?? 0.5;
+  let editorGrid: HTMLDivElement;
   let imageInput: HTMLInputElement;
   let projectMenuOpen = false;
   let advancedMenuOpen = false;
@@ -96,6 +97,8 @@
   const editorScrollByArticle = new Map<string, number>();
   const previewScrollByArticle = new Map<string, number>();
   let assetRefreshAttempted = false;
+  let previewLoadSequence = 0;
+  let componentAlive = true;
 
   const unsubscribe = store.subscribe((state) => {
     editorState = state;
@@ -111,6 +114,8 @@
   });
 
   onDestroy(() => {
+    componentAlive = false;
+    previewLoadSequence += 1;
     unsubscribe();
     clearTimeout(autoSaveTimer);
     window.removeEventListener("pointerdown", closeEditorMenus);
@@ -212,6 +217,9 @@
   }
 
   async function loadPreviewAssets(project: ProjectSessionView) {
+    const sequence = ++previewLoadSequence;
+    const expectedProjectId = project.projectId;
+    const expectedGeneration = project.generation;
     try {
       const localImages = await platform.listLocalImages(project.projectId, project.generation);
       const next: Record<string, string> = {};
@@ -230,9 +238,18 @@
           // The backend emits encoded URLs; keep the raw key if an old record is malformed.
         }
       }
-      if (session?.projectId === project.projectId) previewAssets = next;
+      if (
+        componentAlive
+        && sequence === previewLoadSequence
+        && session?.projectId === expectedProjectId
+        && session.generation === expectedGeneration
+      ) {
+        previewAssets = next;
+      }
     } catch {
-      previewAssets = {};
+      if (componentAlive && sequence === previewLoadSequence && session?.projectId === expectedProjectId) {
+        previewAssets = {};
+      }
     }
   }
 
@@ -383,51 +400,6 @@
     onConfigChange(next);
   }
 
-  function handleWindowFocus() {
-    if (editorState.snapshot) void refreshRemotePreviewImages(true);
-  }
-
-  async function refreshRemotePreviewImages(force = false) {
-    if (!session || !editorState.snapshot) return;
-    const urls = extractRemoteImageUrls(editorState.content, previewAssets);
-    const validationKey = `${activeArticleId ?? ""}\u0000${urls.join("\u0000")}`;
-    if (!force && validationKey !== remoteImageKey) return;
-    const sequence = ++imageValidationSequence;
-    const expectedArticleId = activeArticleId;
-    const expectedProjectId = session.projectId;
-    const expectedGeneration = session.generation;
-    remotePreviewPending = urls.length > 0;
-    remotePreviewAssets = Object.fromEntries(urls.map((url) => [url, null]));
-    if (!urls.length) return;
-    try {
-      const results = await platform.resolveRemotePreviewImages({
-        projectId: expectedProjectId,
-        sessionGeneration: expectedGeneration,
-        urls
-      });
-      if (
-        sequence !== imageValidationSequence
-        || activeArticleId !== expectedArticleId
-        || session?.projectId !== expectedProjectId
-        || session.generation !== expectedGeneration
-      ) return;
-      remotePreviewAssets = Object.fromEntries(
-        results.map((result) => [
-          result.originalUrl,
-          result.state === "ready" ? result.previewUrl ?? null : null
-        ])
-      );
-    } catch {
-      if (sequence === imageValidationSequence) remotePreviewAssets = Object.fromEntries(urls.map((url) => [url, null]));
-    } finally {
-      if (sequence === imageValidationSequence) remotePreviewPending = false;
-    }
-  }
-
-  function handlePreviewImageError(event: Event) {
-    if (event.target instanceof HTMLImageElement) void refreshRemotePreviewImages(true);
-  }
-
   async function runAdvanced(kind: TaskType) {
     if (!session) return;
     advancedMenuOpen = false;
@@ -463,20 +435,19 @@
     }
   }
 
-  function startResize(event: PointerEvent, target: "articles" | "preview") {
+  function startArticleResize(event: PointerEvent) {
     const startX = event.clientX;
-    const startWidth = target === "articles" ? articleWidth : previewWidth;
+    const startWidth = articleWidth;
     const move = (moveEvent: PointerEvent) => {
       const delta = moveEvent.clientX - startX;
-      if (target === "articles") articleWidth = clamp(startWidth + delta, 220, 420);
-      else previewWidth = clamp(startWidth - delta, 280, 720);
+      articleWidth = clamp(startWidth + delta, 220, 420);
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       onConfigChange({
         ...config,
-        layout: { ...config.layout, articleListWidth: articleWidth, previewWidth }
+        layout: { ...config.layout, articleListWidth: articleWidth }
       });
     };
     window.addEventListener("pointermove", move);
@@ -502,6 +473,149 @@
   function clamp(value: number, min: number, max: number) {
     return Math.min(max, Math.max(min, value));
   }
+
+  async function refreshRemotePreviewImages(force = false) {
+    if (!session || !editorState.snapshot) return;
+    const urls = extractRemoteImageUrls(editorState.content, previewAssets);
+    const validationKey = `${activeArticleId ?? ""}\u0000${urls.join("\u0000")}`;
+    if (!force && validationKey !== remoteImageKey) return;
+    const sequence = ++imageValidationSequence;
+    const expectedArticleId = activeArticleId;
+    const expectedProjectId = session.projectId;
+    const expectedGeneration = session.generation;
+    remotePreviewPending = urls.length > 0;
+    remotePreviewAssets = Object.fromEntries(urls.map((url) => [url, null]));
+    if (!urls.length) return;
+    try {
+      const results = await platform.resolveRemotePreviewImages({
+        projectId: expectedProjectId,
+        sessionGeneration: expectedGeneration,
+        urls
+      });
+      if (
+        sequence !== imageValidationSequence
+        || activeArticleId !== expectedArticleId
+        || session?.projectId !== expectedProjectId
+        || session.generation !== expectedGeneration
+      ) return;
+      remotePreviewAssets = Object.fromEntries(
+        results.map((result) => [
+          result.originalUrl,
+          result.state === "ready" ? result.previewUrl ?? null : null
+        ])
+      );
+    } catch {
+      if (sequence === imageValidationSequence) {
+        remotePreviewAssets = Object.fromEntries(urls.map((url) => [url, null]));
+      }
+    } finally {
+      if (sequence === imageValidationSequence) remotePreviewPending = false;
+    }
+  }
+
+  function handlePreviewImageError(event: Event) {
+    if (!(event.target instanceof HTMLImageElement) || event.target.dataset.errorRendered) return;
+    const image = event.target;
+    if (isRemotePreviewSource(image.dataset.imageSource || "")) {
+      void refreshRemotePreviewImages(true);
+      return;
+    }
+    image.dataset.errorRendered = "true";
+    const originalSource = image.dataset.imageSource || image.getAttribute("src") || "unknown";
+    if (session && !isRemotePreviewSource(originalSource) && !image.dataset.assetRetry) {
+      image.dataset.assetRetry = "true";
+      image.dataset.errorRendered = "";
+      void loadPreviewAssets(session);
+      window.setTimeout(() => {
+        if (!image.isConnected || image.dataset.errorRendered) return;
+        image.dataset.errorRendered = "true";
+        replacePreviewImageWithError(image, originalSource);
+      }, 1200);
+      return;
+    }
+    const source = image.dataset.imageSource || image.getAttribute("src") || "未知地址";
+    const alt = image.getAttribute("alt")?.trim();
+    const error = document.createElement("div");
+    error.className = "preview-image-error";
+    error.setAttribute("role", "img");
+    error.setAttribute("aria-label", `${alt ? `${alt}：` : ""}图片加载失败`);
+
+    const heading = document.createElement("strong");
+    heading.textContent = alt ? `图片加载失败：${alt}` : "图片加载失败";
+    const reason = document.createElement("span");
+    reason.textContent = "可能是 404、网络错误、访问限制或返回内容不是图片。";
+    const address = document.createElement("code");
+    address.textContent = source;
+    error.append(heading, reason, address);
+    image.replaceWith(error);
+  }
+
+  function replacePreviewImageWithError(image: HTMLImageElement, source: string) {
+    const alt = image.getAttribute("alt")?.trim();
+    const error = document.createElement("div");
+    error.className = "preview-image-error";
+    error.setAttribute("role", "img");
+    error.setAttribute("aria-label", `${alt ? `${alt}：` : ""}图片加载失败`);
+    const heading = document.createElement("strong");
+    heading.textContent = alt ? `图片加载失败：${alt}` : "图片加载失败";
+    const reason = document.createElement("span");
+    reason.textContent = "可能是图片资源正在刷新，或文件已不存在。";
+    const address = document.createElement("code");
+    address.textContent = source;
+    error.append(heading, reason, address);
+    image.replaceWith(error);
+  }
+
+  function isRemotePreviewSource(value: string) {
+    try {
+      const url = new URL(value);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  function startContentResize(event: PointerEvent) {
+    const move = (moveEvent: PointerEvent) => {
+      const bounds = editorGrid.getBoundingClientRect();
+      const available = Math.max(1, bounds.width - articleWidth - 4);
+      const writingWidth = moveEvent.clientX - bounds.left - articleWidth;
+      const minimumShare = Math.min(0.4, Math.max(0.15, 240 / available));
+      const writingRatio = clamp(writingWidth / available, minimumShare, 1 - minimumShare);
+      previewRatio = 1 - writingRatio;
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      onConfigChange({
+        ...config,
+        layout: { ...config.layout, previewRatio }
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+  }
+
+  function handleWindowFocus() {
+    void refreshVisibleImages();
+  }
+
+  async function refreshVisibleImages() {
+    if (!session) return;
+    const expectedProjectId = session.projectId;
+    const expectedGeneration = session.generation;
+    await loadPreviewAssets(session);
+    await refreshRemotePreviewImages(true);
+    try {
+      const next = await platform.listArticles(expectedProjectId, expectedGeneration);
+      if (session?.projectId !== expectedProjectId || session.generation !== expectedGeneration) return;
+      articles = next;
+      onArticlesChange(next);
+    } catch {
+      // Image refresh failures do not interrupt editing.
+    }
+  }
+
 </script>
 
 <div class="editor-page">
@@ -544,7 +658,7 @@
           </div>
         {/if}
       </div>
-      <button class="button primary" type="button" disabled={taskBusy} title="发布（Ctrl+Shift+P）" on:click={onPublish}><Rocket size={16} />{taskBusy ? "处理中" : "发布"}</button>
+      <button class="button primary" type="button" disabled={taskBusy} title={`发布（${shortcutLabel("⇧P")}）`} on:click={onPublish}><Rocket size={16} />{taskBusy ? "处理中" : "发布"}</button>
     {/if}
   </header>
   <input hidden bind:this={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple on:change={(event) => { void handleImageFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
@@ -559,8 +673,8 @@
       {/if}
     </div>
   {:else}
-    <div class="editor-grid-wrap" style={`--article-width:${articleWidth}px; --preview-width:${previewWidth}px`}>
-      <div class="editor-grid">
+    <div class="editor-grid-wrap" style={`--article-width:${articleWidth}px; --writing-ratio:${1 - previewRatio}; --preview-ratio:${previewRatio}`}>
+      <div class="editor-grid" bind:this={editorGrid}>
         <aside class="article-pane" aria-label="文章列表">
           <div class="pane-toolbar">
             <Search size={15} aria-hidden="true" />
@@ -633,12 +747,12 @@
           {/if}
         </main>
         {#if config.layout.previewVisible}
+          <div class="content-resize-handle" role="separator" aria-label="调整编辑与预览比例" on:pointerdown={startContentResize}></div>
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <section class="preview-pane" aria-label="文章预览">
             <div class="preview-mode-bar">
               <strong>即时预览</strong>
               <span>{remotePreviewPending ? "正在验证远程图片" : "HTML 已安全渲染"}</span>
-              <button class="icon-button small" type="button" title="重新验证远程图片" aria-label="刷新图片" disabled={remotePreviewPending} on:click={() => void refreshRemotePreviewImages(true)}><RefreshCw size={14} /></button>
             </div>
             {#if !editorState.snapshot}
               <EmptyState title="暂无预览" description="打开文章后显示渲染结果。" />
@@ -649,10 +763,7 @@
           </section>
         {/if}
       </div>
-      <div class="resize-handle" style={`left:${articleWidth}px`} role="separator" aria-label="调整文章列表宽度" on:pointerdown={(event) => startResize(event, "articles")}></div>
-      {#if config.layout.previewVisible}
-        <div class="resize-handle" style={`right:${previewWidth}px`} role="separator" aria-label="调整预览宽度" on:pointerdown={(event) => startResize(event, "preview")}></div>
-      {/if}
+      <div class="resize-handle" style={`left:${articleWidth}px`} role="separator" aria-label="调整文章列表宽度" on:pointerdown={startArticleResize}></div>
     </div>
   {/if}
 
@@ -677,7 +788,7 @@
 {/if}
 
 {#if showCreate}
-  <ModalDialog title="新建文章" description="中文文件名会被保留，只过滤 Windows 不允许的字符。" onClose={() => (showCreate = false)}>
+  <ModalDialog title="新建文章" description="中文文件名会被保留，只过滤跨平台不安全的字符。" onClose={() => (showCreate = false)}>
     <div class="content-stack">
       <label class="field"><span>标题</span><input class="input" bind:value={createTitle} data-autofocus placeholder="例如：我的第一篇文章" /></label>
       <label class="field"><span>文件名</span><input class="input" bind:value={createFileName} placeholder="支持中文，无需手动填写 .md" /></label>

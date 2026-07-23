@@ -1,13 +1,14 @@
 <div align="center">
   <img src=".github/assets/app-icon.png" width="112" height="112" alt="Hexo Lite Editor 图标">
   <h1>Hexo Lite Editor</h1>
-  <p>安静、原生的 Windows Hexo 写作、图片管理与发布工作区。</p>
+  <p>安静、原生的 Windows 与 macOS Hexo 写作、图片管理与发布工作区。</p>
   <p><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
   <p>
     <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Bai-YB/hexo-lite-editor?display_name=tag&style=flat-square"></a>
     <a href="https://github.com/Bai-YB/hexo-lite-editor/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Bai-YB/hexo-lite-editor/total?style=flat-square"></a>
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
     <a href="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-windows.yml"><img alt="Windows Release" src="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-windows.yml/badge.svg"></a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-macos.yml"><img alt="macOS Build" src="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-macos.yml/badge.svg"></a>
   </p>
 </div>
 
@@ -20,23 +21,25 @@ Hexo Lite Editor 把文章编辑、即时预览、图片整理、Hexo 浏览器�
 
 ## 下载
 
-当前稳定版本为 **v1.0.4**，支持 Windows 10/11 x64。
+当前稳定版本为 **v1.0.4**，支持 Windows 10/11 x64；macOS 通用构建支持 Intel 与 Apple Silicon，最低 macOS 11。
 
 | 版本 | 适合场景 | 下载 |
 | --- | --- | --- |
 | 安装版 EXE（推荐） | 日常使用；安装器可补齐 WebView2 | [下载安装版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64-setup.exe) |
 | 便携版 ZIP | 解压即用，不写入安装信息 | [下载便携版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64-portable.zip) |
 | MSI | 企业部署或需要 MSI 的环境 | [下载 MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.4/Hexo-Lite-Editor_1.0.4_windows-x64.msi) |
+| macOS DMG | Intel 与 Apple Silicon；拖入“应用程序”即可 | GitHub Actions 的 `Build macOS` 构建产物 |
 
 [查看完整 Release 与校验文件](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.4) · [版本记录](CHANGELOG.md)
 
-> 项目暂未使用商业代码签名证书，Windows SmartScreen 可能显示“未知发布者”。请只从本仓库 Releases 下载，并用同一 Release 中的 `SHA256SUMS.txt` 校验文件。安装版会在需要时安装 Microsoft Edge WebView2 Runtime；便携版会引导到微软官方下载页。
+> 项目暂未使用商业代码签名证书。Windows SmartScreen 可能显示“未知发布者”；macOS 首次打开可能需要在 Finder 中右键应用并选择“打开”。请只使用本仓库构建产物并校验 SHA-256。
 
 ## 为什么使用它
 
 - **专注写作**：CodeMirror 编辑器、文章/草稿列表、独立滚动的安全即时预览，以及浅色、深色和跟随系统主题。
+- **显式文章封面**：文章列表只读取 Front Matter 明确声明的 `cover`、`top_img`、`banner`、`thumbnail` 或 `index_img`，不会把正文第一张图片猜成封面。
 - **安全 HTML**：正文中的常用原生 HTML 可以正确渲染；脚本、事件属性、iframe、表单、危险 URL 与越界样式会被 DOMPurify 清理。代码围栏中的 HTML 仍按源码显示。
-- **图片真实性优先**：Markdown 与 HTML 图片统一由 Rust 后端重新验证。远程图片被删除、返回无效 MIME 或网络状态无法确认时，预览显示“图片不可用”，不会回退到旧缓存。
+- **受控远程图片**：Markdown 与 HTML 远程图片由后端验证公网 HTTPS、大小、类型和跳转后，再通过当前项目会话的临时资源地址显示。
 - **本地图床可配置**：图片目录限定在 Hexo `source/` 下，Markdown 前缀可以按站点结构调整；导入、粘贴、拖放、列表与引用使用同一套配置。
 - **CloudFlare-ImgBed 联动**：兼容 [CloudFlare-ImgBed v2.7.5](https://github.com/MarSeventh/CloudFlare-ImgBed/tree/v2.7.5)，可创建仅含上传、列出和删除权限的 Token。密码只用于临时登录，Token 仅存入系统凭据库。
 - **可靠发布**：在编辑器中启动浏览器预览，或运行 clean、generate、deploy 与 Git 状态检查；保存与发布仍遵循项目自己的 Hexo 配置。
@@ -71,7 +74,7 @@ Hexo Lite Editor 把文章编辑、即时预览、图片整理、Hexo 浏览器�
 
 即时预览允许常用排版、表格、`details/summary`、`figure/figcaption`、图片和受限内联样式，但不会执行脚本，也不支持 iframe、对象、表单、SVG 或 `<style>` 块。生产构建同时启用固定 CSP。
 
-远程图片只允许无凭据 HTTPS，并会检查重定向、公网地址、真实 MIME 与大小；单图上限 25 MB，单批上限 64 MB。每次主动刷新、切换文章、重新聚焦窗口或图片地址变化时都会重新验证，响应和会话资产均采用 `no-store` 策略。
+即时预览中的远程图片只允许无凭据的公网 HTTPS。后端限制重定向、批次和单图大小，校验声明类型与真实文件头，并拒绝内网、环回、SVG 和伪装响应；签名 URL 保持不变。本地图片同样通过当前项目会话的受控资源地址读取。
 
 本地图片目录必须是 `source/` 下的相对路径，拒绝绝对路径、`..` 和符号链接逃逸。CloudFlare-ImgBed 管理员密码不会写入配置、日志或浏览器存储；删除本地 Token 不会远程撤销服务端 Token。
 
@@ -79,18 +82,18 @@ Hexo Lite Editor 把文章编辑、即时预览、图片整理、Hexo 浏览器�
 
 | 快捷键 | 操作 |
 | --- | --- |
-| `Ctrl + O` | 打开 Hexo 项目 |
-| `Ctrl + S` | 保存当前文章 |
-| `Ctrl + N` | 新建文章 |
-| `Ctrl + F` | 在编辑器中搜索 |
-| `Ctrl + Shift + P` | 发布当前博客 |
-| `Ctrl + ,` | 打开设置 |
-| `Ctrl + 1…4` | 切换编辑器、图床、设置、关于 |
+| `Ctrl/⌘ + O` | 打开 Hexo 项目 |
+| `Ctrl/⌘ + S` | 保存当前文章 |
+| `Ctrl/⌘ + N` | 新建文章 |
+| `Ctrl/⌘ + F` | 在编辑器中搜索 |
+| `Ctrl/⌘ + Shift + P` | 发布当前博客 |
+| `Ctrl/⌘ + ,` | 打开设置 |
+| `Ctrl/⌘ + 1…4` | 切换编辑器、图床、设置、关于 |
 | `↑ / ↓` | 在聚焦的文章列表中切换文章 |
 
 ## 开发与构建
 
-需要 Node.js、pnpm、Rust 和 Tauri 2 的 Windows 构建依赖。
+需要 Node.js、pnpm、Rust 和 Tauri 2 对应平台的构建依赖。
 
 ```bash
 pnpm install
@@ -114,6 +117,13 @@ pnpm tauri build
 
 ```powershell
 pnpm release:windows
+```
+
+在 macOS 14 构建 Intel/Apple Silicon 通用 `.app` 与 `.dmg`：
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+pnpm release:macos -- 1.0.4
 ```
 
 ## 反馈与许可证

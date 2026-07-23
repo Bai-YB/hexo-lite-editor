@@ -33,7 +33,7 @@ let config: AppConfigV3 = structuredClone(defaultConfig);
 config.imageBed.cloudflareApiUrl = "https://img.example.com";
 let articles: ArticleSummary[] = [
   { articleId: "welcome", relativePath: "source/_posts/欢迎使用.md", title: "欢迎使用 Hexo Lite Editor", kind: "post", frontMatterDate: "2026-07-17 20:00", createdAt: "2026-07-17T12:00:00Z", modifiedAt: "2026-07-17T13:20:00Z", tags: ["Hexo", "写作"], categories: ["指南"], cover: { source: "cover", previewUrl: image("quiet-desk"), alt: "文章封面" } },
-  { articleId: "summer", relativePath: "source/_posts/盛夏散步.md", title: "盛夏散步：城市里的安静时刻", kind: "post", frontMatterDate: "2026-07-16 09:30", createdAt: "2026-07-16T01:30:00Z", modifiedAt: "2026-07-17T09:10:00Z", tags: ["生活", "摄影"], categories: ["随笔"], cover: { source: "firstImage", previewUrl: image("summer-walk"), alt: "文章首图" } },
+  { articleId: "summer", relativePath: "source/_posts/盛夏散步.md", title: "盛夏散步：城市里的安静时刻", kind: "post", frontMatterDate: "2026-07-16 09:30", createdAt: "2026-07-16T01:30:00Z", modifiedAt: "2026-07-17T09:10:00Z", tags: ["生活", "摄影"], categories: ["随笔"], cover: { source: "placeholder", alt: "无封面" } },
   { articleId: "tauri", relativePath: "source/_posts/Tauri桌面应用笔记.md", title: "Tauri 桌面应用整理笔记", kind: "post", frontMatterDate: "2026-07-14 15:00", createdAt: "2026-07-14T07:00:00Z", modifiedAt: "2026-07-16T18:45:00Z", tags: ["Tauri", "Rust"], categories: ["开发"], cover: { source: "thumbnail", previewUrl: image("tauri-notes"), alt: "文章缩略图" } },
   { articleId: "draft", relativePath: "source/_drafts/下一篇文章.md", title: "下一篇文章的提纲", kind: "draft", createdAt: "2026-07-17T14:00:00Z", modifiedAt: "2026-07-17T14:00:00Z", tags: ["待整理"], categories: [], cover: { source: "placeholder", alt: "无封面" } }
 ];

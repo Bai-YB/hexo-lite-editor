@@ -13,6 +13,7 @@ use std::{
     path::{Component, Path, PathBuf},
     time::{Duration, SystemTime},
 };
+use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -216,18 +217,6 @@ fn resolve_article_cover(
             }
         }
     }
-    if let Some(value) = first_markdown_image(&parsed.body) {
-        if let Some((preview_url, asset)) = resolve_cover_url(root, article_path, &value) {
-            return (
-                ArticleCover {
-                    source: ArticleCoverSource::FirstImage,
-                    preview_url: Some(preview_url),
-                    alt: title.to_string(),
-                },
-                asset,
-            );
-        }
-    }
     (
         ArticleCover {
             source: ArticleCoverSource::Placeholder,
@@ -245,7 +234,7 @@ fn resolve_cover_url(
 ) -> Option<(String, Option<(String, AssetRecord)>)> {
     let value = raw.trim().trim_matches(['\'', '"']);
     if value.starts_with("https://") {
-        return Some((value.to_string(), None));
+        return Some((fresh_remote_url(value), None));
     }
     if value.starts_with("http://") || value.starts_with("data:") || value.is_empty() {
         return None;
@@ -291,24 +280,30 @@ fn resolve_cover_url(
     ))
 }
 
-fn first_markdown_image(body: &str) -> Option<String> {
-    let mut cursor = 0;
-    while let Some(start) = body[cursor..].find("![") {
-        let start = cursor + start;
-        let after_alt = body[start + 2..].find("](")? + start + 4;
-        let end = body[after_alt..].find(')')? + after_alt;
-        let target = body[after_alt..end]
-            .trim()
-            .trim_matches(['<', '>'])
-            .split_whitespace()
-            .next()
-            .unwrap_or_default();
-        if !target.is_empty() {
-            return Some(target.to_string());
-        }
-        cursor = end + 1;
+fn fresh_remote_url(value: &str) -> String {
+    let Ok(mut url) = Url::parse(value) else {
+        return value.to_string();
+    };
+    let signed = url.query_pairs().any(|(key, _)| {
+        let key = key.to_ascii_lowercase();
+        matches!(
+            key.as_str(),
+            "signature"
+                | "sig"
+                | "token"
+                | "expires"
+                | "policy"
+                | "key-pair-id"
+                | "credential"
+                | "auth"
+        ) || key.starts_with("x-amz-")
+            || key.starts_with("x-goog-")
+    });
+    if !signed {
+        url.query_pairs_mut()
+            .append_pair("_hlex_nocache", &Uuid::new_v4().to_string());
     }
-    None
+    url.to_string()
 }
 
 fn value_text(value: &Value) -> Option<String> {
@@ -583,22 +578,28 @@ mod tests {
         assert_eq!(summary.tags, vec!["写作", "Hexo"]);
         assert_eq!(summary.categories, vec!["指南"]);
         assert_eq!(summary.cover.source, ArticleCoverSource::Cover);
-        assert_eq!(
-            summary.cover.preview_url.as_deref(),
-            Some("https://example.com/cover.jpg")
-        );
+        let preview_url = summary.cover.preview_url.as_deref().unwrap();
+        assert!(preview_url.starts_with("https://example.com/cover.jpg?_hlex_nocache="));
         assert!(asset.is_none());
     }
 
     #[test]
-    fn falls_back_to_first_markdown_image_then_placeholder() {
+    fn refreshes_unsigned_remote_covers_without_changing_signed_urls() {
+        let fresh = fresh_remote_url("https://example.com/cover.jpg?size=2#image");
+        assert!(fresh.starts_with("https://example.com/cover.jpg?size=2&_hlex_nocache="));
+        assert!(fresh.ends_with("#image"));
+        assert_eq!(
+            fresh_remote_url("https://example.com/cover.jpg?X-Amz-Signature=abc"),
+            "https://example.com/cover.jpg?X-Amz-Signature=abc"
+        );
+    }
+
+    #[test]
+    fn body_images_never_become_an_implicit_cover() {
         let parsed = parse_front_matter("正文\n![首图](https://example.com/first.jpg)");
         let (cover, _) =
             resolve_article_cover(Path::new("."), Path::new("article.md"), "标题", &parsed);
-        assert_eq!(cover.source, ArticleCoverSource::FirstImage);
-        let parsed = parse_front_matter("只有正文");
-        let (cover, _) =
-            resolve_article_cover(Path::new("."), Path::new("article.md"), "标题", &parsed);
         assert_eq!(cover.source, ArticleCoverSource::Placeholder);
+        assert!(cover.preview_url.is_none());
     }
 }

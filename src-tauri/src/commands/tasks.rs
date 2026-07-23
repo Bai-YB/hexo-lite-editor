@@ -7,6 +7,7 @@ use crate::{
         TaskType,
     },
     engine::{build_task_steps, TaskStep},
+    platform::command_path,
 };
 use chrono::Local;
 use process_wrap::tokio::*;
@@ -254,6 +255,7 @@ async fn run_step(
         command
             .args(&step.args)
             .current_dir(root)
+            .env("PATH", command_path())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

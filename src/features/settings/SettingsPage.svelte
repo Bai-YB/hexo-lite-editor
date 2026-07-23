@@ -7,6 +7,7 @@
   import LocalImageBedSettings from "./LocalImageBedSettings.svelte";
   import { defaultConfig } from "$shared/types/app";
   import { normalizeError, platform } from "$platform/tauri";
+  import { shortcutLabel } from "$platform/os";
   import type { SettingsController } from "./controller";
   import type {
     AppConfigV3,
@@ -316,7 +317,7 @@
           <div class="setting-row"><div class="setting-copy"><strong>预览草稿</strong><span>启动 Hexo Server 时使用固定的 --draft 参数。</span></div><label class="switch"><input type="checkbox" checked={draft.hexo.previewDrafts} on:change={(event) => change({ ...draft, hexo: { ...draft.hexo, previewDrafts: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
         <div class="settings-block">
-          <div class="settings-block-heading"><h3>发布流水线</h3><p>发布快捷键为 Ctrl+Shift+P。</p></div>
+          <div class="settings-block-heading"><h3>发布流水线</h3><p>发布快捷键为 {shortcutLabel("⇧P")}。</p></div>
           <div class="setting-row"><div class="setting-copy"><strong>运行前保存文章</strong><span>保存失败时中止发布并保留内容。</span></div><label class="switch"><input type="checkbox" checked={draft.publish.saveBeforeRun} on:change={(event) => change({ ...draft, publish: { ...draft.publish, saveBeforeRun: event.currentTarget.checked } })} /><span></span></label></div>
           <div class="setting-row"><div class="setting-copy"><strong>生成前清理</strong><span>先执行 hexo clean。</span></div><label class="switch"><input type="checkbox" checked={draft.publish.cleanBeforeGenerate} on:change={(event) => change({ ...draft, publish: { ...draft.publish, cleanBeforeGenerate: event.currentTarget.checked } })} /><span></span></label></div>
           <div class="setting-row"><div class="setting-copy"><strong>部署前生成</strong><span>在 deploy 前执行 hexo generate。</span></div><label class="switch"><input type="checkbox" checked={draft.publish.generateBeforeDeploy} on:change={(event) => change({ ...draft, publish: { ...draft.publish, generateBeforeDeploy: event.currentTarget.checked } })} /><span></span></label></div>

@@ -107,7 +107,6 @@ pub enum ArticleCoverSource {
     Banner,
     Thumbnail,
     IndexImg,
-    FirstImage,
     Placeholder,
 }
 
@@ -224,6 +223,8 @@ pub struct EditorConfig {
 pub struct LayoutConfig {
     pub article_list_width: u16,
     pub preview_width: u16,
+    #[serde(default = "default_preview_ratio")]
+    pub preview_ratio: f32,
     pub preview_visible: bool,
 }
 
@@ -291,6 +292,10 @@ impl Default for DiagnosticsConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_preview_ratio() -> f32 {
+    0.5
 }
 
 fn default_local_image_dir() -> String {
@@ -392,6 +397,7 @@ impl Default for AppConfigV3 {
             layout: LayoutConfig {
                 article_list_width: 280,
                 preview_width: 380,
+                preview_ratio: default_preview_ratio(),
                 preview_visible: true,
             },
             hexo: HexoConfig {
@@ -442,6 +448,7 @@ impl AppConfigV3 {
         }
         if !(220..=420).contains(&self.layout.article_list_width)
             || !(280..=720).contains(&self.layout.preview_width)
+            || !(0.15..=0.85).contains(&self.layout.preview_ratio)
         {
             return Err(AppError::invalid("编辑器栏宽超出允许范围。"));
         }

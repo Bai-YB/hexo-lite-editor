@@ -1,0 +1,77 @@
+name: Build macOS
+
+on:
+  push:
+    branches:
+      - "codex/macos-build"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the v prefix"
+        required: true
+        default: "1.0.4"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend checks
+        run: |
+          pnpm check
+          pnpm test
+          pnpm build
+
+      - name: Rust checks
+        working-directory: src-tauri
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test
+
+      - name: Build universal macOS app and DMG
+        run: pnpm release:macos -- "${{ inputs.version || '1.0.4' }}"
+
+      - name: Inspect application bundle
+        run: |
+          app="src-tauri/target/universal-apple-darwin/release/bundle/macos/Hexo Lite Editor.app"
+          test -d "$app"
+          lipo -archs "$app/Contents/MacOS/hexo-lite-editor" | grep -q arm64
+          lipo -archs "$app/Contents/MacOS/hexo-lite-editor" | grep -q x86_64
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --verify --deep --strict "$app"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Hexo-Lite-Editor-${{ inputs.version || '1.0.4' }}-macos-universal
+          path: release-artifacts/${{ inputs.version || '1.0.4' }}/*macos*
+          if-no-files-found: error

@@ -3,6 +3,7 @@
   import { Minus, Square, X } from "@lucide/svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { isTauri } from "$platform/tauri";
+  import { isMacOS } from "$platform/os";
 
   export let onRequestClose: () => void;
   export let onMaximizedChange: (value: boolean) => void = () => {};
@@ -36,7 +37,7 @@
 
 </script>
 
-<div class="titlebar">
+<div class:macos={isMacOS} class="titlebar">
   <div class="titlebar-brand">
     <img src="/favicon.png" alt="" />
     <span>Hexo Lite Editor</span>
@@ -47,7 +48,7 @@
     role="presentation"
     on:dblclick={toggleMaximize}
   ></div>
-  <div class="window-controls">
+  <div class="window-controls" aria-hidden={isMacOS}>
     <button class="window-control" type="button" aria-label="最小化" title="最小化" on:click={minimize}>
       <Minus size={16} />
     </button>

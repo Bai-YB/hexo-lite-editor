@@ -2,8 +2,10 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 
 async function main() {
-  const projectRoot = path.resolve(process.argv[2] || "");
-  const requestedSource = String(process.argv[3] || "").replaceAll("\\", "/");
+  const projectRoot = path.resolve(process.cwd());
+  const requestedSource = String(
+    process.env.HLEX_REQUESTED_SOURCE || process.argv[3] || ""
+  ).replaceAll("\\", "/");
   if (!projectRoot || !requestedSource) throw new Error("缺少项目或文章参数");
 
   const projectRequire = createRequire(path.join(projectRoot, "package.json"));

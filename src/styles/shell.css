@@ -41,6 +41,14 @@
   object-fit: contain;
 }
 
+.titlebar.macos .titlebar-brand {
+  padding-left: 82px;
+}
+
+.titlebar.macos .window-controls {
+  display: none;
+}
+
 .titlebar-drag {
   align-self: stretch;
 }

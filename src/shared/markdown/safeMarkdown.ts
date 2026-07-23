@@ -20,12 +20,14 @@ const allowedTags = [
   "blockquote",
   "br",
   "caption",
+  "center",
   "cite",
   "code",
   "col",
   "colgroup",
   "dd",
   "del",
+  "dfn",
   "details",
   "div",
   "dl",
@@ -34,6 +36,7 @@ const allowedTags = [
   "figcaption",
   "figure",
   "footer",
+  "header",
   "h1",
   "h2",
   "h3",
@@ -41,16 +44,23 @@ const allowedTags = [
   "h5",
   "h6",
   "hr",
+  "hgroup",
   "img",
+  "ins",
   "kbd",
   "li",
   "main",
   "mark",
+  "meter",
   "nav",
   "ol",
   "p",
   "pre",
+  "progress",
   "q",
+  "rp",
+  "rt",
+  "ruby",
   "samp",
   "s",
   "section",
@@ -68,23 +78,38 @@ const allowedTags = [
   "tr",
   "ul",
   "time",
-  "var"
+  "tfoot",
+  "u",
+  "var",
+  "wbr"
 ];
 
 const allowedStyleProperties = new Set([
-  "color", "background-color", "font-size", "font-style", "font-weight", "font-family",
+  "color", "background", "background-color", "background-clip", "-webkit-background-clip",
+  "-webkit-text-fill-color", "font-size", "font-style", "font-weight", "font-family",
   "line-height", "letter-spacing", "text-align", "text-decoration", "text-indent", "text-transform",
   "white-space", "word-break", "overflow-wrap",
+  "vertical-align", "opacity", "float", "clear",
   "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
   "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
   "border", "border-width", "border-style", "border-color", "border-radius",
   "border-top", "border-right", "border-bottom", "border-left",
+  "border-collapse", "border-spacing", "caption-side", "table-layout", "empty-cells",
+  "list-style", "list-style-position", "list-style-type",
   "display", "gap", "row-gap", "column-gap", "flex", "flex-basis", "flex-grow", "flex-shrink",
   "flex-direction", "flex-wrap", "align-items", "align-content", "align-self",
   "justify-content", "justify-items", "justify-self", "place-items", "place-content", "place-self",
   "grid-template-columns", "grid-template-rows", "grid-column", "grid-row",
   "width", "min-width", "max-width", "height", "min-height", "max-height"
 ]);
+
+const safeSemanticAttributes = new Set([
+  "abbr", "cite", "dir", "high", "lang", "low", "max", "min", "optimum"
+]);
+
+DOMPurify.addHook("uponSanitizeAttribute", (_node, event) => {
+  if (safeSemanticAttributes.has(event.attrName)) event.forceKeepAttr = true;
+});
 
 export function renderSafeMarkdown(
   source: string,
@@ -98,6 +123,7 @@ export function renderSafeMarkdown(
   renderedDocument.querySelectorAll("img").forEach((image) => {
     const original = image.getAttribute("src") ?? "";
     const rewritten = rewriteLocalImage(original, localAssets);
+    image.dataset.imageSource = original;
     if (isRemoteImageSource(rewritten)) {
       const resolved = remoteAssets[rewritten];
       if (resolved) image.setAttribute("src", resolved);
@@ -109,12 +135,14 @@ export function renderSafeMarkdown(
   const clean = DOMPurify.sanitize(renderedDocument.body.innerHTML, {
     ALLOWED_TAGS: allowedTags,
     ALLOWED_ATTR: [
-      "alt", "aria-label", "class", "colspan", "datetime", "height", "href", "open",
-      "reversed", "role", "rowspan", "scope", "src", "start", "style", "title", "value", "width"
+      "abbr", "alt", "aria-label", "cite", "class", "colspan", "datetime", "dir", "height",
+      "high", "href", "lang", "low", "max", "min", "open", "optimum", "reversed", "role",
+      "data-image-source", "rowspan", "scope", "src", "start", "style", "title", "value", "width"
     ],
+    ADD_ATTR: [...safeSemanticAttributes, "data-image-source"],
     ALLOW_DATA_ATTR: false,
     FORBID_TAGS: ["form", "iframe", "object", "script", "style", "svg", "math"],
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|hlex-asset):|blob:|data:image\/(?:png|jpeg|gif|webp);base64,)/i
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|hlex-asset):|blob:|data:image\/(?:png|jpeg|gif|webp);base64,|(?:\.{0,2}\/|\/)?[^:/?#][^:]*)/i
   });
   const document = new DOMParser().parseFromString(clean, "text/html");
   document.querySelectorAll("a").forEach((anchor) => {
@@ -130,8 +158,7 @@ export function renderSafeMarkdown(
     const original = image.getAttribute("src") ?? "";
     const src = rewriteLocalImage(original, localAssets);
     if (src !== original) image.setAttribute("src", src);
-    if (!isSafeImageSource(src)) image.replaceWith(imagePlaceholder(document, image.getAttribute("alt") ?? "", false));
-    else image.setAttribute("loading", "lazy");
+    if (isSafeImageSource(src)) image.setAttribute("loading", "lazy");
   });
   return document.body.innerHTML;
 }
@@ -235,6 +262,7 @@ export function isSafeImageSource(value: string): boolean {
   try {
     const parsed = new URL(value);
     if (parsed.protocol === "hlex-asset:") return true;
+    if (parsed.protocol === "https:" && parsed.username === "" && parsed.password === "") return true;
     return parsed.protocol === "http:" && parsed.hostname === "hlex-asset.localhost";
   } catch {
     return false;

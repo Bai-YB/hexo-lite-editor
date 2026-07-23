@@ -6,7 +6,7 @@ import {
   renderSafeMarkdown,
   rewriteLocalImage,
   sanitizeInlineStyle,
-  stripFrontMatter
+  stripFrontMatter,
 } from "./safeMarkdown";
 
 describe("safe markdown", () => {
@@ -36,7 +36,7 @@ describe("safe markdown", () => {
     expect(isSafeExternalLink("https://example.com")).toBe(true);
     expect(isSafeExternalLink("file:///secret")).toBe(false);
     expect(isSafeImageSource("http://example.com/a.png")).toBe(false);
-    expect(isSafeImageSource("https://example.com/a.png")).toBe(false);
+    expect(isSafeImageSource("https://example.com/a.png")).toBe(true);
   });
 
   it("strips only complete front matter blocks", () => {
@@ -56,28 +56,56 @@ describe("safe markdown", () => {
     expect(rewriteLocalImage("/media/posts/示例.png", {
       "/media/posts/示例.png": "http://hlex-asset.localhost/custom"
     })).toBe("http://hlex-asset.localhost/custom");
+    const missing = renderSafeMarkdown("![已删除](/images/missing.png)");
+    expect(missing).toContain('src="/images/missing.png"');
+    expect(missing).toContain('data-image-source="/images/missing.png"');
   });
 
-  it("never leaves a direct remote image in preview HTML", () => {
+  it("shows remote images only after the backend returns a safe asset", () => {
     const source = "![远程](https://example.com/a.png)\n<img src=\"https://example.com/b.png\" alt=\"HTML 图\">";
     expect(extractRemoteImageUrls(source)).toEqual([
       "https://example.com/a.png",
       "https://example.com/b.png"
     ]);
     const pending = renderSafeMarkdown(source, {}, {}, true);
-    expect(pending).not.toContain('src="https://');
     expect(pending).toContain("正在验证图片");
-    const resolved = renderSafeMarkdown(source, {}, {
-      "https://example.com/a.png": "http://hlex-asset.localhost/a",
+    expect(pending).not.toContain('src="https://example.com/a.png"');
+    const html = renderSafeMarkdown(source, {}, {
+      "https://example.com/a.png": "hlex-asset://localhost/a",
       "https://example.com/b.png": null
     });
-    expect(resolved).toContain("http://hlex-asset.localhost/a");
-    expect(resolved).not.toContain('src="https://');
-    expect(resolved).toContain("图片不可用");
+    expect(html).toContain("hlex-asset://localhost/a");
+    expect(html).toContain("图片不可用：HTML 图");
+    expect(html).not.toContain('src="https://example.com/a.png"');
+  });
+
+  it("supports common semantic HTML attributes while keeping active content blocked", () => {
+    const html = renderSafeMarkdown(
+      '<section lang="zh-CN" dir="ltr"><p><u>下划线</u><wbr><dfn title="定义">术语</dfn></p>' +
+      '<meter min="0" max="10" low="3" high="8" optimum="7" value="6"></meter>' +
+      '<progress max="100" value="40"></progress>' +
+      '<table><tfoot><tr><td abbr="合计">总计</td></tr></tfoot></table></section>'
+    );
+    expect(html).toContain('<section lang="zh-CN" dir="ltr">');
+    expect(html).toContain("<u>下划线</u><wbr>");
+    expect(html).toContain('min="0" max="10" low="3" high="8" optimum="7" value="6"');
+    expect(html).toContain('<progress max="100" value="40"></progress>');
+    expect(html).toContain("<tfoot>");
   });
 
   it("allows only contained inline presentation styles", () => {
     expect(sanitizeInlineStyle("display:grid; gap: 8px; position:fixed; background:url(x); z-index:999"))
       .toBe("display: grid; gap: 8px");
   });
+
+  it("keeps safe gradient text declarations as one visible effect", () => {
+    const html = renderSafeMarkdown(
+      '<span style="font-weight:800; background:linear-gradient(to right, #ff4b2b, #4facfe); ' +
+      '-webkit-background-clip:text; -webkit-text-fill-color:transparent; color:transparent">渐变文字</span>'
+    );
+    expect(html).toContain("background: linear-gradient(to right, #ff4b2b, #4facfe)");
+    expect(html).toContain("-webkit-background-clip: text");
+    expect(html).toContain("-webkit-text-fill-color: transparent");
+  });
+
 });

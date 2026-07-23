@@ -345,7 +345,15 @@ pub fn reveal_local_image(
             .spawn()
             .map_err(|error| AppError::io("在文件夹中显示图片失败", error))?;
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|error| AppError::io("在 Finder 中显示图片失败", error))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         open::that_detached(path.parent().unwrap_or(Path::new(".")))
             .map_err(|error| AppError::io("打开图片文件夹失败", error))?;
