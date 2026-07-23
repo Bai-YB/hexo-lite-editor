@@ -74,8 +74,13 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
           if [[ $status -ne 0 ]]; then
-            details="$(tail -n 12 macos-package.log | sed ':a;N;$!ba;s/%/%25/g;s/\r/%0D/g;s/\n/%0A/g')"
-            echo "::error title=macOS packaging failed::$details"
+            perl -pe 's/\e\[[0-9;]*[A-Za-z]//g' macos-package.log \
+              | grep -Ei 'error(:|\[)|failed|not found|no such file|missing|refusing' \
+              | tail -n 20 \
+              | while IFS= read -r line; do
+                  line="${line//'%'/'%25'}"
+                  echo "::error title=macOS packaging failed::$line"
+                done
             exit "$status"
           fi
 
