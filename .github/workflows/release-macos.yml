@@ -54,9 +54,17 @@ jobs:
       - name: Rust checks
         working-directory: src-tauri
         run: |
-          cargo fmt --check
-          cargo clippy --all-targets --all-features -- -D warnings
-          cargo test
+          cargo fmt --check 2>&1 | tee rust-checks.log
+          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee -a rust-checks.log
+          cargo test 2>&1 | tee -a rust-checks.log
+
+      - name: Upload Rust diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-rust-diagnostics
+          path: src-tauri/rust-checks.log
+          if-no-files-found: ignore
 
       - name: Build universal macOS app and DMG
         run: pnpm release:macos -- "${{ inputs.version || '1.0.4' }}"
