@@ -36,6 +36,11 @@ spctl --assess --type execute "$app_source" || true
 
 commit="$(git -C "$repo_root" rev-parse HEAD)"
 architecture="$(lipo -archs "$app_source/Contents/MacOS/hexo-lite-editor")"
+if [[ "$architecture" != *"arm64"* || "$architecture" != *"x86_64"* ]]; then
+  echo "::error title=Invalid macOS architecture::Expected arm64 and x86_64, found: $architecture"
+  exit 1
+fi
+echo "::notice title=macOS universal binary::Architectures: $architecture"
 generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$output_dir/release-manifest-macos.json" <<EOF
 {

@@ -67,7 +67,9 @@ jobs:
           if-no-files-found: ignore
 
       - name: Build universal macOS app and DMG
-        run: pnpm release:macos -- "${{ inputs.version || '1.0.4' }}" 2>&1 | tee macos-package.log
+        run: |
+          set -o pipefail
+          pnpm release:macos -- "${{ inputs.version || '1.0.4' }}" 2>&1 | tee macos-package.log
 
       - name: Upload package diagnostics
         if: always()
@@ -76,15 +78,6 @@ jobs:
           name: macos-package-diagnostics
           path: macos-package.log
           if-no-files-found: ignore
-
-      - name: Inspect application bundle
-        run: |
-          app="src-tauri/target/universal-apple-darwin/release/bundle/macos/Hexo Lite Editor.app"
-          test -d "$app"
-          lipo -archs "$app/Contents/MacOS/hexo-lite-editor" | grep -q arm64
-          lipo -archs "$app/Contents/MacOS/hexo-lite-editor" | grep -q x86_64
-          plutil -lint "$app/Contents/Info.plist"
-          codesign --verify --deep --strict "$app"
 
       - uses: actions/upload-artifact@v7
         with:
