@@ -1,5 +1,7 @@
+#[cfg(windows)]
 const WEBVIEW2_DOWNLOAD_URL: &str = "https://developer.microsoft.com/microsoft-edge/webview2/";
 
+#[cfg(any(windows, test))]
 #[derive(Debug, PartialEq, Eq)]
 enum PreflightOutcome {
     Ready,
@@ -8,6 +10,7 @@ enum PreflightOutcome {
     DownloadPageFailed(String),
 }
 
+#[cfg(any(windows, test))]
 fn version_is_available(version: &str) -> bool {
     let version = version.trim();
     !version.is_empty()
@@ -17,6 +20,7 @@ fn version_is_available(version: &str) -> bool {
             .all(|segment| !segment.is_empty() && segment.parse::<u64>().is_ok())
 }
 
+#[cfg(any(windows, test))]
 fn run_preflight_with<Detect, Prompt, Open>(
     detect: Detect,
     prompt: Prompt,

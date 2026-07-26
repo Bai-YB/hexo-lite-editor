@@ -11,10 +11,11 @@ use crate::{
     platform::cloudflare_token,
 };
 use serde_json::{Map, Value};
+#[cfg(any(windows, target_os = "macos"))]
+use std::process::Command;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
