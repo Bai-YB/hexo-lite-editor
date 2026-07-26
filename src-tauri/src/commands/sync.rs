@@ -3341,8 +3341,9 @@ mod tests {
             .unwrap();
         static INITIALIZE_STORE: std::sync::Once = std::sync::Once::new();
         INITIALIZE_STORE.call_once(|| {
-            let _ = keyring::Entry::new("hexo-lite-editor-test", "initialize-v1-store")
-                .expect("keyring v1 store should initialize in tests");
+            // The v1 adapter records the platform-store initialization attempt
+            // even when a headless Linux runner has no Secret Service.
+            let _ = keyring::Entry::new("hexo-lite-editor-test", "initialize-v1-store").ok();
             keyring_core::set_default_store(
                 keyring_core::mock::Store::new()
                     .expect("mock credential store should be available in tests"),
