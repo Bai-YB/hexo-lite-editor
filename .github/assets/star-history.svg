@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" role="img" aria-labelledby="title description">
+  <title id="title">Star History for Bai-YB/hexo-lite-editor</title>
+  <desc id="description">This repository currently has no GitHub stars.</desc>
+  <style>
+    :root { color-scheme: light dark; }
+    .title { fill: #24292f; font: 600 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .count { fill: #57606a; font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .axis, .muted { fill: #6e7781; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .zero { fill: #24292f; font: 600 28px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .grid { stroke: #d0d7de; stroke-width: 1; }
+    .area { fill: #d8e4ea; opacity: .58; }
+    .line { fill: none; stroke: #526d7a; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.5; }
+    .point { fill: #526d7a; }
+    @media (prefers-color-scheme: dark) {
+      .title, .zero { fill: #f0f3f6; }
+      .count, .axis, .muted { fill: #8c959f; }
+      .grid { stroke: #30363d; }
+      .area { fill: #344b56; opacity: .55; }
+      .line { stroke: #9fb6c1; }
+      .point { fill: #9fb6c1; }
+    }
+  </style>
+  <text class="title" x="32" y="38">Star History</text>
+  <text class="count" x="768" y="38" text-anchor="end">0 stars</text>
+    <g data-state="empty">
+      <line class="grid" x1="64" y1="208" x2="752" y2="208" />
+      <text class="zero" x="400" y="142" text-anchor="middle">0 stars</text>
+      <text class="muted" x="400" y="168" text-anchor="middle">The chart will update automatically after the first star.</text>
+      <text class="axis" x="64" y="230">No history yet</text>
+    </g>
+</svg>

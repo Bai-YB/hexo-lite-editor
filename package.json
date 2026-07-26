@@ -13,6 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "readme:assets": "node scripts/capture-readme-assets.mjs",
+    "readme:stars": "node scripts/generate-star-history.mjs",
     "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-release.ps1",
     "release:macos": "bash scripts/package-macos.sh",
     "tauri": "tauri"

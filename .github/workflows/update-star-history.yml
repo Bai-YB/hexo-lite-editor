@@ -1,0 +1,42 @@
+name: Update Star History
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-star-history
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Generate chart
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/generate-star-history.mjs --repository "${{ github.repository }}"
+
+      - name: Commit changed chart
+        shell: bash
+        run: |
+          if git diff --quiet -- .github/assets/star-history.svg; then
+            echo "Star History is unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/assets/star-history.svg
+          git commit -m "docs: update star history"
+          git push

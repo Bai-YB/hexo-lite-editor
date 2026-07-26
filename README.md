@@ -1,91 +1,113 @@
 <div align="center">
-  <img src=".github/assets/app-icon.png" width="112" height="112" alt="Hexo Lite Editor 图标">
+  <img src=".github/assets/app-icon.png" width="104" height="104" alt="Hexo Lite Editor 图标">
   <h1>Hexo Lite Editor</h1>
-  <p>安静、原生的 Windows 与 macOS Hexo 写作、图片管理与发布工作区。</p>
+  <p><strong>把 Hexo 写作、图片、预览与发布收进一个安静的桌面工作区。</strong></p>
   <p><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
   <p>
     <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Bai-YB/hexo-lite-editor?display_name=tag&style=flat-square"></a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/Bai-YB/hexo-lite-editor?style=flat-square"></a>
     <a href="https://github.com/Bai-YB/hexo-lite-editor/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Bai-YB/hexo-lite-editor/total?style=flat-square"></a>
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-windows.yml"><img alt="Windows Release" src="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-windows.yml/badge.svg"></a>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-macos.yml"><img alt="macOS Build" src="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/release-macos.yml/badge.svg"></a>
   </p>
+  <p>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64-setup.exe"><strong>Windows 安装版</strong></a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64-portable.zip">便携版</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64.msi">MSI</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.5">Release 与 SHA-256</a>
+  </p>
+  <sub>当前公开版本 v1.0.5 · Windows 10/11 x64</sub>
 </div>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/editor-dark.png">
-  <img src=".github/assets/editor-light.png" alt="Hexo Lite Editor 编辑器、Markdown 源文与即时预览界面">
-</picture>
+## 写作与即时预览
 
-Hexo Lite Editor 把文章编辑、即时预览、图片整理、Hexo 浏览器预览与发布任务收进一个专注的桌面界面。应用本身不内置 Node.js 或 Hexo；只有启动真实博客预览、生成或部署时，才会调用项目已有的环境。
+从左侧文章列表进入 Markdown，在中间写作，右侧即时查看经过安全清理的 HTML。需要更多空间时，隐藏预览会让编辑器真正占满文章列表之外的区域；需要核对主题时，再从同一工具栏打开真实 Hexo 页面。
 
-## 下载
+<p align="center">
+  <img src=".github/assets/writing-workflow.gif" alt="选择文章、编辑 Markdown、即时预览更新并隐藏和恢复预览的完整工作流">
+</p>
 
-当前版本为 **v1.0.5**，支持 Windows 10/11 x64；macOS 通用构建支持 Intel 与 Apple Silicon，最低 macOS 11。
-
-| 版本 | 适合场景 | 下载 |
-| --- | --- | --- |
-| 安装版 EXE（推荐） | 日常使用；安装器可补齐 WebView2 | [下载安装版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64-setup.exe) |
-| 便携版 ZIP | 解压即用，不写入安装信息 | [下载便携版](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64-portable.zip) |
-| MSI | 企业部署或需要 MSI 的环境 | [下载 MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64.msi) |
-| macOS DMG | Intel 与 Apple Silicon；拖入“应用程序”即可 | GitHub Actions 的 `Build macOS` 构建产物 |
-
-[查看完整 Release 与校验文件](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.5) · [版本记录](CHANGELOG.md)
-
-> 项目暂未使用商业代码签名证书。Windows SmartScreen 可能显示“未知发布者”；macOS 首次打开可能需要在 Finder 中右键应用并选择“打开”。请只使用本仓库构建产物并校验 SHA-256。
-
-## 为什么使用它
-
-- **专注写作**：CodeMirror 编辑器、文章/草稿列表、独立滚动的安全即时预览，以及浅色、深色和跟随系统主题。
-- **显式文章封面**：文章列表只读取 Front Matter 明确声明的 `cover`、`top_img`、`banner`、`thumbnail` 或 `index_img`，不会把正文第一张图片猜成封面。
-- **安全 HTML**：正文中的常用原生 HTML 可以正确渲染；脚本、事件属性、iframe、表单、危险 URL 与越界样式会被 DOMPurify 清理。代码围栏中的 HTML 仍按源码显示。
-- **快速远程图片**：Markdown 与 HTML 远程图片直接交给 WebView 加载并复用网络缓存，不再由后端完整下载或解码校验；加载失败或空响应会显示明确的错误占位。
-- **本地图床可配置**：图片目录限定在 Hexo `source/` 下，Markdown 前缀可以按站点结构调整；导入、粘贴、拖放、列表与引用使用同一套配置。
-- **CloudFlare-ImgBed 联动**：兼容 [CloudFlare-ImgBed v2.7.5](https://github.com/MarSeventh/CloudFlare-ImgBed/tree/v2.7.5)，可创建仅含上传、列出和删除权限的 Token。密码只用于临时登录，Token 仅存入系统凭据库。
-- **可靠发布**：在编辑器中启动浏览器预览，或运行 clean、generate、deploy 与 Git 状态检查；保存与发布仍遵循项目自己的 Hexo 配置。
-- **双通道内容同步**：文章和资源既可同步到隔离的 GitHub 内容分支，也可同步到自己的 WebDAV 服务器；共用哈希清单、冲突选择和拉取前本地备份。
-- **清楚的设置**：常规、编辑体验、图片与图床、Hexo 与发布、内容同步、诊断与维护分区展示，一次只显示一组设置。
+保存、浏览器预览、新建文章与发布都在当前上下文内完成，不需要在几个互不相关的页面之间来回切换。应用不内置 Node.js 或 Hexo，只有预览、生成和部署时才调用博客项目已有的环境。
 
 <details>
-<summary><strong>查看更多真实界面截图</strong></summary>
+<summary><strong>选择适合的 Windows 安装包</strong></summary>
 
-<table>
-  <tr>
-    <td width="50%"><strong>图床资源管理</strong><br><img src=".github/assets/image-bed-light.png" alt="图床资源管理界面"></td>
-    <td width="50%"><strong>六分类设置</strong><br><img src=".github/assets/settings-light.png" alt="设置页面浅色模式"></td>
-  </tr>
-  <tr>
-    <td width="50%"><strong>深色写作界面</strong><br><img src=".github/assets/editor-dark.png" alt="编辑器深色模式"></td>
-    <td width="50%"><strong>深色设置界面</strong><br><img src=".github/assets/settings-dark.png" alt="设置页面深色模式"></td>
-  </tr>
-</table>
+| 包 | 适合场景 |
+| --- | --- |
+| 安装版 EXE | 日常使用；安装器可以补齐 WebView2 Runtime |
+| 便携版 ZIP | 解压即用，不写入安装信息 |
+| MSI | 企业部署或明确需要 MSI 的环境 |
+
+项目暂未使用商业代码签名证书，Windows SmartScreen 可能显示“未知发布者”。请只使用本仓库 Release 中的文件，并与同一 Release 下的 `SHA256SUMS.txt` 核对。`v1.0.5` 暂未发布公开 macOS DMG；仓库保留了 macOS 通用构建工作流，可在 Mac 上生成 Intel 与 Apple Silicon 构建。
 </details>
 
-## 快速开始
+## 图片整理
+
+本地图片、Cloudflare-ImgBed 资源、导入、粘贴和拖放使用同一套目录与 Markdown 前缀。资源页按真实目录浏览图片和其他文件，不需要把图床管理拆到浏览器标签页里。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/image-bed-dark.png">
+  <img src=".github/assets/image-bed-light.png" alt="Hexo Lite Editor 图床资源页，展示已完整加载的本地图片缩略图">
+</picture>
+
+文章列表只读取 Front Matter 明确声明的 `cover`、`top_img`、`banner`、`thumbnail` 或 `index_img`。它不会拿正文第一张图猜封面，也不会在封面错误时偷偷换成默认图片。
+
+## 同步与发布
+
+内容同步支持隔离的 GitHub 内容分支，也支持自己的标准 WebDAV 服务。WebDAV 服务器、远端目录、用户名和密码始终保留在页面中；密码不会回显，新的凭据只有完成目录访问和可逆读写探针后才会进入系统凭据库。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/content-sync-dark.png">
+  <img src=".github/assets/content-sync-light.png" alt="WebDAV 已通过真实连接测试，服务器、目录、用户名和密码仍可编辑">
+</picture>
+
+修改服务器或远端目录后必须重新测试并明确应用，不会自动上传或下载。首次连接需要选择“上传本地内容”或“使用远端内容”；后续冲突按文件处理，远端内容落地前会先创建本地备份。
+
+## 能力与边界
+
+| 工作 | 已覆盖 | 明确边界 |
+| --- | --- | --- |
+| 写作 | 文章与草稿、CodeMirror、独立滚动即时预览、浅色/深色/跟随系统 | 不是所见即所得编辑器 |
+| 图片 | `source/` 下的本地图片、Cloudflare-ImgBed、粘贴/拖放/导入、错误占位 | 本地目录不能越过当前项目的 `source/` |
+| 预览与发布 | 浏览器 Hexo 预览、clean、generate、deploy、Git 状态 | 不捆绑 Node.js、Hexo 或博客依赖 |
+| 内容同步 | GitHub 隔离分支、WebDAV Basic Auth、哈希清单、冲突选择、拉取前备份 | 默认关闭，不同步草稿、站点配置、环境变量或凭据 |
+| HTML 安全 | 常用语义 HTML、表格、图片和受限内联样式 | 脚本、事件属性、iframe、表单、SVG 和越界样式会被清理 |
+| 系统 | 已发布 Windows 10/11 x64 包；仓库提供 macOS 构建工作流 | `v1.0.5` Release 当前没有公开 macOS 安装包 |
+
+## 开始使用
 
 1. 下载并启动安装版、便携版或 MSI。
-2. 选择一个包含 Hexo `_config.yml` 的博客目录。
-3. 从左侧文章列表打开文章，编辑 Markdown 或安全的常用 HTML。
-4. 使用右侧即时预览检查正文；需要核对主题时，点击“浏览器预览”打开真实 Hexo 页面。
-5. 保存后点击“发布”，或在高级菜单中单独运行 generate、deploy 等步骤。
+2. 选择包含 Hexo `_config.yml` 的博客根目录。
+3. 从左侧打开文章或草稿，编辑 Markdown 或支持的常用 HTML。
+4. 使用即时预览检查正文；需要主题效果时点击“浏览器预览”。
+5. 保存后点击“发布”，或从高级菜单单独运行 generate、deploy 等步骤。
 
-应用启动和本地写作不要求 Node.js。浏览器预览、generate 与 deploy 要求目标博客已经安装 Node.js、Hexo 及项目依赖。
+本地写作不要求 Node.js。浏览器预览、generate 与 deploy 要求目标博客已经安装 Node.js、Hexo 和项目依赖。
 
-## 图片、HTML 与安全边界
+## 安全与数据边界
 
-即时预览允许常用排版、表格、`details/summary`、`figure/figcaption`、图片和受限内联样式，但不会执行脚本，也不支持 iframe、对象、表单、SVG 或 `<style>` 块。生产构建同时启用固定 CSP。
+- 即时预览由 DOMPurify 清理，并在生产构建中使用固定 CSP；代码围栏中的 HTML 始终按源码显示。
+- Cloudflare 管理员密码只参与临时登录，Token 和 WebDAV 密码只保存在操作系统凭据库，不进入配置、日志或同步清单。
+- 内容同步只处理 `source/_posts/`、文章同名资源目录和设置中指定的图片目录，并在覆盖本地内容前创建恢复备份。
+- 本地图片路径拒绝绝对路径、`..` 和符号链接逃逸；远程图片直接交给 WebView 加载，保留系统缓存与连接复用。
 
-即时预览中的 HTTP/HTTPS 远程图片使用原始 URL 直接加载，保留 WebView 的缓存、连接复用和系统网络配置。预览不预先下载或解码校验图片；只要 WebView 能显示返回内容就按原样显示，包括服务器用 404 状态返回的错误图片。空响应、不可解码内容和网络错误会在正文中显示错误框，在文章列表中显示图片错误图标，不会回退为默认文章封面。本地图片仍通过当前项目会话的受控资源地址读取。
+<details>
+<summary><strong>远程图片、错误状态与 HTML 细节</strong></summary>
 
-本地图片目录必须是 `source/` 下的相对路径，拒绝绝对路径、`..` 和符号链接逃逸。CloudFlare-ImgBed 管理员密码不会写入配置、日志或浏览器存储；删除本地 Token 不会远程撤销服务端 Token。
+HTTP/HTTPS 图片不会在后端逐张完整下载或解码校验。只要 WebView 能显示返回内容就按原样展示，包括服务器以 404 状态返回的有效图片体。空响应、网络失败或不可解码内容会在正文中显示保留尺寸的错误框，并在文章列表中显示图片错误图标；不会回退成默认封面，也不会在切换文章时短暂闪回原图。
 
-## GitHub 与 WebDAV 内容同步
+即时预览支持常用排版、表格、`details/summary`、`figure/figcaption`、图片和受限内联样式，但不会执行脚本，也不接受 iframe、对象、表单、SVG 或 `<style>` 块。
+</details>
 
-内容同步默认关闭，只处理 `source/_posts/`、文章同名资源目录和设置中指定的图片目录，不会上传草稿、站点配置、环境变量或凭据。GitHub 模式使用独立内容分支，不切换或修改项目当前分支；WebDAV 模式在指定远端目录中使用按内容哈希命名的不可变对象，并在最后条件更新 `.hexo-lite-sync.json` 清单，避免并发设备互相覆盖。
+<details>
+<summary><strong>GitHub 与 WebDAV 内容同步细节</strong></summary>
 
-WebDAV 支持 HTTPS、Basic Auth、`PROPFIND`、`MKCOL`、`PUT`、`GET` 和 `DELETE`。服务器地址、远端目录、用户名和密码始终可编辑；密码不会返回界面。候选凭据只有在真实目录访问、可逆读写删除探针和远端清单校验全部通过后才写入操作系统凭据库。首次启用或更换连接后必须明确选择“上传本地内容”或“使用远端内容”；以后保存后会延迟同步，遇到两端同时修改同一文件时会要求逐文件选择，并在写入本地前创建可恢复备份。
+GitHub 模式使用独立内容分支，不切换或修改项目当前分支。WebDAV 模式支持 HTTPS、Basic Auth、`PROPFIND`、`MKCOL`、`PUT`、`GET` 和 `DELETE`，以内容哈希命名不可变对象，最后条件更新 `.hexo-lite-sync.json`，避免并发设备静默覆盖。
 
-## 快捷键
+候选 WebDAV 凭据只有在 Basic Auth、目录访问、上传、下载、删除探针和远端清单校验全部通过后才会保存。认证、网络、权限、只读目录、清单损坏和探针清理错误会保持为不同的可操作错误。
+</details>
+
+<details>
+<summary><strong>快捷键</strong></summary>
 
 | 快捷键 | 操作 |
 | --- | --- |
@@ -95,10 +117,12 @@ WebDAV 支持 HTTPS、Basic Auth、`PROPFIND`、`MKCOL`、`PUT`、`GET` 和 `DEL
 | `Ctrl/⌘ + F` | 在编辑器中搜索 |
 | `Ctrl/⌘ + Shift + P` | 发布当前博客 |
 | `Ctrl/⌘ + ,` | 打开设置 |
-| `Ctrl/⌘ + 1…4` | 切换编辑器、图床、设置、关于 |
+| `Ctrl/⌘ + 1…4` | 切换编辑器、图床、设置和关于 |
 | `↑ / ↓` | 在聚焦的文章列表中切换文章 |
+</details>
 
-## 开发与构建
+<details>
+<summary><strong>开发、验证与构建</strong></summary>
 
 需要 Node.js、pnpm、Rust 和 Tauri 2 对应平台的构建依赖。
 
@@ -120,21 +144,20 @@ cargo test --manifest-path src-tauri/Cargo.toml
 pnpm tauri build
 ```
 
-生成安装版、MSI、便携版、SHA-256 和发行清单：
-
-```powershell
-pnpm release:windows
-```
-
-在 macOS 14 构建 Intel/Apple Silicon 通用 `.app` 与 `.dmg`：
+README 素材与本地 Star History 可以重复生成：
 
 ```bash
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-pnpm release:macos -- 1.0.5
+pnpm readme:assets
+pnpm readme:stars -- --repository Bai-YB/hexo-lite-editor
 ```
+</details>
 
-## 反馈与许可证
+## 项目动态
 
-遇到可复现的问题，请提交 [Issue](https://github.com/Bai-YB/hexo-lite-editor/issues)，并附上系统版本、操作步骤和诊断日志中已脱敏的相关片段。安全问题请避免在公开 Issue 中提交凭据或未脱敏日志。
+<img src=".github/assets/star-history.svg" alt="Bai-YB/hexo-lite-editor 的 GitHub Star History，本图由仓库脚本生成并每周更新">
 
-Hexo Lite Editor 使用 [MIT License](LICENSE) 发布。
+Star History 每周从 GitHub API 读取真实时间戳并在仓库内重新生成；没有 Star 时只显示零状态，不依赖外部图表服务，也不制造增长曲线。
+
+[提交 Issue](https://github.com/Bai-YB/hexo-lite-editor/issues) · [查看 Releases](https://github.com/Bai-YB/hexo-lite-editor/releases) · [参与贡献](https://github.com/Bai-YB/hexo-lite-editor/pulls)
+
+Hexo Lite Editor 使用 [MIT License](LICENSE) 发布。提交公开 Issue 时，请勿附带凭据或未经脱敏的诊断日志。

@@ -37,9 +37,11 @@ const session = {
 
 const demoFlag = (name: string) =>
   typeof location !== "undefined" && new URLSearchParams(location.search).get(name) === "1";
-const image = (seed: string) => demoFlag("imageFail") && seed === "quiet-desk"
-  ? "http://127.0.0.1:1420/__empty-image"
-  : `https://picsum.photos/seed/${seed}/480/320`;
+const image = (seed: string) => {
+  if (demoFlag("imageFail") && seed === "quiet-desk") return `${location.origin}/__empty-image`;
+  if (demoFlag("readme")) return `${location.origin}/readme-demo/${seed}.png`;
+  return `https://picsum.photos/seed/${seed}/480/320`;
+};
 
 let config: AppConfigV3 = structuredClone(defaultConfig);
 config.imageBed.cloudflareApiUrl = "https://img.example.com";
@@ -57,17 +59,62 @@ const documents = new Map<string, string>([
   ["draft", "# 下一篇文章的提纲\n\n- 开场\n- 主要内容\n- 收尾"]
 ]);
 
+if (demoFlag("readme")) {
+  documents.set("welcome", `---
+title: 欢迎使用 Hexo Lite Editor
+date: 2026-07-17 20:00
+tags:
+  - Hexo
+  - 写作
+---
+
+# 欢迎使用
+
+在一个安静的工作区里整理文章、图片与发布流程。
+
+从左侧选择一篇文章，Markdown 与即时预览会保持同步。`);
+  documents.set("summer", `---
+title: 盛夏散步
+date: 2026-07-16 09:30
+tags:
+  - 生活
+  - 摄影
+---
+
+# 盛夏散步
+
+城市很热，但树影下仍有一些安静的时刻。
+
+## 随手记下
+
+- 老街转角的风
+- 傍晚亮起的灯
+- 回家前的一场短雨`);
+}
+
 let recent: RecentProjectView[] = [
   { recentId: "demo-recent", name: "Quiet Notes", displayPath: "C:\\博客\\quiet-notes", lastOpenedAt: "2026-07-17T13:20:00Z", available: true },
   { recentId: "missing-recent", name: "旧博客", displayPath: "D:\\Archive\\old-blog", lastOpenedAt: "2026-07-10T09:00:00Z", available: false }
 ];
 
+const readmeImageNames = [
+  "写作工作区.png",
+  "即时预览.png",
+  "文章列表.png",
+  "深色编辑器.png",
+  "图片管理.png",
+  "内容同步.png",
+  "发布工具栏.png",
+  "设置界面.png",
+  "应用图标.png",
+  "博客截图.png"
+];
 const localImages: LocalImage[] = Array.from({ length: 10 }, (_, index) => ({
   imageId: `local-${index + 1}`,
-  name: ["安静的桌面.jpg", "夏日街道.jpg", "窗边咖啡.jpg", "山间晨雾.jpg", "代码笔记.jpg", "书桌一角.jpg", "夜晚灯光.jpg", "旅途车站.jpg", "蓝色海面.jpg", "秋日树影.jpg"][index],
-  relativePath: `source/images/photo-${index + 1}.jpg`,
-  markdownUrl: `/images/photo-${index + 1}.jpg`,
-  mime: "image/jpeg",
+  name: demoFlag("readme") ? readmeImageNames[index] : ["安静的桌面.jpg", "夏日街道.jpg", "窗边咖啡.jpg", "山间晨雾.jpg", "代码笔记.jpg", "书桌一角.jpg", "夜晚灯光.jpg", "旅途车站.jpg", "蓝色海面.jpg", "秋日树影.jpg"][index],
+  relativePath: `source/images/${demoFlag("readme") ? `ui-${index + 1}.png` : `photo-${index + 1}.jpg`}`,
+  markdownUrl: `/images/${demoFlag("readme") ? `ui-${index + 1}.png` : `photo-${index + 1}.jpg`}`,
+  mime: demoFlag("readme") ? "image/png" : "image/jpeg",
   size: 180000 + index * 32768,
   previewUrl: image(`local-${index + 1}`)
 }));
