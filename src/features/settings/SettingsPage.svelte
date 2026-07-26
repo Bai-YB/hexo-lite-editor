@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { FileText, KeyRound, RotateCcw, Save, Trash2 } from "@lucide/svelte";
-  import PageHeader from "$shared/components/PageHeader.svelte";
+  import { FileText, KeyRound, RotateCcw, Trash2 } from "@lucide/svelte";
   import ModalDialog from "$shared/components/ModalDialog.svelte";
+  import SettingsHeader from "./SettingsHeader.svelte";
+  import SettingsNavigation from "./SettingsNavigation.svelte";
   import CloudflareImageBedSettings from "./CloudflareImageBedSettings.svelte";
   import LocalImageBedSettings from "./LocalImageBedSettings.svelte";
   import { defaultConfig } from "$shared/types/app";
@@ -50,6 +51,7 @@
   let dirty = false;
   let saving = false;
   let credential: CredentialStatus = { configured: false };
+  let legacyCredentialAvailable = false;
   let credentialBusy = false;
   let tokenStatusMessage = "";
   let showAcquireToken = false;
@@ -108,7 +110,10 @@
     void refreshSync();
   });
 
-  onDestroy(() => onRegisterSettingsController(null));
+  onDestroy(() => {
+    if (dirty) onThemePreview(saved.appearance.themeMode);
+    onRegisterSettingsController(null);
+  });
 
   function selectSection(section: SettingsSectionId) {
     activeSection = section;
@@ -380,8 +385,41 @@
   }
 
   async function refreshCredential() {
-    try { credential = await platform.credentialStatus(); }
+    try {
+      [credential, legacyCredentialAvailable] = await Promise.all([
+        platform.credentialStatus(
+          draft.imageBed.cloudflareConnectionId,
+          draft.imageBed.cloudflareApiUrl
+        ),
+        platform.credentialLegacyAvailable()
+      ]);
+    }
     catch { credential = { configured: false }; }
+  }
+
+  function updateImageBed(imageBed: AppConfigV3["imageBed"]) {
+    change({ ...draft, imageBed });
+    void refreshCredential();
+  }
+
+  async function migrateLegacyCredential() {
+    if (!draft.imageBed.cloudflareApiUrl.trim()) {
+      onNotice("请先填写 Cloudflare-ImgBed 服务地址。");
+      return;
+    }
+    credentialBusy = true;
+    try {
+      credential = await platform.credentialMigrate(
+        draft.imageBed.cloudflareConnectionId,
+        draft.imageBed.cloudflareApiUrl
+      );
+      legacyCredentialAvailable = false;
+      tokenStatusMessage = "旧版 Token 已绑定到当前连接；旧凭据已从临时命名空间移除。";
+    } catch (error) {
+      tokenStatusMessage = normalizeError(error).message;
+    } finally {
+      credentialBusy = false;
+    }
   }
 
   async function prepareAcquireToken() {
@@ -406,7 +444,9 @@
     credentialBusy = true;
     tokenStatusMessage = "正在获取 Token...";
     try {
-      const result = await platform.acquireCloudflareImgbedToken({
+      const result = await platform.acquireCloudflareImgbedToken(
+        draft.imageBed.cloudflareConnectionId,
+        {
         baseUrl: draft.imageBed.cloudflareApiUrl,
         adminUsername: adminUsername.trim() || undefined,
         adminPassword: adminPassword || undefined,
@@ -429,7 +469,14 @@
     if (credentialBusy) return;
     credentialBusy = true;
     tokenStatusMessage = "正在测试连接...";
-    try { tokenStatusMessage = (await platform.testCloudflareImgbedToken(draft.imageBed.cloudflareApiUrl)).message; }
+    try {
+      tokenStatusMessage = (
+        await platform.testCloudflareImgbedToken(
+          draft.imageBed.cloudflareConnectionId,
+          draft.imageBed.cloudflareApiUrl
+        )
+      ).message;
+    }
     catch (error) { tokenStatusMessage = normalizeError(error).message; }
     finally { credentialBusy = false; }
   }
@@ -437,7 +484,7 @@
   async function deleteCredential() {
     credentialBusy = true;
     try {
-      credential = await platform.credentialDelete();
+      credential = await platform.credentialDelete(draft.imageBed.cloudflareConnectionId);
       const { cloudflareTokenId: _removed, ...imageBed } = draft.imageBed;
       await persistConfig({ ...draft, imageBed }, "Cloudflare Token 已从系统凭据库删除。");
       tokenStatusMessage = "本地 Token 已删除";
@@ -483,35 +530,13 @@
 </script>
 
 <div class="workspace-page settings-page">
-  <div class="settings-sticky-header">
-    <PageHeader title="设置" description="按工作流程整理；更改只在保存后写入应用配置。">
-      <span class:warning={dirty} class:success={!dirty} class="settings-save-state">{saving ? "正在保存" : dirty ? "有未保存更改" : "已保存"}</span>
-      <button class="button" type="button" on:click={() => (showReset = true)}><RotateCcw size={15} />恢复默认</button>
-      <button class="button" type="button" disabled={!dirty || saving} on:click={discard}>取消</button>
-      <button class="button primary" type="button" disabled={!dirty || saving} on:click={saveDraft}><Save size={15} />保存</button>
-    </PageHeader>
-  </div>
+  <SettingsHeader {dirty} {saving} onDiscard={discard} onSave={saveDraft} />
 
   <div class="settings-layout">
-    <nav class="settings-nav" aria-label="设置分类">
-      {#each sections as section, index (section.id)}
-        <button
-          type="button"
-          class:active={activeSection === section.id}
-          data-settings-section={section.id}
-          aria-current={activeSection === section.id ? "page" : undefined}
-          on:click={() => selectSection(section.id)}
-          on:keydown={(event) => handleNavKeydown(event, index)}
-        >
-          <span><strong>{section.title}</strong><small>{section.description}</small></span>
-          {#if dirtySections[section.id]}<i class="settings-dirty-dot" aria-label="此分类有未保存更改"></i>{/if}
-        </button>
-      {/each}
-    </nav>
+    <SettingsNavigation {sections} {activeSection} {dirtySections} onSelect={selectSection} onKeydown={handleNavKeydown} />
 
     <section class="panel settings-content-panel" aria-labelledby={`settings-title-${activeSection}`}>
       <header class="settings-content-heading">
-        <p>设置分类</p>
         <h2 id={`settings-title-${activeSection}`}>{currentSection.title}</h2>
         <span>{currentSection.description}</span>
       </header>
@@ -560,7 +585,7 @@
           {#if draft.imageBed.defaultProvider === "local"}
             <LocalImageBedSettings settings={draft.imageBed} onChange={(imageBed) => change({ ...draft, imageBed })} />
           {:else}
-            <CloudflareImageBedSettings settings={draft.imageBed} {credential} busy={credentialBusy} statusMessage={tokenStatusMessage} onChange={(imageBed) => change({ ...draft, imageBed })} onAcquireToken={prepareAcquireToken} onTestConnection={testCredential} onDeleteToken={deleteCredential} />
+            <CloudflareImageBedSettings settings={draft.imageBed} {credential} {legacyCredentialAvailable} busy={credentialBusy} statusMessage={tokenStatusMessage} onChange={updateImageBed} onAcquireToken={prepareAcquireToken} onMigrateLegacyToken={migrateLegacyCredential} onTestConnection={testCredential} onDeleteToken={deleteCredential} />
           {/if}
         </div>
       {:else if activeSection === "hexoPublish"}

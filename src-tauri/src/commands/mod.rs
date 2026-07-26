@@ -1,11 +1,13 @@
 mod app_info;
 mod config;
+mod image_local;
 mod images;
 mod imgbed_auth;
 mod preview;
 mod preview_images;
 mod project;
 mod sync;
+mod sync_validation;
 mod tasks;
 mod window;
 

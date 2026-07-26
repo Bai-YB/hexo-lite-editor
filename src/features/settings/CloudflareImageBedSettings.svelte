@@ -4,10 +4,12 @@
 
   export let settings: AppConfigV3["imageBed"];
   export let credential: CredentialStatus;
+  export let legacyCredentialAvailable = false;
   export let busy = false;
   export let statusMessage = "";
   export let onChange: (settings: AppConfigV3["imageBed"]) => void = () => {};
   export let onAcquireToken: () => void = () => {};
+  export let onMigrateLegacyToken: () => void = () => {};
   export let onTestConnection: () => void = () => {};
   export let onDeleteToken: () => void = () => {};
 </script>
@@ -48,6 +50,11 @@
         <ShieldCheck size={14} />{credential.configured ? "Token 已配置" : "Token 未配置"}
       </span>
       <div class="button-row">
+        {#if legacyCredentialAvailable && !credential.configured}
+          <button class="button secondary" type="button" disabled={busy || !settings.cloudflareApiUrl.trim()} on:click={onMigrateLegacyToken}>
+            <KeyRound size={14} />绑定旧版 Token
+          </button>
+        {/if}
         <button class="button secondary" type="button" disabled={busy || !settings.cloudflareApiUrl.trim()} on:click={onAcquireToken}>
           <KeyRound size={14} />{credential.configured ? "重新获取" : "一键获取 Token"}
         </button>

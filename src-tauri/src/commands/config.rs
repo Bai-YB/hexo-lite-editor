@@ -2,7 +2,10 @@ use crate::{
     app::AppState,
     data::{load_config, save_config_file},
     domain::{AppConfigV3, AppError, AppResult, ConfigLoadResult, CredentialStatus},
-    platform::{cloudflare_status, delete_cloudflare_token, set_cloudflare_token},
+    platform::{
+        cloudflare_status, delete_cloudflare_token, legacy_cloudflare_token_available,
+        migrate_legacy_cloudflare_token, set_cloudflare_token,
+    },
 };
 use tauri::State;
 
@@ -37,16 +40,30 @@ pub fn reset_app_config(state: State<'_, AppState>) -> AppResult<AppConfigV3> {
 }
 
 #[tauri::command]
-pub fn credential_status() -> CredentialStatus {
-    cloudflare_status()
+pub fn credential_status(connection_id: String, base_url: String) -> CredentialStatus {
+    cloudflare_status(&connection_id, &base_url)
 }
 
 #[tauri::command]
-pub fn credential_set(token: String) -> AppResult<CredentialStatus> {
-    set_cloudflare_token(&token)
+pub fn credential_set(
+    connection_id: String,
+    base_url: String,
+    token: String,
+) -> AppResult<CredentialStatus> {
+    set_cloudflare_token(&connection_id, &base_url, &token)
 }
 
 #[tauri::command]
-pub fn credential_delete() -> AppResult<CredentialStatus> {
-    delete_cloudflare_token()
+pub fn credential_delete(connection_id: String) -> AppResult<CredentialStatus> {
+    delete_cloudflare_token(&connection_id)
+}
+
+#[tauri::command]
+pub fn credential_legacy_available() -> bool {
+    legacy_cloudflare_token_available()
+}
+
+#[tauri::command]
+pub fn credential_migrate(connection_id: String, base_url: String) -> AppResult<CredentialStatus> {
+    migrate_legacy_cloudflare_token(&connection_id, &base_url)
 }

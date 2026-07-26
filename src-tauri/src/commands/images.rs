@@ -1,5 +1,8 @@
+use super::image_local::{
+    list_local_images_impl, supported_mime, unique_target, validate_image_file, MAX_IMAGE_BYTES,
+};
 use crate::{
-    app::{AppState, AssetRecord, AssetSource, RemoteAssetRecord},
+    app::{AppState, AssetSource, RemoteAssetRecord},
     data::load_config,
     domain::{
         AppError, AppResult, EditorImageInput, ImageImportResult, ImageProvider, LocalImage,
@@ -8,19 +11,16 @@ use crate::{
     platform::cloudflare_token,
 };
 use serde_json::{Map, Value};
+#[cfg(any(windows, target_os = "macos"))]
+use std::process::Command;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
-    time::{Duration, SystemTime},
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 use url::Url;
 use uuid::Uuid;
-use walkdir::WalkDir;
-
-const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
 #[tauri::command]
 pub fn list_local_images(
@@ -110,7 +110,10 @@ pub async fn upload_cloudflare_image(
         &config.image_bed.cloudflare_api_url,
         &config.image_bed.upload_folder,
     )?;
-    let token = cloudflare_token()?;
+    let token = cloudflare_token(
+        &config.image_bed.cloudflare_connection_id,
+        &config.image_bed.cloudflare_api_url,
+    )?;
     let Some(file) = app
         .dialog()
         .file()
@@ -159,7 +162,10 @@ pub async fn import_editor_images(
                 &config.image_bed.cloudflare_api_url,
                 &config.image_bed.upload_folder,
             )?,
-            cloudflare_token()?,
+            cloudflare_token(
+                &config.image_bed.cloudflare_connection_id,
+                &config.image_bed.cloudflare_api_url,
+            )?,
         ))
     } else {
         None
@@ -242,7 +248,10 @@ pub async fn list_cloudflare_assets(
         .append_pair("dir", directory.trim());
     let response = reqwest::Client::new()
         .get(endpoint)
-        .bearer_auth(cloudflare_token()?)
+        .bearer_auth(cloudflare_token(
+            &config.image_bed.cloudflare_connection_id,
+            &config.image_bed.cloudflare_api_url,
+        )?)
         .send()
         .await
         .map_err(|error| AppError::new("image_list_failed", error.to_string(), true))?;
@@ -302,7 +311,10 @@ pub async fn delete_cloudflare_asset(
     let base = validate_cloudflare_url(&config.image_bed.cloudflare_api_url)?;
     let response = reqwest::Client::new()
         .delete(cloudflare_delete_endpoint(&base, &delete_key)?)
-        .bearer_auth(cloudflare_token()?)
+        .bearer_auth(cloudflare_token(
+            &config.image_bed.cloudflare_connection_id,
+            &config.image_bed.cloudflare_api_url,
+        )?)
         .send()
         .await
         .map_err(|error| AppError::new("remote_delete_failed", error.to_string(), true))?;
@@ -427,7 +439,7 @@ fn save_local_editor_image(
     )
 }
 
-fn local_image_directory(root: &Path, configured: &str) -> AppResult<PathBuf> {
+pub(super) fn local_image_directory(root: &Path, configured: &str) -> AppResult<PathBuf> {
     let normalized = configured.trim().replace('\\', "/");
     let segments = normalized.split('/').collect::<Vec<_>>();
     if segments.len() < 2
@@ -464,7 +476,7 @@ fn local_image_directory(root: &Path, configured: &str) -> AppResult<PathBuf> {
     Ok(canonical_directory)
 }
 
-fn local_markdown_url(prefix: &str, relative_path: &Path) -> AppResult<String> {
+pub(super) fn local_markdown_url(prefix: &str, relative_path: &Path) -> AppResult<String> {
     let prefix = prefix.trim();
     if !prefix.starts_with('/')
         || prefix.starts_with("//")
@@ -949,144 +961,6 @@ fn object_value(
         .filter(|value| !value.trim().is_empty())
 }
 
-fn list_local_images_impl(
-    state: &AppState,
-    project_id: &str,
-    generation: u64,
-) -> AppResult<Vec<LocalImage>> {
-    let root = state.with_project(project_id, Some(generation), |project| {
-        Ok(project.root.clone())
-    })?;
-    let config = load_config(state)?.config;
-    let canonical_directory = local_image_directory(&root, &config.image_bed.local_image_dir)?;
-    let mut records = Vec::new();
-    for entry in WalkDir::new(&canonical_directory)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file())
-    {
-        let path = entry.path();
-        let Ok(mime) = supported_mime(path) else {
-            continue;
-        };
-        let canonical = path
-            .canonicalize()
-            .map_err(|error| AppError::io("验证图片路径失败", error))?;
-        if !canonical.starts_with(&canonical_directory) {
-            continue;
-        }
-        let metadata =
-            fs::metadata(&canonical).map_err(|error| AppError::io("读取图片信息失败", error))?;
-        let token = Uuid::new_v4().to_string();
-        let relative_path = canonical
-            .strip_prefix(&root)
-            .map_err(|_| AppError::new("path_escape", "图片不属于当前项目。", false))?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let markdown_url = local_markdown_url(
-            &config.image_bed.local_markdown_prefix,
-            canonical
-                .strip_prefix(&canonical_directory)
-                .map_err(|_| AppError::new("path_escape", "图片不属于配置目录。", false))?,
-        )?;
-        records.push((
-            LocalImage {
-                image_id: token.clone(),
-                name: canonical
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("image")
-                    .to_string(),
-                relative_path,
-                markdown_url,
-                mime: mime.clone(),
-                size: metadata.len(),
-                preview_url: asset_url(&token),
-            },
-            token,
-            AssetRecord {
-                source: AssetSource::Disk(canonical),
-                mime,
-                generation,
-                expires_at: SystemTime::now() + Duration::from_secs(15 * 60),
-            },
-        ));
-    }
-    records.sort_by(|left, right| left.0.name.cmp(&right.0.name));
-    let mut guard = state
-        .project
-        .write()
-        .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
-    let project = guard.as_mut().ok_or_else(AppError::session_expired)?;
-    project.require_identity(project_id, Some(generation))?;
-    project
-        .assets
-        .retain(|_, asset| asset.generation == generation && asset.expires_at > SystemTime::now());
-    for (_, token, asset) in &records {
-        project.assets.insert(token.clone(), asset.clone());
-    }
-    Ok(records.into_iter().map(|record| record.0).collect())
-}
-
-fn validate_image_file(path: &Path) -> AppResult<()> {
-    let metadata = fs::metadata(path).map_err(|error| AppError::io("读取图片信息失败", error))?;
-    if !metadata.is_file() {
-        return Err(AppError::invalid("所选内容不是文件。"));
-    }
-    if metadata.len() > MAX_IMAGE_BYTES {
-        return Err(AppError::new(
-            "image_too_large",
-            "图片不能超过 25 MB。",
-            true,
-        ));
-    }
-    supported_mime(path).map(|_| ())
-}
-
-fn supported_mime(path: &Path) -> AppResult<String> {
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let mime = match extension.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        _ => {
-            return Err(AppError::new(
-                "unsupported_image",
-                "仅支持 PNG、JPEG、GIF 和 WebP。",
-                true,
-            ))
-        }
-    };
-    Ok(mime.to_string())
-}
-
-fn unique_target(directory: &Path, file_name: &str) -> PathBuf {
-    let direct = directory.join(file_name);
-    if !direct.exists() {
-        return direct;
-    }
-    let path = Path::new(file_name);
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("image");
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or("png");
-    directory.join(format!(
-        "{stem}-{}.{}",
-        &Uuid::new_v4().to_string()[..8],
-        extension
-    ))
-}
-
 fn validate_cloudflare_url(value: &str) -> AppResult<Url> {
     let url = Url::parse(value.trim()).map_err(|_| AppError::invalid("图床 API 地址无效。"))?;
     let is_local = matches!(url.host_str(), Some("localhost" | "127.0.0.1"));
@@ -1124,14 +998,6 @@ fn find_url(value: &Value) -> Option<String> {
         .find_map(find_url)
         .or_else(|| map.values().find_map(find_url)),
         _ => None,
-    }
-}
-
-fn asset_url(token: &str) -> String {
-    if cfg!(windows) {
-        format!("http://hlex-asset.localhost/{token}")
-    } else {
-        format!("hlex-asset://localhost/{token}")
     }
 }
 

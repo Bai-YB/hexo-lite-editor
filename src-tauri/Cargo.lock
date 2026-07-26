@@ -1725,6 +1725,7 @@ dependencies = [
  "futures-util",
  "image",
  "keyring",
+ "keyring-core",
  "mime_guess",
  "open",
  "percent-encoding",

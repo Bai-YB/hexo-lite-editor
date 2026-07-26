@@ -196,6 +196,7 @@ export interface AppConfigV3 {
     localMarkdownPrefix: string;
     cloudflareName: string;
     cloudflareApiUrl: string;
+    cloudflareConnectionId: string;
     cloudflareTokenId?: string;
     uploadFolder: string;
     autoInsertMarkdown: boolean;
@@ -480,6 +481,7 @@ export const defaultConfig: AppConfigV3 = {
     localMarkdownPrefix: "/images",
     cloudflareName: "",
     cloudflareApiUrl: "",
+    cloudflareConnectionId: "primary",
     uploadFolder: "blog",
     autoInsertMarkdown: true
   },

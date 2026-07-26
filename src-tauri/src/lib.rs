@@ -64,6 +64,8 @@ fn application_remaining_invoke_handler(
         commands::credential_status,
         commands::credential_set,
         commands::credential_delete,
+        commands::credential_legacy_available,
+        commands::credential_migrate,
         commands::acquire_cloudflare_imgbed_token,
         commands::test_cloudflare_imgbed_token,
         commands::cleanup_before_exit,
@@ -158,6 +160,7 @@ pub fn run() {
                 .path()
                 .app_config_dir()
                 .map_err(|error| format!("读取配置目录失败：{error}"))?;
+            platform::migrate_legacy_app_data(&config_dir)?;
             fs::create_dir_all(&config_dir)?;
             let state = AppState::new(&config_dir);
             let _ = data::cleanup_task_logs(&state);

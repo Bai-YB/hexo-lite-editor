@@ -42,10 +42,5 @@
     inset: 0;
     min-width: 0;
     min-height: 0;
-    will-change: opacity, transform;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .page-transition { will-change: auto; }
   }
 </style>

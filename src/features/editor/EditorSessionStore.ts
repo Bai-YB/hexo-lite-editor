@@ -83,6 +83,12 @@ export class EditorSessionStore {
     this.notify();
   }
 
+  rebaseSessionGeneration(sessionGeneration: number) {
+    if (!this.state.snapshot || this.state.snapshot.sessionGeneration === sessionGeneration) return;
+    this.state.snapshot = { ...this.state.snapshot, sessionGeneration };
+    this.notify();
+  }
+
   update(content: string) {
     if (!this.state.snapshot || content === this.state.content) return;
     this.state.content = content;

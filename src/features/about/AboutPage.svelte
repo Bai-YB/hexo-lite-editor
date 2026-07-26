@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ExternalLink, Scale } from "@lucide/svelte";
+  import { ExternalLink, LoaderCircle, Scale } from "@lucide/svelte";
   import PageHeader from "$shared/components/PageHeader.svelte";
   import { normalizeError, platform } from "$platform/tauri";
   import type { UpdateCheckResult } from "$shared/types/app";
@@ -33,10 +33,7 @@
 </script>
 
 <div class="workspace-page">
-  <PageHeader title="关于" description="一个安静、可靠的 Hexo 桌面写作工具。">
-    <button class="button" type="button" disabled={checking} on:click={checkUpdate}>{checking ? "检查中" : "检查更新"}</button>
-    <button class="button primary" type="button" on:click={() => platform.openExternalTarget("projectHomepage")}><ExternalLink size={15} />项目主页</button>
-  </PageHeader>
+  <PageHeader title="关于" description="一个安静、可靠的 Hexo 桌面写作工具。" />
 
   <div class="about-simple">
     <section class="about-intro">
@@ -46,7 +43,7 @@
     <section class="panel settings-group about-links">
       <button type="button" on:click={() => platform.openExternalTarget("projectHomepage")}><span><strong>项目主页</strong><small>源代码、问题反馈与版本记录</small></span><ExternalLink size={16} /></button>
       <button type="button" on:click={() => platform.openExternalTarget("license")}><span><strong>MIT License</strong><small>查看开源许可证</small></span><Scale size={16} /></button>
-      <div class="about-update"><span><strong>更新</strong><small>{update ? (update.hasUpdate ? `发现 ${update.latestVersion}` : `当前 ${update.currentVersion} 已是最新`) : "尚未检查"}</small></span>{#if update?.hasUpdate}<button class="button quiet" type="button" on:click={() => platform.openExternalTarget("releasePage")}>查看版本</button>{/if}</div>
+      <div class="about-update"><span><strong>更新</strong><small>{update ? (update.hasUpdate ? `发现 ${update.latestVersion}` : `当前 ${update.currentVersion} 已是最新`) : "尚未检查"}</small></span>{#if update?.hasUpdate}<button class="button quiet" type="button" on:click={() => platform.openExternalTarget("releasePage")}>查看版本</button>{:else}<button class="button quiet" type="button" disabled={checking} on:click={checkUpdate}>{#if checking}<LoaderCircle size={14} class="spin" />检查中{:else}检查更新{/if}</button>{/if}</div>
     </section>
   </div>
 </div>

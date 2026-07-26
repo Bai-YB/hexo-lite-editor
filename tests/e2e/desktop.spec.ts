@@ -83,7 +83,7 @@ test("Cloudflare 资源按目录显示文件夹、压缩包和图片灯箱", asy
   await expect(page.getByRole("menu")).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "插入当前文章" })).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await archive.press("Shift+F10");
+  await archive.locator(".asset-primary").press("Shift+F10");
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await archive.click({ button: "right" });
@@ -96,8 +96,8 @@ test("Cloudflare 资源按目录显示文件夹、压缩包和图片灯箱", asy
   await expect(page.getByRole("dialog", { name: /查看 remote-photo-2.jpg/ })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: /查看/ })).toHaveCount(0);
-  await image.focus();
-  await image.press("Enter");
+  await image.locator(".asset-primary").focus();
+  await image.locator(".asset-primary").press("Enter");
   await expect(page.getByRole("dialog", { name: /查看 remote-photo-2.jpg/ })).toBeVisible();
   await page.keyboard.press("Escape");
 });
@@ -115,7 +115,8 @@ test("隐藏即时预览后编辑器占满文章列表之外的剩余空间", as
   const grid = page.locator(".editor-grid");
   const writingPane = page.locator(".writing-pane");
   const widthBefore = await writingPane.evaluate((element) => element.getBoundingClientRect().width);
-  await page.getByRole("button", { name: "隐藏预览" }).click();
+  await page.getByRole("button", { name: "高级操作" }).click();
+  await page.getByRole("button", { name: "隐藏即时预览" }).click();
   await expect(page.locator(".preview-pane")).toHaveCount(0);
   await expect(page.getByRole("separator", { name: "调整编辑与预览比例" })).toHaveCount(0);
   await expect(grid).toHaveClass(/preview-hidden/);
@@ -369,7 +370,7 @@ test("深色模式光标 token 可见并生成双尺寸回归截图", async ({ p
   await page.setViewportSize({ width: 1360, height: 860 });
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
   const caret = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--editor-caret").trim());
-  expect(caret).toBe("#f3f7f9");
+  expect(caret).toBe("#aec4d0");
   await page.screenshot({ path: "output/playwright/editor-1360x860-dark.png", fullPage: true });
   await page.setViewportSize({ width: 1120, height: 720 });
   await expect(page.locator(".editor-toolbar")).toBeVisible();
@@ -396,6 +397,6 @@ test("欢迎页、图床、设置和关于生成浅色深色回归截图", async
   await captureModes("about");
 
   await page.goto("/?demo=1&welcome=1");
-  await expect(page.getByRole("heading", { name: "还没有打开项目" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("heading", { name: "从博客目录，直接开始写作。" })).toBeVisible({ timeout: 20_000 });
   await captureModes("welcome");
 });

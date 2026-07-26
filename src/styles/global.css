@@ -28,6 +28,21 @@ textarea {
   font: inherit;
 }
 
+input,
+textarea {
+  caret-color: var(--editor-caret);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+body.is-col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 [hidden] {
   display: none !important;
 }
@@ -62,6 +77,11 @@ textarea:focus-visible,
   background: var(--scrollbar);
   border: 3px solid transparent;
   border-radius: 999px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--scrollbar) 70%, var(--text-tertiary));
   background-clip: padding-box;
 }
 

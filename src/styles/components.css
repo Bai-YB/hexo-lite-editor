@@ -97,6 +97,12 @@
   border-radius: 10px;
   background: var(--bg-elevated);
   box-shadow: var(--shadow-popover);
+  transform-origin: top;
+  animation: menu-in var(--duration-fast) ease-out;
+}
+
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-3px); }
 }
 
 .quiet-menu > button {
@@ -140,6 +146,24 @@
   background: transparent;
 }
 
+.icon-button,
+.window-control,
+.filter-chip,
+.filter-menu-button,
+.article-item,
+.status-sync,
+.project-switcher,
+.quiet-menu > button,
+.recent-project-row,
+.diagnostic-log-row,
+.about-links > button,
+.welcome-recents > button,
+.asset-breadcrumbs button,
+.lightbox-zoom,
+.lightbox-nav {
+  transition: background var(--duration-fast), color var(--duration-fast), border-color var(--duration-fast);
+}
+
 .button > svg,
 .icon-button > svg,
 .nav-item > svg,
@@ -181,6 +205,24 @@
   border-radius: var(--radius-control);
   color: var(--text-primary);
   background: var(--bg-control);
+  transition: border-color var(--duration-fast), background var(--duration-fast);
+}
+
+.select {
+  cursor: pointer;
+}
+
+.input:hover:not(:disabled):not(:focus-visible),
+.select:hover:not(:disabled),
+.textarea:hover:not(:disabled):not(:focus-visible) {
+  border-color: color-mix(in srgb, var(--border-strong) 60%, var(--text-tertiary));
+}
+
+.input:focus-visible,
+.select:focus-visible,
+.textarea:focus-visible {
+  border-color: var(--accent);
+  background: var(--bg-panel);
 }
 
 .textarea {
@@ -195,6 +237,12 @@
   opacity: 0.7;
 }
 
+.setting-row.disabled .input:disabled,
+.setting-row.disabled .select:disabled,
+.setting-row.disabled .textarea:disabled {
+  opacity: 1;
+}
+
 .badge {
   min-height: 22px;
   display: inline-flex;
@@ -205,14 +253,17 @@
   color: var(--text-secondary);
   background: var(--bg-control);
   font-size: 11px;
+  transition: background var(--duration-fast), color var(--duration-fast);
 }
 
 .badge.success {
   color: var(--success);
+  background: var(--success-soft);
 }
 
 .badge.warning {
   color: var(--warning);
+  background: var(--warning-soft);
 }
 
 .empty-state,
@@ -251,6 +302,15 @@
   max-width: 440px;
   margin: 0;
   line-height: 1.6;
+}
+
+.error-state > svg {
+  color: var(--danger);
+}
+
+.workspace > .loading-state,
+.page-transition > .loading-state {
+  min-height: 100%;
 }
 
 .modal-backdrop {
@@ -302,8 +362,8 @@
   display: block;
   width: 40%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, var(--bg-control-hover), transparent);
-  animation: skeleton 1.4s ease-in-out infinite;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text-primary) 5%, transparent), transparent);
+  animation: skeleton 1.4s linear infinite;
 }
 
 @keyframes skeleton {

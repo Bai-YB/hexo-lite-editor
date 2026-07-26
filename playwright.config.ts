@@ -16,6 +16,13 @@ export default defineConfig({
     timeout: 120_000
   },
   projects: [
-    { name: "desktop-chromium", use: { ...devices["Desktop Chrome"], channel: "msedge", viewport: { width: 1360, height: 860 } } }
+    {
+      name: "desktop-chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        ...(process.env.CI ? {} : { channel: "msedge" as const }),
+        viewport: { width: 1360, height: 860 }
+      }
+    }
   ]
 });
