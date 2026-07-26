@@ -84,7 +84,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: Hexo-Lite-Editor-${{ env.RELEASE_VERSION }}-windows-x64
-          path: release-artifacts/${{ env.RELEASE_VERSION }}/*
+          path: |
+            release-artifacts/${{ env.RELEASE_VERSION }}/Hexo-Lite-Editor_${{ env.RELEASE_VERSION }}_windows-x64-portable.zip
+            release-artifacts/${{ env.RELEASE_VERSION }}/Hexo-Lite-Editor_${{ env.RELEASE_VERSION }}_windows-x64-setup.exe
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -97,7 +99,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $notes)) {
             throw "Missing release notes: $notes"
           }
-          $assets = Get-ChildItem -LiteralPath "release-artifacts/$env:RELEASE_VERSION" -File | ForEach-Object FullName
+          $releaseDirectory = "release-artifacts/$env:RELEASE_VERSION"
+          $assets = @(
+            "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-portable.zip"
+            "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-setup.exe"
+          )
           if (gh release view $env:GITHUB_REF_NAME 2>$null) {
             gh release upload $env:GITHUB_REF_NAME @assets --clobber
             gh release edit $env:GITHUB_REF_NAME --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes --latest
