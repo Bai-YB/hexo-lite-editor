@@ -25,8 +25,8 @@
 
 - 编辑文章和草稿，支持 Markdown、常用 HTML 与即时预览。
 - 隐藏预览后，编辑器自动使用文章列表之外的全部空间。
-- 管理 `source/` 下的图片，也可连接 Cloudflare-ImgBed；支持粘贴、拖放和导入。
-- 调用博客现有环境运行 Hexo 浏览器预览、clean、generate 和 deploy。
+- 管理 `source/` 下的图片，也可连接 Cloudflare-ImgBed；粘贴和拖放会先本地显示，再在后台完成上传。
+- 发布固定执行保存、clean、generate 和 deploy，避免部署旧缓存；浏览器预览可随时关闭后台服务。
 - 通过独立 GitHub 内容分支或标准 WebDAV 服务同步文章和图片。
 - 支持浅色、深色和跟随系统主题。
 

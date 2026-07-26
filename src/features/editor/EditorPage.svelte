@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import {
     RefreshCw,
     Search,
@@ -23,7 +24,7 @@
     renderSafeMarkdown,
     replacePreviewImageWithPlaceholder
   } from "$shared/markdown/safeMarkdown";
-  import { platform, normalizeError } from "$platform/tauri";
+  import { isTauri, platform, normalizeError } from "$platform/tauri";
   import { previewStateLabel } from "./previewModel";
   import type {
     AppConfigV3,
@@ -55,6 +56,7 @@
   export let taskBusy = false;
   export let previewBusy = false;
   export let autoSaveSuspended = false;
+  export let onPendingImageUploadsChange: (count: number) => void = () => {};
 
   const store = editorStore;
   let editorState: EditorSessionState = store.getState();
@@ -102,6 +104,8 @@
   const editorScrollByArticle = new Map<string, number>();
   const previewScrollByArticle = new Map<string, number>();
   let componentAlive = true;
+  let pendingImageUploads = 0;
+  let unlistenFileDrop: (() => void) | undefined;
   let coverErrors: Record<string, string> = {};
   let coverFallbackUrls: Record<string, string> = {};
   const coverChecksInFlight = new Set<string>();
@@ -121,6 +125,11 @@
     window.addEventListener("pointerdown", closeFilterMenu);
     window.addEventListener("keydown", closeFilterMenu);
     window.addEventListener("hexo-editor-new-article", openCreateDialog);
+    if (isTauri()) {
+      void getCurrentWebview().onDragDropEvent((event) => {
+        if (event.payload.type === "drop") void handleImagePaths(event.payload.paths);
+      }).then((unlisten) => (unlistenFileDrop = unlisten));
+    }
     if (!session) return;
     void refreshSyncStatus();
     if (!store.getState().snapshot && articles.length) void openArticle(articles[0]);
@@ -128,6 +137,7 @@
 
   onDestroy(() => {
     componentAlive = false;
+    unlistenFileDrop?.();
     unsubscribe();
     clearTimeout(autoSaveTimer);
     window.removeEventListener("focus", handleWindowFocus);
@@ -266,6 +276,10 @@
 
   function requestArticle(article: ArticleSummary) {
     if (article.articleId === activeArticleId) return;
+    if (pendingImageUploads > 0) {
+      onNotice("图片正在上传并更新地址，请等待完成后再切换文章。");
+      return;
+    }
     if (editorState.dirty) {
       pendingArticle = article;
       showSwitchGuard = true;
@@ -394,15 +408,72 @@
         ordered
       );
       const successes = results.filter((result) => result.markdown);
-      if (config.imageBed.autoInsertMarkdown) {
-        for (const result of successes) store.insertMarkdown(result.markdown!);
-      }
+      const articleId = store.activeArticleId();
+      for (const result of successes) store.insertMarkdown(result.markdown!);
       const failed = results.filter((result) => result.error);
       if (failed.length) onNotice(`${successes.length} 张图片已处理，${failed.length} 张失败：${failed[0].error?.message}`);
-      else onNotice(`${successes.length} 张图片已处理${config.imageBed.autoInsertMarkdown ? "并插入文章" : ""}。`);
+      else if (results.some((result) => result.uploadId)) onNotice(`${successes.length} 张图片已插入，正在后台上传。`);
+      else onNotice(`${successes.length} 张图片已处理并插入文章。`);
+      if (articleId) {
+        for (const result of successes) {
+          if (result.uploadId && result.url) void uploadPendingImage(result.uploadId, result.url, articleId);
+        }
+      }
       setTimeout(() => void refreshPreviewImages(true), 0);
     } catch (error) {
       onNotice(normalizeError(error).message);
+    }
+  }
+
+  async function handleImagePaths(paths: string[]) {
+    const imagePaths = paths.filter((path) => /\.(?:png|jpe?g|gif|webp)$/i.test(path));
+    if (!session || !imagePaths.length) return;
+    try {
+      const results = await platform.importEditorImagePaths(
+        session.projectId,
+        session.generation,
+        config.imageBed.defaultProvider,
+        imagePaths
+      );
+      const articleId = store.activeArticleId();
+      const successes = results.filter((result) => result.markdown);
+      for (const result of successes) store.insertMarkdown(result.markdown!);
+      if (articleId) {
+        for (const result of successes) {
+          if (result.uploadId && result.url) void uploadPendingImage(result.uploadId, result.url, articleId);
+        }
+      }
+      const failed = results.filter((result) => result.error);
+      if (failed.length) onNotice(`${successes.length} 张图片已插入，${failed.length} 张无法处理：${failed[0].error?.message}`);
+      else if (results.some((result) => result.uploadId)) onNotice(`${successes.length} 张图片已插入，正在后台上传。`);
+      else onNotice(`${successes.length} 张图片已插入文章。`);
+      setTimeout(() => void refreshPreviewImages(true), 0);
+    } catch (error) {
+      onNotice(normalizeError(error).message);
+    }
+  }
+
+  async function uploadPendingImage(uploadId: string, localUrl: string, articleId: string) {
+    if (!session) return;
+    const projectId = session.projectId;
+    const generation = session.generation;
+    pendingImageUploads += 1;
+    onPendingImageUploadsChange(pendingImageUploads);
+    try {
+      const result = await platform.uploadCachedEditorImage(projectId, generation, uploadId);
+      if (result.url) {
+        const sameArticle = store.activeArticleId() === articleId;
+        const replaced = store.replaceMarkdownImageUrl(localUrl, result.url, articleId);
+        if (replaced) await store.save();
+        if (sameArticle) await platform.finalizeCachedEditorImage(projectId, generation, uploadId);
+        onNotice(replaced ? "图片已上传，文章中的地址已自动更新。" : "图片已上传。");
+        setTimeout(() => void refreshPreviewImages(true), 0);
+      }
+    } catch (error) {
+      onNotice(`图片上传失败，本地图片已保留：${normalizeError(error).message}`);
+    } finally {
+      pendingImageUploads = Math.max(0, pendingImageUploads - 1);
+      onPendingImageUploadsChange(pendingImageUploads);
     }
   }
 

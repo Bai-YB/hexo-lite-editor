@@ -275,6 +275,7 @@ export interface ImageImportResult {
   fileName: string;
   url?: string;
   markdown?: string;
+  uploadId?: string;
   error?: AppError;
 }
 
@@ -487,7 +488,7 @@ export const defaultConfig: AppConfigV3 = {
   },
   publish: {
     saveBeforeRun: true,
-    cleanBeforeGenerate: false,
+    cleanBeforeGenerate: true,
     generateBeforeDeploy: true,
     gitPushAfterDeploy: false
   },

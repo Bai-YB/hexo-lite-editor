@@ -25,6 +25,7 @@ use tokio::{
     sync::oneshot,
 };
 use uuid::Uuid;
+use walkdir::WalkDir;
 
 #[tauri::command]
 pub async fn start_task(
@@ -54,6 +55,9 @@ pub async fn start_task(
     }
 
     let config = load_config(&state)?.config;
+    if kind == TaskType::Publish {
+        ensure_no_pending_editor_images(&root)?;
+    }
     let steps = build_task_steps(kind, &config, &root)?;
     let modifies_project = !matches!(kind, TaskType::GitStatus);
     let preview_was_running = if modifies_project {
@@ -113,6 +117,38 @@ pub fn cancel_task(task_id: String, state: State<'_, AppState>) -> AppResult<()>
         .remove(&task_id);
     if let Some(cancel) = cancel {
         let _ = cancel.send(());
+    }
+    Ok(())
+}
+
+fn ensure_no_pending_editor_images(root: &Path) -> AppResult<()> {
+    let source = root.join("source");
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let pending_image = regex::Regex::new(
+        r"!\[[^\]\r\n]*\]\(\s*(?:hlex-asset://localhost/|http://hlex-asset\.localhost/)",
+    )
+    .expect("static pending image pattern");
+    for entry in WalkDir::new(source).follow_links(false) {
+        let entry = entry.map_err(|error| AppError::io("检查文章图片状态失败", error))?;
+        if !entry.file_type().is_file()
+            || !entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        {
+            continue;
+        }
+        let content = std::fs::read_to_string(entry.path())
+            .map_err(|error| AppError::io("检查文章图片状态失败", error))?;
+        if pending_image.is_match(&content) {
+            return Err(AppError::new(
+                "pending_image_uploads",
+                "文章中还有尚未上传成功的图片，请等待上传完成或移除该图片后再发布。",
+                true,
+            ));
+        }
     }
     Ok(())
 }
@@ -260,6 +296,10 @@ async fn run_step(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
     });
+    #[cfg(windows)]
+    command.wrap(CreationFlags(
+        windows::Win32::System::Threading::CREATE_NO_WINDOW,
+    ));
     #[cfg(windows)]
     command.wrap(JobObject);
     #[cfg(unix)]
@@ -412,4 +452,32 @@ fn emit_event(app: &AppHandle, mut event: TaskEvent) {
     let state = app.state::<AppState>();
     let _ = append_task_event(&state, &mut event);
     let _ = app.emit("task-event", event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publish_preflight_rejects_temporary_editor_image_urls() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let posts = temp.path().join("source/_posts");
+        std::fs::create_dir_all(&posts).unwrap();
+        let article = posts.join("post.md");
+        std::fs::write(&article, "![说明](http://hlex-asset.localhost/pending)").unwrap();
+        assert_eq!(
+            ensure_no_pending_editor_images(temp.path())
+                .unwrap_err()
+                .code,
+            "pending_image_uploads"
+        );
+        std::fs::write(&article, "![说明](https://img.example.com/ready.png)").unwrap();
+        assert!(ensure_no_pending_editor_images(temp.path()).is_ok());
+        std::fs::write(
+            &article,
+            "`http://hlex-asset.localhost/example` is documentation, not an image.",
+        )
+        .unwrap();
+        assert!(ensure_no_pending_editor_images(temp.path()).is_ok());
+    }
 }

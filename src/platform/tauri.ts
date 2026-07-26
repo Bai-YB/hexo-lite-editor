@@ -192,6 +192,33 @@ export const platform = {
       files
     });
   },
+  importEditorImagePaths(
+    projectId: string,
+    sessionGeneration: number,
+    provider: AppConfigV3["imageBed"]["defaultProvider"],
+    paths: string[]
+  ) {
+    return call<ImageImportResult[]>("import_editor_image_paths", {
+      projectId,
+      sessionGeneration,
+      provider,
+      paths
+    });
+  },
+  uploadCachedEditorImage(projectId: string, sessionGeneration: number, uploadId: string) {
+    return call<ImageImportResult>("upload_cached_editor_image", {
+      projectId,
+      sessionGeneration,
+      uploadId
+    });
+  },
+  finalizeCachedEditorImage(projectId: string, sessionGeneration: number, uploadId: string) {
+    return call<void>("finalize_cached_editor_image", {
+      projectId,
+      sessionGeneration,
+      uploadId
+    });
+  },
   listCloudflareAssets(
     projectId: string,
     sessionGeneration: number,

@@ -54,3 +54,4 @@ tauri = { version = "2", features = ["test"] }
 [target.'cfg(windows)'.dependencies]
 rfd = "0.16"
 winreg = "0.55"
+windows = { version = "0.62", features = ["Win32_System_Threading"] }

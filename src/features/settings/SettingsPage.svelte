@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { FileText, KeyRound, RotateCcw, Trash2 } from "@lucide/svelte";
+  import { KeyRound, RotateCcw, Trash2 } from "@lucide/svelte";
   import ModalDialog from "$shared/components/ModalDialog.svelte";
   import SettingsHeader from "./SettingsHeader.svelte";
   import SettingsNavigation from "./SettingsNavigation.svelte";
@@ -19,8 +19,6 @@
     RecentProjectView,
     SettingsSectionId,
     ThemeMode,
-    TaskEvent,
-    TaskLogSummary,
     WebDavContentSyncPreflight
   } from "$shared/types/app";
 
@@ -42,7 +40,7 @@
     { id: "images", title: "图片与图床", description: "导入目标与连接状态" },
     { id: "hexoPublish", title: "Hexo 与发布", description: "浏览器预览与发布流水线" },
     { id: "sync", title: "内容同步", description: "GitHub 或 WebDAV" },
-    { id: "maintenance", title: "诊断与维护", description: "日志、更新与恢复" }
+    { id: "maintenance", title: "维护", description: "更新与恢复" }
   ];
 
   let saved = structuredClone(config);
@@ -59,10 +57,6 @@
   let adminPassword = "";
   let showReset = false;
   let showClearRecent = false;
-  let logs: TaskLogSummary[] = [];
-  let selectedLog = "";
-  let logEvents: TaskEvent[] = [];
-  let logsBusy = false;
   let syncCandidate: import("$shared/types/app").ContentSyncCandidate | null = null;
   let syncCandidates: import("$shared/types/app").ContentSyncCandidate[] = [];
   let syncPreflight: ContentSyncPreflight | null = null;
@@ -106,7 +100,6 @@
     activeSection = initialSection ?? (sections.some((section) => section.id === stored) ? stored! : "general");
     onRegisterSettingsController({ save: saveDraft, discard, hasDirty: () => dirty });
     void refreshCredential();
-    void refreshLogs();
     void refreshSync();
   });
 
@@ -502,31 +495,6 @@
     catch (error) { onNotice(normalizeError(error).message); }
   }
 
-  async function refreshLogs() {
-    logsBusy = true;
-    try {
-      logs = await platform.listTaskLogs();
-      if (selectedLog && !logs.some((log) => log.taskId === selectedLog)) { selectedLog = ""; logEvents = []; }
-    } catch (error) { onNotice(normalizeError(error).message); }
-    finally { logsBusy = false; }
-  }
-
-  async function openLog(taskId: string) {
-    logsBusy = true;
-    try { const page = await platform.readTaskLog(taskId); selectedLog = taskId; logEvents = page.events; }
-    catch (error) { onNotice(normalizeError(error).message); }
-    finally { logsBusy = false; }
-  }
-
-  async function removeLog(taskId: string) {
-    try { await platform.deleteTaskLog(taskId); await refreshLogs(); }
-    catch (error) { onNotice(normalizeError(error).message); }
-  }
-
-  async function clearLogs() {
-    try { await platform.clearTaskLogs(); selectedLog = ""; logEvents = []; await refreshLogs(); }
-    catch (error) { onNotice(normalizeError(error).message); }
-  }
 </script>
 
 <div class="workspace-page settings-page">
@@ -578,7 +546,7 @@
         <div class="settings-block">
           <div class="settings-block-heading"><h3>图片工作流</h3><p>决定导入、粘贴和拖入图片时的目标。</p></div>
           <div class="setting-row"><div class="setting-copy"><strong>默认来源</strong><span>本地项目目录或 Cloudflare-ImgBed。</span></div><select class="select compact-control" value={draft.imageBed.defaultProvider} on:change={(event) => change({ ...draft, imageBed: { ...draft.imageBed, defaultProvider: event.currentTarget.value as AppConfigV3["imageBed"]["defaultProvider"] } })}><option value="local">本地图片</option><option value="cloudflare-imgbed">Cloudflare-ImgBed</option></select></div>
-          <div class="setting-row"><div class="setting-copy"><strong>上传后插入 Markdown</strong><span>成功后插入当前文章的最后光标位置。</span></div><label class="switch"><input type="checkbox" checked={draft.imageBed.autoInsertMarkdown} on:change={(event) => change({ ...draft, imageBed: { ...draft.imageBed, autoInsertMarkdown: event.currentTarget.checked } })} /><span></span></label></div>
+          <div class="setting-row"><div class="setting-copy"><strong>图片插入方式</strong><span>粘贴或拖入后立即插入本地图片，图床上传成功后自动更新地址。</span></div><span class="muted-line">自动</span></div>
         </div>
         <div class="settings-block provider-block">
           <div class="settings-block-heading"><h3>{draft.imageBed.defaultProvider === "local" ? "本地图片目录" : "Cloudflare 连接"}</h3><p>{draft.imageBed.defaultProvider === "local" ? "路径由后端验证，不能离开项目的 source 目录。" : "连接信息、凭据状态和操作集中管理。"}</p></div>
@@ -597,9 +565,8 @@
         </div>
         <div class="settings-block">
           <div class="settings-block-heading"><h3>发布流水线</h3><p>发布快捷键为 {shortcutLabel("⇧P")}。</p></div>
-          <div class="setting-row"><div class="setting-copy"><strong>运行前保存文章</strong><span>保存失败时中止发布并保留内容。</span></div><label class="switch"><input type="checkbox" checked={draft.publish.saveBeforeRun} on:change={(event) => change({ ...draft, publish: { ...draft.publish, saveBeforeRun: event.currentTarget.checked } })} /><span></span></label></div>
-          <div class="setting-row"><div class="setting-copy"><strong>生成前清理</strong><span>先执行 hexo clean。</span></div><label class="switch"><input type="checkbox" checked={draft.publish.cleanBeforeGenerate} on:change={(event) => change({ ...draft, publish: { ...draft.publish, cleanBeforeGenerate: event.currentTarget.checked } })} /><span></span></label></div>
-          <div class="setting-row"><div class="setting-copy"><strong>部署前生成</strong><span>在 deploy 前执行 hexo generate。</span></div><label class="switch"><input type="checkbox" checked={draft.publish.generateBeforeDeploy} on:change={(event) => change({ ...draft, publish: { ...draft.publish, generateBeforeDeploy: event.currentTarget.checked } })} /><span></span></label></div>
+          <div class="setting-row"><div class="setting-copy"><strong>发布前保存</strong><span>始终先保存当前文章；保存失败时不会继续发布。</span></div><span class="muted-line">已启用</span></div>
+          <div class="setting-row"><div class="setting-copy"><strong>始终重新生成</strong><span>每次发布固定执行“清理缓存 → 重新生成 → 部署”，避免发布旧版本。</span></div><span class="muted-line">已启用</span></div>
           <div class="setting-row"><div class="setting-copy"><strong>部署后 Git Push</strong><span>执行固定 git push，不接受自定义参数。</span></div><label class="switch"><input type="checkbox" checked={draft.publish.gitPushAfterDeploy} on:change={(event) => change({ ...draft, publish: { ...draft.publish, gitPushAfterDeploy: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
       {:else if activeSection === "sync"}
@@ -672,16 +639,6 @@
           {/if}
         </div>
       {:else}
-        <div class="settings-block">
-          <div class="settings-block-heading"><h3>日志策略</h3><p>Token、Authorization 和 URL 凭据写入前会脱敏。</p></div>
-          <div class="setting-row"><div class="setting-copy"><strong>保留时间</strong><span>启动应用和任务完成后清理过期日志。</span></div><select class="select compact-control" value={draft.diagnostics.logRetentionDays} on:change={(event) => change({ ...draft, diagnostics: { ...draft.diagnostics, logRetentionDays: Number(event.currentTarget.value) as 7 | 14 | 30 } })}><option value="7">7 天</option><option value="14">14 天</option><option value="30">30 天</option></select></div>
-          <div class="setting-row"><div class="setting-copy"><strong>总体积上限</strong><span>单任务最多 2MB，全部日志最多 100 个文件。</span></div><select class="select compact-control" value={draft.diagnostics.maxLogStorageMb} on:change={(event) => change({ ...draft, diagnostics: { ...draft.diagnostics, maxLogStorageMb: Number(event.currentTarget.value) as 10 | 20 | 50 } })}><option value="10">10 MB</option><option value="20">20 MB</option><option value="50">50 MB</option></select></div>
-        </div>
-        <div class="settings-block">
-          <div class="setting-subsection-heading"><div><h3>任务日志</h3><span>{logs.length ? `${logs.length} 条记录` : "目前没有日志"}</span></div><div class="button-row"><button class="button quiet" type="button" disabled={logsBusy} on:click={refreshLogs}>刷新</button>{#if logs.length}<button class="button danger" type="button" on:click={clearLogs}>全部清除</button>{/if}</div></div>
-          {#if logs.length}<div class="diagnostic-log-list">{#each logs as log (log.taskId)}<div class:active={selectedLog === log.taskId} class="diagnostic-log-row"><button type="button" on:click={() => openLog(log.taskId)}><FileText size={15} /><span><strong>{log.projectName} · {log.taskType}</strong><small>{new Date(log.startedAt).toLocaleString()} · {(log.size / 1024).toFixed(1)} KB{log.truncated ? " · 已截断" : ""}</small></span></button><button class="icon-button" type="button" aria-label="删除日志" title="删除日志" on:click={() => removeLog(log.taskId)}><Trash2 size={14} /></button></div>{/each}</div>{/if}
-          {#if selectedLog}<pre class="diagnostic-log-view" aria-label="任务日志内容">{logEvents.map((event) => `${event.timestamp}  ${event.step ?? event.kind}${event.line ? `  ${event.line}` : ""}`).join("\n") || "日志为空。"}</pre>{/if}
-        </div>
         <div class="settings-block">
           <div class="settings-block-heading"><h3>更新与恢复</h3><p>更新只从固定的项目 Releases 页面检查。</p></div>
           <div class="setting-row"><div class="setting-copy"><strong>启动时检查更新</strong><span>只有远程 SemVer 更高时才提示。</span></div><label class="switch"><input type="checkbox" checked={draft.update.checkOnStart} on:change={(event) => change({ ...draft, update: { checkOnStart: event.currentTarget.checked } })} /><span></span></label></div>

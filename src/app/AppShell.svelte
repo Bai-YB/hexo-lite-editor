@@ -64,6 +64,7 @@
   let previewServer: PreviewServerView | null = null;
   let previewBusy = false;
   let publishing = false;
+  let pendingImageUploads = 0;
   let settingsInitialSection: SettingsSectionId | null = null;
   let configRevision = 0;
 
@@ -105,7 +106,7 @@
     unlistenTask = await platform.onTaskEvent((event) => {
       taskEvents = appendTaskEvent(taskEvents, event);
       if (event.kind === "finished" && event.success === false) {
-        showNotice("任务执行失败，可在设置 → 诊断与日志中查看详情。", "error");
+        showNotice("任务执行失败，请检查 Hexo 项目配置或网络连接后重试。", "error");
       }
     });
     unlistenPreview = await platform.onPreviewStatus((view) => {
@@ -203,6 +204,10 @@
 
   function navigate(next: AppPage, settingsSection: SettingsSectionId | null = null) {
     if (next === page) return;
+    if (pendingImageUploads > 0) {
+      showNotice("图片正在上传并更新地址，请等待完成后再离开写作页。", "error");
+      return;
+    }
     if (next === "settings") settingsInitialSection = settingsSection;
     if (page === "settings" && settingsController?.hasDirty()) {
       requestGuard("离开设置前需要保存或放弃本次设置修改。", () => { page = next; }, "settings");
@@ -215,6 +220,10 @@
   }
 
   function openProject() {
+    if (pendingImageUploads > 0) {
+      showNotice("图片正在上传并更新地址，请等待完成后再切换博客。", "error");
+      return;
+    }
     requestGuard("切换项目前需要处理当前文章或设置中的未保存内容。", async () => {
       try {
         const result = await platform.pickProject();
@@ -229,6 +238,10 @@
   }
 
   async function openRecent(recentId: string) {
+    if (pendingImageUploads > 0) {
+      showNotice("图片正在上传并更新地址，请等待完成后再切换博客。", "error");
+      return;
+    }
     requestGuard("切换项目前需要处理当前文章或设置中的未保存内容。", async () => {
       try {
         const result = await platform.openRecentProject(recentId);
@@ -296,6 +309,10 @@
   }
 
   function requestClose() {
+    if (pendingImageUploads > 0) {
+      showNotice(`还有 ${pendingImageUploads} 张图片正在上传，请等待完成后再退出。`, "error");
+      return;
+    }
     const settingsDirty = settingsController?.hasDirty() ?? false;
     const editorDirty = editorStore.hasDirty();
     closeWindowState = {
@@ -386,9 +403,13 @@
 
   async function publishFromEditor() {
     if (!session || activeTask || publishing) return;
+    if (pendingImageUploads > 0) {
+      showNotice(`还有 ${pendingImageUploads} 张图片正在上传，请等待上传完成后再发布。`, "error");
+      return;
+    }
     publishing = true;
     try {
-      if (config.publish.saveBeforeRun && editorStore.hasDirty()) {
+      if (editorStore.hasDirty()) {
         await editorStore.save();
         articles = await platform.listArticles(session.projectId, session.generation);
       }
@@ -579,6 +600,7 @@
             onTogglePreviewServer={togglePreviewServer}
             onOpenPreviewHome={openPreviewHome}
             onNotice={showNotice}
+            onPendingImageUploadsChange={(count: number) => (pendingImageUploads = count)}
             onOpenSettings={(section?: SettingsSectionId) => navigate("settings", section ?? "maintenance")}
               />
             {/await}
@@ -601,7 +623,7 @@
         {#if activeTask}
           <div class="task-indicator" role="status" in:fly={{ y: 8, duration: 160 }} out:fade={{ duration: 120 }}>
             <LoaderCircle size={15} class="spin" />
-            <span>{activeTask.step ?? "项目任务"}{activeTask.line ? ` · ${activeTask.line}` : ""}</span>
+            <span>{activeTask.step ?? "正在处理项目"}</span>
           </div>
         {/if}
       </div>

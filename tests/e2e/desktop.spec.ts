@@ -277,10 +277,12 @@ test("内容同步冲突逐文件展示 Markdown 差异与二进制哈希选择"
   await expect(page.locator(".sync-status.synced")).toBeVisible();
 });
 
-test("诊断页主动读取日志，关于页保持精简", async ({ page }) => {
+test("维护页不向普通用户显示任务日志或终端输出，关于页保持精简", async ({ page }) => {
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByRole("button", { name: /诊断与维护/ }).click();
-  await expect(page.getByText("目前没有日志")).toBeVisible();
+  await page.getByRole("button", { name: /^维护/ }).click();
+  await expect(page.getByRole("heading", { name: "更新与恢复" })).toBeVisible();
+  await expect(page.getByText("任务日志")).toHaveCount(0);
+  await expect(page.locator(".diagnostic-log-view")).toHaveCount(0);
   await page.getByRole("button", { name: "关于" }).click();
   await expect(page.getByText("版本 1.0.5")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);

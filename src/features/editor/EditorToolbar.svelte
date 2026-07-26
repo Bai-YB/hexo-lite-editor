@@ -81,7 +81,10 @@
     {/if}
   </div>
   <div class="toolbar-spacer"></div>
-  <button class="button quiet" type="button" disabled={previewBusy} on:click={onPreview}><Server size={16} />{previewBusy ? "正在启动预览" : "浏览器预览"}</button>
+  <button class="button quiet" type="button" disabled={previewBusy} on:click={onPreview}><Server size={16} />{previewBusy ? "正在处理预览" : "浏览器预览"}</button>
+  {#if previewServer?.state === "running"}
+    <button class="button quiet" type="button" disabled={previewBusy} on:click={onTogglePreviewServer}>关闭后台预览</button>
+  {/if}
   <button class="button quiet" type="button" title={`新建（${shortcutLabel("N")}）`} on:click={onCreate}><FilePlus2 size={16} />新建</button>
   <button class="icon-button" type="button" disabled={imageDisabled} title="选择图片并插入" aria-label="选择图片并插入" on:click={onSelectImages}><ImagePlus size={17} /></button>
   <button class="button quiet" type="button" disabled={saveDisabled} title={`保存（${shortcutLabel("S")}）`} on:click={onSave}><Save size={16} />{saving ? "保存中" : "保存"}</button>
@@ -108,7 +111,7 @@
         <button type="button" on:click={() => { advancedMenuOpen = false; onTogglePreview(); }}>{previewVisible ? "隐藏即时预览" : "显示即时预览"}</button>
         <button type="button" on:click={() => { advancedMenuOpen = false; onTogglePreviewServer(); }}>{previewServer?.state === "running" ? "停止本地预览" : "启动本地预览"}</button>
         <button type="button" on:click={() => { advancedMenuOpen = false; onOpenPreviewHome(); }}>打开博客首页</button>
-        <button type="button" on:click={() => { advancedMenuOpen = false; onOpenSettings("maintenance"); }}>诊断与日志</button>
+        <button type="button" on:click={() => { advancedMenuOpen = false; onOpenSettings("maintenance"); }}>维护设置</button>
       </div>
     {/if}
   </div>

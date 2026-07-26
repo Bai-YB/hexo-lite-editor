@@ -47,14 +47,8 @@ pub fn build_task_steps(
         TaskType::Generate => vec![generate],
         TaskType::Deploy => vec![deploy],
         TaskType::Publish => {
-            let mut steps = Vec::new();
-            if config.publish.clean_before_generate {
-                steps.push(clean);
-            }
-            if config.publish.generate_before_deploy {
-                steps.push(generate);
-            }
-            steps.push(deploy);
+            // Publishing must never deploy a stale public directory, regardless of legacy settings.
+            let mut steps = vec![clean, generate, deploy];
             if config.publish.git_push_after_deploy {
                 steps.push(TaskStep {
                     name: "推送 Git",
@@ -155,12 +149,12 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn publish_steps_follow_settings() {
+    fn publish_always_cleans_and_generates_before_deploy() {
         let temp = TempDir::new().unwrap();
         fs::create_dir_all(temp.path().join("node_modules/.bin")).unwrap();
         fs::write(temp.path().join("node_modules/.bin/hexo.cmd"), "").unwrap();
         let mut config = AppConfigV3::default();
-        config.publish.clean_before_generate = true;
+        config.publish.clean_before_generate = false;
         config.publish.generate_before_deploy = false;
         config.publish.git_push_after_deploy = true;
         let names: Vec<_> = build_task_steps(TaskType::Publish, &config, temp.path())
@@ -168,7 +162,7 @@ mod tests {
             .into_iter()
             .map(|step| step.name)
             .collect();
-        assert_eq!(names, vec!["清理缓存", "部署站点", "推送 Git"]);
+        assert_eq!(names, vec!["清理缓存", "生成站点", "部署站点", "推送 Git"]);
     }
 
     #[test]

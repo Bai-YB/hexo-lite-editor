@@ -2,7 +2,7 @@ use super::image_local::{
     list_local_images_impl, supported_mime, unique_target, validate_image_file, MAX_IMAGE_BYTES,
 };
 use crate::{
-    app::{AppState, AssetSource, RemoteAssetRecord},
+    app::{AppState, ArticleRecord, AssetRecord, AssetSource, RemoteAssetRecord},
     data::load_config,
     domain::{
         AppError, AppResult, EditorImageInput, ImageImportResult, ImageProvider, LocalImage,
@@ -14,8 +14,10 @@ use serde_json::{Map, Value};
 #[cfg(any(windows, target_os = "macos"))]
 use std::process::Command;
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
@@ -152,70 +154,295 @@ pub async fn import_editor_images(
     files: Vec<EditorImageInput>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ImageImportResult>> {
-    let root = state.with_project(&project_id, Some(session_generation), |project| {
+    import_editor_images_impl(&project_id, session_generation, provider, files, &state).await
+}
+
+#[tauri::command]
+pub async fn import_editor_image_paths(
+    project_id: String,
+    session_generation: u64,
+    provider: ImageProvider,
+    paths: Vec<PathBuf>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ImageImportResult>> {
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        validate_image_file(&path)?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| AppError::invalid("图片文件名不是有效文本。"))?
+            .to_string();
+        files.push(EditorImageInput {
+            name,
+            mime: supported_mime(&path)?,
+            bytes: tokio::fs::read(&path)
+                .await
+                .map_err(|error| AppError::io("读取拖入的图片失败", error))?,
+        });
+    }
+    import_editor_images_impl(&project_id, session_generation, provider, files, &state).await
+}
+
+async fn import_editor_images_impl(
+    project_id: &str,
+    session_generation: u64,
+    provider: ImageProvider,
+    files: Vec<EditorImageInput>,
+    state: &AppState,
+) -> AppResult<Vec<ImageImportResult>> {
+    let root = state.with_project(project_id, Some(session_generation), |project| {
         Ok(project.root.clone())
     })?;
-    let config = load_config(&state)?.config;
-    let remote = if provider == ImageProvider::CloudflareImgbed {
-        Some((
-            cloudflare_upload_endpoint(
-                &config.image_bed.cloudflare_api_url,
-                &config.image_bed.upload_folder,
-            )?,
-            cloudflare_token(
-                &config.image_bed.cloudflare_connection_id,
-                &config.image_bed.cloudflare_api_url,
-            )?,
-        ))
-    } else {
-        None
-    };
+    let config = load_config(state)?.config;
     let mut results = Vec::with_capacity(files.len());
     for file in files {
         let file_name = file.name.clone();
-        let result = match validate_image_input(&file).and_then(|mime| {
-            if provider == ImageProvider::Local {
-                save_local_editor_image(
-                    &root,
-                    &config.image_bed.local_image_dir,
-                    &config.image_bed.local_markdown_prefix,
-                    &file.name,
-                    &file.bytes,
-                )
-                .map(|url| (url, mime))
-            } else {
-                Ok((String::new(), mime))
-            }
-        }) {
-            Ok((url, _mime)) if provider == ImageProvider::Local => Ok(url),
-            Ok((_, mime)) => match remote.as_ref() {
-                Some((endpoint, token)) => {
-                    upload_cloudflare_bytes(endpoint, token, &file.name, &mime, file.bytes).await
-                }
-                None => Err(AppError::new(
-                    "image_provider_unavailable",
-                    "远程图床配置不可用。",
-                    true,
-                )),
-            },
-            Err(error) => Err(error),
-        };
+        let result = validate_image_input(&file).and_then(|mime| match provider {
+            ImageProvider::Local => save_local_editor_image(
+                &root,
+                &config.image_bed.local_image_dir,
+                &config.image_bed.local_markdown_prefix,
+                &file.name,
+                &file.bytes,
+            )
+            .map(|url| (url, None)),
+            ImageProvider::CloudflareImgbed => cache_editor_image(
+                state,
+                project_id,
+                session_generation,
+                &file.name,
+                &mime,
+                &file.bytes,
+            )
+            .map(|(url, upload_id)| (url, Some(upload_id))),
+        });
         match result {
-            Ok(url) => results.push(ImageImportResult {
+            Ok((url, upload_id)) => results.push(ImageImportResult {
                 file_name: file_name.clone(),
                 markdown: Some(format!("![{file_name}]({url})")),
                 url: Some(url),
+                upload_id,
                 error: None,
             }),
             Err(error) => results.push(ImageImportResult {
                 file_name,
                 url: None,
                 markdown: None,
+                upload_id: None,
                 error: Some(error),
             }),
         }
     }
     Ok(results)
+}
+
+#[tauri::command]
+pub async fn upload_cached_editor_image(
+    project_id: String,
+    session_generation: u64,
+    upload_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<ImageImportResult> {
+    let (path, mime) = state.with_project(&project_id, Some(session_generation), |project| {
+        let asset = project.assets.get(&upload_id).ok_or_else(|| {
+            AppError::new(
+                "image_upload_expired",
+                "待上传图片已失效，请重新插入。",
+                true,
+            )
+        })?;
+        let AssetSource::Disk(path) = &asset.source else {
+            return Err(AppError::new(
+                "image_upload_invalid",
+                "待上传图片不可用。",
+                false,
+            ));
+        };
+        Ok((path.clone(), asset.mime.clone()))
+    })?;
+    ensure_editor_cache_path(&state.editor_image_cache_dir, &path, &upload_id)?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| AppError::invalid("缓存图片文件名无效。"))?
+        .to_string();
+    let config = load_config(&state)?.config;
+    let endpoint = cloudflare_upload_endpoint(
+        &config.image_bed.cloudflare_api_url,
+        &config.image_bed.upload_folder,
+    )?;
+    let token = cloudflare_token(
+        &config.image_bed.cloudflare_connection_id,
+        &config.image_bed.cloudflare_api_url,
+    )?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|error| AppError::io("读取待上传图片缓存失败", error))?;
+    let url = upload_cloudflare_bytes(&endpoint, &token, &file_name, &mime, bytes).await?;
+
+    Ok(ImageImportResult {
+        file_name,
+        url: Some(url),
+        markdown: None,
+        upload_id: Some(upload_id),
+        error: None,
+    })
+}
+
+#[tauri::command]
+pub async fn finalize_cached_editor_image(
+    project_id: String,
+    session_generation: u64,
+    upload_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let path = state.with_project(&project_id, Some(session_generation), |project| {
+        let asset = project
+            .assets
+            .get(&upload_id)
+            .ok_or_else(|| AppError::new("image_upload_expired", "图片缓存已清理。", true))?;
+        let AssetSource::Disk(path) = &asset.source else {
+            return Err(AppError::new(
+                "image_upload_invalid",
+                "图片缓存不可用。",
+                false,
+            ));
+        };
+        Ok(path.clone())
+    })?;
+    ensure_editor_cache_path(&state.editor_image_cache_dir, &path, &upload_id)?;
+    tokio::fs::remove_file(&path)
+        .await
+        .map_err(|error| AppError::io("清理已上传图片缓存失败", error))?;
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::remove_dir(parent).await;
+    }
+    let mut guard = state
+        .project
+        .write()
+        .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
+    let project = guard.as_mut().ok_or_else(AppError::session_expired)?;
+    project.require_identity(&project_id, Some(session_generation))?;
+    project.assets.remove(&upload_id);
+    Ok(())
+}
+
+fn cache_editor_image(
+    state: &AppState,
+    project_id: &str,
+    generation: u64,
+    file_name: &str,
+    mime: &str,
+    bytes: &[u8],
+) -> AppResult<(String, String)> {
+    let upload_id = Uuid::new_v4().to_string();
+    let directory = state.editor_image_cache_dir.join(&upload_id);
+    let safe_name = safe_image_name(file_name)?;
+    let path = directory.join(safe_name);
+    crate::platform::atomic_write(&path, bytes)?;
+    let mut guard = state
+        .project
+        .write()
+        .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
+    let project = guard.as_mut().ok_or_else(AppError::session_expired)?;
+    project.require_identity(project_id, Some(generation))?;
+    project.assets.insert(
+        upload_id.clone(),
+        crate::app::AssetRecord {
+            source: AssetSource::Disk(path),
+            mime: mime.to_string(),
+            generation,
+            expires_at: SystemTime::now() + Duration::from_secs(24 * 60 * 60),
+        },
+    );
+    Ok((editor_asset_url(&upload_id), upload_id))
+}
+
+fn editor_asset_url(token: &str) -> String {
+    if cfg!(windows) {
+        format!("http://hlex-asset.localhost/{token}")
+    } else {
+        format!("hlex-asset://localhost/{token}")
+    }
+}
+
+pub(super) fn recover_editor_image_assets(
+    state: &AppState,
+    articles: &HashMap<String, ArticleRecord>,
+    assets: &mut HashMap<String, AssetRecord>,
+    generation: u64,
+) -> AppResult<()> {
+    let pending_token = regex::Regex::new(
+        r"(?:hlex-asset://localhost/|http://hlex-asset\.localhost/)([0-9a-fA-F-]{36})",
+    )
+    .expect("static editor image token pattern");
+    for article in articles.values() {
+        let content = fs::read_to_string(&article.canonical_path)
+            .map_err(|error| AppError::io("恢复文章图片缓存失败", error))?;
+        for capture in pending_token.captures_iter(&content) {
+            let Some(token) = capture.get(1).map(|value| value.as_str()) else {
+                continue;
+            };
+            if Uuid::parse_str(token).is_err() || assets.contains_key(token) {
+                continue;
+            }
+            let directory = state.editor_image_cache_dir.join(token);
+            let Some(path) = single_cached_image(&directory)? else {
+                continue;
+            };
+            let mime = supported_mime(&path)?;
+            assets.insert(
+                token.to_string(),
+                AssetRecord {
+                    source: AssetSource::Disk(path),
+                    mime,
+                    generation,
+                    expires_at: SystemTime::now() + Duration::from_secs(24 * 60 * 60),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn single_cached_image(directory: &Path) -> AppResult<Option<PathBuf>> {
+    if !directory.is_dir() {
+        return Ok(None);
+    }
+    let mut files = fs::read_dir(directory)
+        .map_err(|error| AppError::io("读取文章图片缓存失败", error))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()));
+    let first = files.next().map(|entry| entry.path());
+    if files.next().is_some() {
+        return Err(AppError::new(
+            "image_upload_invalid",
+            "图片缓存目录内容异常。",
+            false,
+        ));
+    }
+    Ok(first)
+}
+
+fn ensure_editor_cache_path(cache_root: &Path, path: &Path, upload_id: &str) -> AppResult<()> {
+    let canonical_root = cache_root
+        .canonicalize()
+        .map_err(|error| AppError::io("验证图片缓存目录失败", error))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|error| AppError::io("验证待上传图片缓存失败", error))?;
+    let expected_parent = canonical_root.join(upload_id);
+    if !canonical_path.starts_with(&expected_parent)
+        || canonical_path.parent() != Some(expected_parent.as_path())
+    {
+        return Err(AppError::new(
+            "image_upload_invalid",
+            "待上传图片不属于编辑器临时缓存。",
+            false,
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1090,6 +1317,64 @@ mod tests {
             assert!(local_image_directory(&linked_root, "source/images").is_err());
             assert!(!outside.join("images").exists());
         }
+    }
+
+    #[test]
+    fn only_accepts_the_matching_editor_cache_directory() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let cache = temp.path().join("cache");
+        let upload_id = "upload-id";
+        let pending_dir = cache.join(upload_id);
+        fs::create_dir_all(&pending_dir).unwrap();
+        let pending = pending_dir.join("image.png");
+        fs::write(&pending, b"png").unwrap();
+        assert!(ensure_editor_cache_path(&cache, &pending, upload_id).is_ok());
+
+        let unrelated = cache.join("other.png");
+        fs::write(&unrelated, b"png").unwrap();
+        assert!(ensure_editor_cache_path(&cache, &unrelated, upload_id).is_err());
+    }
+
+    #[test]
+    fn recovers_only_cached_images_referenced_by_an_article() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config = temp.path().join("config");
+        let state = AppState::new(&config);
+        let token = Uuid::new_v4().to_string();
+        let unused = Uuid::new_v4().to_string();
+        let article_path = temp.path().join("post.md");
+        fs::create_dir_all(state.editor_image_cache_dir.join(&token)).unwrap();
+        fs::create_dir_all(state.editor_image_cache_dir.join(&unused)).unwrap();
+        fs::write(
+            state.editor_image_cache_dir.join(&token).join("used.png"),
+            b"png",
+        )
+        .unwrap();
+        fs::write(
+            state
+                .editor_image_cache_dir
+                .join(&unused)
+                .join("unused.png"),
+            b"png",
+        )
+        .unwrap();
+        fs::write(
+            &article_path,
+            format!("![说明](http://hlex-asset.localhost/{token})"),
+        )
+        .unwrap();
+        let articles = HashMap::from([(
+            "article".to_string(),
+            ArticleRecord {
+                id: "article".to_string(),
+                canonical_path: article_path,
+                revision: 0,
+            },
+        )]);
+        let mut assets = HashMap::new();
+        recover_editor_image_assets(&state, &articles, &mut assets, 3).unwrap();
+        assert!(assets.contains_key(&token));
+        assert!(!assets.contains_key(&unused));
     }
 
     #[test]

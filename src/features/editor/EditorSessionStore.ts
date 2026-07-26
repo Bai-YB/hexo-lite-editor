@@ -133,6 +133,18 @@ export class EditorSessionStore {
     return true;
   }
 
+  replaceMarkdownImageUrl(expectedUrl: string, replacementUrl: string, articleId: string) {
+    if (!this.state.snapshot || this.state.snapshot.articleId !== articleId) return false;
+    const next = replaceMarkdownImageUrl(this.state.content, expectedUrl, replacementUrl);
+    if (next === this.state.content) return false;
+    this.state.content = next;
+    this.state.revision += 1;
+    this.state.dirty = true;
+    this.state.error = null;
+    this.notify();
+    return true;
+  }
+
   hasDirty() {
     return this.state.dirty;
   }
@@ -201,4 +213,10 @@ export class EditorSessionStore {
     const copy = this.getState();
     this.listeners.forEach((listener) => listener(copy));
   }
+}
+
+export function replaceMarkdownImageUrl(content: string, expectedUrl: string, replacementUrl: string) {
+  const escaped = expectedUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const markdownImage = new RegExp(`(!\\[[^\\]\\r\\n]*\\]\\(\\s*)${escaped}(?=(?:\\s+['\"][^'\"]*['\"])?\\s*\\))`, "g");
+  return content.replace(markdownImage, `$1${replacementUrl}`);
 }

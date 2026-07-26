@@ -436,7 +436,7 @@ impl Default for AppConfigV3 {
             },
             publish: PublishConfig {
                 save_before_run: true,
-                clean_before_generate: false,
+                clean_before_generate: true,
                 generate_before_deploy: true,
                 git_push_after_deploy: false,
             },
@@ -698,6 +698,8 @@ pub struct ImageImportResult {
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub markdown: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<AppError>,
 }

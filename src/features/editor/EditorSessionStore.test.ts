@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EditorSessionStore } from "./EditorSessionStore";
+import { EditorSessionStore, replaceMarkdownImageUrl } from "./EditorSessionStore";
 
 const snapshot = {
   projectId: "project",
@@ -72,6 +72,14 @@ describe("EditorSessionStore", () => {
     expect(store.insertMarkdown("![cover](/images/cover.png)")).toBe(true);
     expect(store.getState().content).toBe(
       "---\ntitle: Test\n---\n\nBody\n![cover](/images/cover.png)"
+    );
+  });
+
+  it("replaces only a pending image URL and preserves an edited description", () => {
+    const pending = "http://hlex-asset.localhost/upload-1";
+    const content = `![用户后来写的描述](${pending})\n\n![另一张](${pending}-other)`;
+    expect(replaceMarkdownImageUrl(content, pending, "https://img.example.com/ready.png")).toBe(
+      `![用户后来写的描述](https://img.example.com/ready.png)\n\n![另一张](${pending}-other)`
     );
   });
 });

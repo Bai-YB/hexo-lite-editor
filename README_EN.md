@@ -25,8 +25,8 @@
 
 - Edit posts and drafts with Markdown, common HTML, and live preview.
 - Hide the preview to give the editor all space outside the post list.
-- Manage images under `source/` or connect Cloudflare-ImgBed; paste, drag, and import are supported.
-- Run Hexo browser preview, clean, generate, and deploy with the blog's existing environment.
+- Manage images under `source/` or connect Cloudflare-ImgBed; pasted and dropped images appear locally while uploading in the background.
+- Publishing always saves, cleans, generates, and deploys to prevent stale output; the background preview server can be stopped at any time.
 - Sync posts and images through an isolated GitHub content branch or a standard WebDAV service.
 - Use light, dark, or system theme.
 

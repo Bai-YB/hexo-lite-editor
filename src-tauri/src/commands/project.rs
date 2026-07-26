@@ -338,6 +338,7 @@ fn open_project_path(state: &AppState, path: &Path) -> AppResult<OpenProjectResu
     for asset in assets.values_mut() {
         asset.generation = generation;
     }
+    super::images::recover_editor_image_assets(state, &records, &mut assets, generation)?;
     let session = ProjectSession {
         id: AppState::new_project_id(),
         generation,

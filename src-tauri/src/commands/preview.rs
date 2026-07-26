@@ -27,6 +27,9 @@ use tokio::{
 };
 use uuid::Uuid;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 const PREVIEW_READY_TIMEOUT: Duration = Duration::from_secs(20);
 const ROUTE_HELPER_SCRIPT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -241,7 +244,8 @@ pub async fn resolve_article_preview_url(
             true,
         ));
     }
-    let mut route_process = tokio::process::Command::new("node")
+    let mut route_command = tokio::process::Command::new("node");
+    route_command
         // Execute through stdin so platform-specific path quoting cannot alter the helper.
         .arg("-")
         .current_dir(&root)
@@ -249,15 +253,16 @@ pub async fn resolve_article_preview_url(
         .env("PATH", command_path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            AppError::new(
-                "preview_route_runtime_missing",
-                format!("无法运行项目的 Hexo 路由解析器：{error}"),
-                true,
-            )
-        })?;
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    route_command.creation_flags(CREATE_NO_WINDOW);
+    let mut route_process = route_command.spawn().map_err(|error| {
+        AppError::new(
+            "preview_route_runtime_missing",
+            format!("无法运行项目的 Hexo 路由解析器：{error}"),
+            true,
+        )
+    })?;
     if let Some(mut stdin) = route_process.stdin.take() {
         stdin
             .write_all(ROUTE_HELPER_SCRIPT.as_bytes())
@@ -335,6 +340,10 @@ async fn run_preview_process(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
     });
+    #[cfg(windows)]
+    command.wrap(CreationFlags(
+        windows::Win32::System::Threading::CREATE_NO_WINDOW,
+    ));
     #[cfg(windows)]
     command.wrap(JobObject);
     #[cfg(unix)]

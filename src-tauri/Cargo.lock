@@ -1751,6 +1751,7 @@ dependencies = [
  "uuid",
  "wait-timeout",
  "walkdir",
+ "windows 0.62.2",
  "winreg",
 ]
 
