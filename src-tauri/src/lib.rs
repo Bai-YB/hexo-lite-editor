@@ -13,6 +13,98 @@ pub use platform::ensure_webview2_runtime;
 
 const WINDOW_ICON: Image<'_> = tauri::include_image!("./icons/128x128.png");
 
+fn webdav_invoke_handler<R: tauri::Runtime>(
+) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        commands::test_webdav_content_sync,
+        commands::update_webdav_content_sync,
+        commands::webdav_credential_status,
+        commands::webdav_credential_delete,
+    ]
+}
+
+fn application_invoke_handler(
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    let webdav_handler = webdav_invoke_handler::<tauri::Wry>();
+    let remaining_handler = application_remaining_invoke_handler();
+    move |invoke| {
+        if matches!(
+            invoke.message.command(),
+            "test_webdav_content_sync"
+                | "update_webdav_content_sync"
+                | "webdav_credential_status"
+                | "webdav_credential_delete"
+        ) {
+            webdav_handler(invoke)
+        } else {
+            remaining_handler(invoke)
+        }
+    }
+}
+
+fn application_remaining_invoke_handler(
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        commands::pick_project,
+        commands::reopen_recent_project,
+        commands::list_recent_projects,
+        commands::open_recent_project,
+        commands::remove_recent_project,
+        commands::clear_recent_projects,
+        commands::current_project,
+        commands::close_project,
+        commands::list_articles,
+        commands::load_document,
+        commands::parse_document_front_matter,
+        commands::save_document,
+        commands::create_article,
+        commands::load_app_config,
+        commands::save_app_config,
+        commands::reset_app_config,
+        commands::credential_status,
+        commands::credential_set,
+        commands::credential_delete,
+        commands::acquire_cloudflare_imgbed_token,
+        commands::test_cloudflare_imgbed_token,
+        commands::cleanup_before_exit,
+        commands::start_task,
+        commands::cancel_task,
+        commands::list_local_images,
+        commands::import_local_images,
+        commands::delete_local_image,
+        commands::upload_cloudflare_image,
+        commands::import_editor_images,
+        commands::list_cloudflare_assets,
+        commands::delete_cloudflare_asset,
+        commands::reveal_local_image,
+        commands::get_preview_status,
+        commands::start_preview_server,
+        commands::stop_preview_server,
+        commands::resolve_article_preview_url,
+        commands::resolve_article_preview_images,
+        data::list_task_logs,
+        data::read_task_log,
+        data::delete_task_log,
+        data::clear_task_logs,
+        commands::runtime_info,
+        commands::open_external_target,
+        commands::open_markdown_link,
+        commands::check_update,
+        commands::detect_content_sync,
+        commands::preflight_content_sync,
+        commands::preflight_webdav_content_sync,
+        commands::get_content_sync_status,
+        commands::get_content_sync_conflicts,
+        commands::enable_content_sync,
+        commands::enable_webdav_content_sync,
+        commands::disable_content_sync,
+        commands::run_content_sync,
+        commands::resolve_content_sync_conflicts,
+        commands::open_content_sync_backups,
+        commands::reconnect_content_sync,
+    ]
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -60,53 +152,7 @@ pub fn run() {
                 Err(_) => protocol_error(http::StatusCode::NOT_FOUND, "asset is unavailable"),
             }
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::pick_project,
-            commands::reopen_recent_project,
-            commands::list_recent_projects,
-            commands::open_recent_project,
-            commands::remove_recent_project,
-            commands::clear_recent_projects,
-            commands::current_project,
-            commands::close_project,
-            commands::list_articles,
-            commands::load_document,
-            commands::parse_document_front_matter,
-            commands::save_document,
-            commands::create_article,
-            commands::load_app_config,
-            commands::save_app_config,
-            commands::reset_app_config,
-            commands::credential_status,
-            commands::credential_set,
-            commands::credential_delete,
-            commands::acquire_cloudflare_imgbed_token,
-            commands::test_cloudflare_imgbed_token,
-            commands::cleanup_before_exit,
-            commands::start_task,
-            commands::cancel_task,
-            commands::list_local_images,
-            commands::import_local_images,
-            commands::delete_local_image,
-            commands::upload_cloudflare_image,
-            commands::import_editor_images,
-            commands::list_cloudflare_assets,
-            commands::delete_cloudflare_asset,
-            commands::reveal_local_image,
-            commands::get_preview_status,
-            commands::start_preview_server,
-            commands::stop_preview_server,
-            commands::resolve_article_preview_url,
-            commands::resolve_remote_preview_images,
-            data::list_task_logs,
-            data::read_task_log,
-            data::delete_task_log,
-            data::clear_task_logs,
-            commands::runtime_info,
-            commands::open_external_target,
-            commands::open_markdown_link,
-            commands::check_update,
-        ])
+        .invoke_handler(application_invoke_handler())
         .setup(|app| {
             let config_dir = app
                 .path()
@@ -117,8 +163,6 @@ pub fn run() {
             let _ = data::cleanup_task_logs(&state);
             app.manage(state);
             if let Some(window) = app.get_webview_window("main") {
-                // Start each app session without WebView's persisted HTTP image cache.
-                let _ = window.clear_all_browsing_data();
                 let _ = window.set_icon(WINDOW_ICON.clone());
             }
             Ok(())

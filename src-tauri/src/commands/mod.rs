@@ -5,6 +5,7 @@ mod imgbed_auth;
 mod preview;
 mod preview_images;
 mod project;
+mod sync;
 mod tasks;
 mod window;
 
@@ -15,5 +16,6 @@ pub use imgbed_auth::*;
 pub use preview::*;
 pub use preview_images::*;
 pub use project::*;
+pub use sync::*;
 pub use tasks::*;
 pub use window::*;

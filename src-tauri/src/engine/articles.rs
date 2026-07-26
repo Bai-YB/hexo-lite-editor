@@ -13,7 +13,6 @@ use std::{
     path::{Component, Path, PathBuf},
     time::{Duration, SystemTime},
 };
-use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -205,11 +204,14 @@ fn resolve_article_cover(
     ];
     for (key, source) in candidates {
         if let Some(value) = parsed.attributes.get(key).and_then(Value::as_str) {
-            if let Some((preview_url, asset)) = resolve_cover_url(root, article_path, value) {
+            if let Some((preview_url, original_source, asset)) =
+                resolve_cover_url(root, article_path, value)
+            {
                 return (
                     ArticleCover {
                         source,
-                        preview_url: Some(preview_url),
+                        preview_url: (!preview_url.is_empty()).then_some(preview_url),
+                        original_source,
                         alt: title.to_string(),
                     },
                     asset,
@@ -221,22 +223,21 @@ fn resolve_article_cover(
         ArticleCover {
             source: ArticleCoverSource::Placeholder,
             preview_url: None,
+            original_source: None,
             alt: title.to_string(),
         },
         None,
     )
 }
 
-fn resolve_cover_url(
-    root: &Path,
-    article_path: &Path,
-    raw: &str,
-) -> Option<(String, Option<(String, AssetRecord)>)> {
+type ResolvedCover = (String, Option<String>, Option<(String, AssetRecord)>);
+
+fn resolve_cover_url(root: &Path, article_path: &Path, raw: &str) -> Option<ResolvedCover> {
     let value = raw.trim().trim_matches(['\'', '"']);
-    if value.starts_with("https://") {
-        return Some((fresh_remote_url(value), None));
+    if value.starts_with("https://") || value.starts_with("http://") {
+        return Some((String::new(), Some(value.to_string()), None));
     }
-    if value.starts_with("http://") || value.starts_with("data:") || value.is_empty() {
+    if value.starts_with("data:") || value.is_empty() {
         return None;
     }
     let value = value.split(['?', '#']).next().unwrap_or(value);
@@ -268,6 +269,7 @@ fn resolve_cover_url(
     let token = Uuid::new_v4().to_string();
     Some((
         asset_url(&token),
+        None,
         Some((
             token,
             AssetRecord {
@@ -278,32 +280,6 @@ fn resolve_cover_url(
             },
         )),
     ))
-}
-
-fn fresh_remote_url(value: &str) -> String {
-    let Ok(mut url) = Url::parse(value) else {
-        return value.to_string();
-    };
-    let signed = url.query_pairs().any(|(key, _)| {
-        let key = key.to_ascii_lowercase();
-        matches!(
-            key.as_str(),
-            "signature"
-                | "sig"
-                | "token"
-                | "expires"
-                | "policy"
-                | "key-pair-id"
-                | "credential"
-                | "auth"
-        ) || key.starts_with("x-amz-")
-            || key.starts_with("x-goog-")
-    });
-    if !signed {
-        url.query_pairs_mut()
-            .append_pair("_hlex_nocache", &Uuid::new_v4().to_string());
-    }
-    url.to_string()
 }
 
 fn value_text(value: &Value) -> Option<String> {
@@ -578,20 +554,12 @@ mod tests {
         assert_eq!(summary.tags, vec!["写作", "Hexo"]);
         assert_eq!(summary.categories, vec!["指南"]);
         assert_eq!(summary.cover.source, ArticleCoverSource::Cover);
-        let preview_url = summary.cover.preview_url.as_deref().unwrap();
-        assert!(preview_url.starts_with("https://example.com/cover.jpg?_hlex_nocache="));
-        assert!(asset.is_none());
-    }
-
-    #[test]
-    fn refreshes_unsigned_remote_covers_without_changing_signed_urls() {
-        let fresh = fresh_remote_url("https://example.com/cover.jpg?size=2#image");
-        assert!(fresh.starts_with("https://example.com/cover.jpg?size=2&_hlex_nocache="));
-        assert!(fresh.ends_with("#image"));
+        assert!(summary.cover.preview_url.is_none());
         assert_eq!(
-            fresh_remote_url("https://example.com/cover.jpg?X-Amz-Signature=abc"),
-            "https://example.com/cover.jpg?X-Amz-Signature=abc"
+            summary.cover.original_source.as_deref(),
+            Some("https://example.com/cover.jpg")
         );
+        assert!(asset.is_none());
     }
 
     #[test]

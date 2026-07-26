@@ -2,7 +2,7 @@ export type AppPage = "editor" | "imageBed" | "settings" | "about";
 export type ImageBedProvider = "local" | "cloudflare-imgbed";
 export type ThemeMode = "light" | "dark" | "system";
 export type PreviewServerState = "starting" | "running" | "stopping" | "stopped" | "error";
-export type SettingsSectionId = "general" | "editing" | "images" | "hexoPublish" | "maintenance";
+export type SettingsSectionId = "general" | "editing" | "images" | "hexoPublish" | "sync" | "maintenance";
 export type ArticleKind = "post" | "draft";
 export type TaskType =
   | "clean"
@@ -51,6 +51,7 @@ export interface ArticleCover {
     | "indexImg"
     | "placeholder";
   previewUrl?: string;
+  originalSource?: string;
   alt: string;
 }
 
@@ -67,6 +68,13 @@ export interface CreateArticleRequest {
 
 export interface OpenProjectResult {
   session: ProjectSessionView;
+  articles: ArticleSummary[];
+  sync?: ContentSyncView;
+}
+
+export interface ProjectRescanResult {
+  projectId: string;
+  generation: number;
   articles: ArticleSummary[];
 }
 
@@ -113,6 +121,7 @@ export interface TaskEvent {
 
 export interface CredentialStatus {
   configured: boolean;
+  username?: string;
 }
 
 export interface AcquireCloudflareImgbedTokenRequest {
@@ -221,18 +230,31 @@ export interface LocalImage {
   previewUrl: string;
 }
 
-export interface ResolveRemotePreviewImagesRequest {
+export interface ResolveArticlePreviewImagesRequest {
   projectId: string;
   sessionGeneration: number;
-  urls: string[];
+  articleId: string;
+  sources: string[];
 }
 
-export type RemotePreviewImageState = "ready" | "unavailable";
+export type PreviewImageState = "ready" | "unavailable";
 
-export interface RemotePreviewImageResult {
-  originalUrl: string;
-  state: RemotePreviewImageState;
+export type PreviewImageFailureKind =
+  | "invalidSource"
+  | "unsafeSource"
+  | "notFound"
+  | "empty"
+  | "notImage"
+  | "unsupported"
+  | "tooLarge"
+  | "network";
+
+export interface PreviewImageResult {
+  originalSource: string;
+  state: PreviewImageState;
   previewUrl?: string;
+  httpStatus?: number;
+  failureKind?: PreviewImageFailureKind;
   message?: string;
 }
 
@@ -303,6 +325,98 @@ export interface PreviewServerView {
   draftsEnabled: boolean;
   startedAt?: string;
   error?: AppError;
+}
+
+export type ContentSyncStatus =
+  | "off"
+  | "checking"
+  | "synced"
+  | "localPending"
+  | "remoteAhead"
+  | "conflict"
+  | "offline"
+  | "authRequired"
+  | "error";
+
+export type ContentSyncProvider = "github" | "webdav";
+
+export interface ContentSyncView {
+  enabled: boolean;
+  status: ContentSyncStatus;
+  provider: ContentSyncProvider;
+  repository?: string;
+  branch?: string;
+  endpoint?: string;
+  remoteDir?: string;
+  visibility?: string;
+  message?: string;
+  conflicts: string[];
+  lastSyncedAt?: string;
+}
+
+export interface ContentSyncEvent {
+  phase: "checking" | "waiting" | "attention" | "failed" | "completed" | string;
+  status: ContentSyncStatus;
+  message?: string;
+}
+
+export interface ContentSyncCandidate {
+  repository: string;
+  source: string;
+  pagesBranch?: string;
+  visibility: string;
+  defaultBranch?: string;
+}
+
+export interface ContentSyncDetection {
+  candidates: ContentSyncCandidate[];
+  requiresSelection: boolean;
+}
+
+export interface ContentSyncPreflight {
+  candidate: ContentSyncCandidate;
+  branch: string;
+  fileCount: number;
+  totalBytes: number;
+  remoteFileCount: number;
+  remoteTotalBytes: number;
+  localOnlyCount: number;
+  remoteOnlyCount: number;
+  differentCount: number;
+  remoteBranchExists: boolean;
+  remoteManifestValid: boolean;
+}
+
+export interface WebDavContentSyncPreflight {
+  endpoint: string;
+  remoteDir: string;
+  fileCount: number;
+  totalBytes: number;
+  remoteFileCount: number;
+  remoteTotalBytes: number;
+  localOnlyCount: number;
+  remoteOnlyCount: number;
+  differentCount: number;
+  remoteExists: boolean;
+  remoteManifestValid: boolean;
+}
+
+export interface WebDavConnectionTestResult {
+  preflight: WebDavContentSyncPreflight;
+  username: string;
+  testedAt: string;
+  sync: ContentSyncView;
+}
+
+export interface ContentSyncConflict {
+  path: string;
+  kind: "markdown" | "binary";
+  localHash?: string;
+  remoteHash?: string;
+  localSize?: number;
+  remoteSize?: number;
+  localText?: string;
+  remoteText?: string;
 }
 
 export interface TaskLogSummary {

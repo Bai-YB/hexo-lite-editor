@@ -9,7 +9,7 @@ on:
       version:
         description: "Version without the v prefix"
         required: true
-        default: "1.0.4"
+        default: "1.0.5"
 
 permissions:
   contents: read
@@ -70,7 +70,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          pnpm release:macos -- "${{ inputs.version || '1.0.4' }}" 2>&1 | tee macos-package.log
+          pnpm release:macos -- "${{ inputs.version || '1.0.5' }}" 2>&1 | tee macos-package.log
           status=${PIPESTATUS[0]}
           set -e
           if [[ $status -ne 0 ]]; then
@@ -94,6 +94,6 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: Hexo-Lite-Editor-${{ inputs.version || '1.0.4' }}-macos-universal
-          path: release-artifacts/${{ inputs.version || '1.0.4' }}/*macos*
+          name: Hexo-Lite-Editor-${{ inputs.version || '1.0.5' }}-macos-universal
+          path: release-artifacts/${{ inputs.version || '1.0.5' }}/*macos*
           if-no-files-found: error

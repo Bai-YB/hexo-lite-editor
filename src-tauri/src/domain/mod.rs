@@ -56,6 +56,16 @@ pub struct ProjectSessionView {
 pub struct OpenProjectResult {
     pub session: ProjectSessionView,
     pub articles: Vec<ArticleSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync: Option<crate::commands::ContentSyncView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRescanResult {
+    pub project_id: String,
+    pub generation: u64,
+    pub articles: Vec<ArticleSummary>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,6 +106,8 @@ pub struct ArticleCover {
     pub source: ArticleCoverSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_source: Option<String>,
     pub alt: String,
 }
 
@@ -498,6 +510,8 @@ pub struct ConfigLoadResult {
 #[serde(rename_all = "camelCase")]
 pub struct CredentialStatus {
     pub configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -611,26 +625,41 @@ pub struct LocalImage {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ResolveRemotePreviewImagesRequest {
+pub struct ResolveArticlePreviewImagesRequest {
     pub project_id: String,
     pub session_generation: u64,
-    pub urls: Vec<String>,
+    pub article_id: String,
+    pub sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub enum RemotePreviewImageState {
+pub enum PreviewImageState {
     Ready,
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum PreviewImageFailureKind {
+    InvalidSource,
+    UnsafeSource,
+    NotFound,
+    Empty,
+    Network,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RemotePreviewImageResult {
-    pub original_url: String,
-    pub state: RemotePreviewImageState,
+pub struct PreviewImageResult {
+    pub original_source: String,
+    pub state: PreviewImageState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<PreviewImageFailureKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }

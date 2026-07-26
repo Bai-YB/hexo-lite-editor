@@ -94,9 +94,14 @@ pub struct AppState {
     pub legacy_config_path: PathBuf,
     pub recent_path: PathBuf,
     pub task_log_dir: PathBuf,
+    pub sync_registry_path: PathBuf,
+    pub sync_cache_dir: PathBuf,
+    pub sync_backup_dir: PathBuf,
     pub config_write_lock: Mutex<()>,
     pub task_log_write_lock: Mutex<()>,
     pub save_locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
+    pub sync_locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
+    pub sync_schedules: Mutex<HashMap<String, oneshot::Sender<()>>>,
     pub task_cancellations: Mutex<HashMap<String, oneshot::Sender<()>>>,
     pub preview: Mutex<Option<PreviewRuntime>>,
     pub shutdown_started: AtomicBool,
@@ -112,9 +117,14 @@ impl AppState {
             legacy_config_path: config_dir.join("app-config.json"),
             recent_path: config_dir.join("recent-project.json"),
             task_log_dir: config_dir.join("task-logs"),
+            sync_registry_path: config_dir.join("content-sync-v1.json"),
+            sync_cache_dir: config_dir.join("content-sync-cache"),
+            sync_backup_dir: config_dir.join("content-sync-backups"),
             config_write_lock: Mutex::new(()),
             task_log_write_lock: Mutex::new(()),
             save_locks: Mutex::new(HashMap::new()),
+            sync_locks: Mutex::new(HashMap::new()),
+            sync_schedules: Mutex::new(HashMap::new()),
             task_cancellations: Mutex::new(HashMap::new()),
             preview: Mutex::new(None),
             shutdown_started: AtomicBool::new(false),
@@ -154,6 +164,17 @@ impl AppState {
             .map_err(|_| AppError::new("state_poisoned", "保存队列不可用。", false))?;
         Ok(locks
             .entry(article_id.to_string())
+            .or_insert_with(|| std::sync::Arc::new(Mutex::new(())))
+            .clone())
+    }
+
+    pub fn content_sync_lock(&self, project_key: &str) -> AppResult<std::sync::Arc<Mutex<()>>> {
+        let mut locks = self
+            .sync_locks
+            .lock()
+            .map_err(|_| AppError::new("state_poisoned", "内容同步队列不可用。", false))?;
+        Ok(locks
+            .entry(project_key.to_string())
             .or_insert_with(|| std::sync::Arc::new(Mutex::new(())))
             .clone())
     }

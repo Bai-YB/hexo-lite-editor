@@ -8,11 +8,13 @@
     FolderOpen,
     ImagePlus,
     Rocket,
+    RefreshCw,
     Save,
     Search,
     Server,
     SlidersHorizontal,
-    MoreHorizontal
+    MoreHorizontal,
+    ImageOff
   } from "@lucide/svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
   import type { EditorSessionStore, EditorSessionState } from "./EditorSessionStore";
@@ -20,7 +22,13 @@
   import ErrorState from "$shared/components/ErrorState.svelte";
   import LoadingState from "$shared/components/LoadingState.svelte";
   import ModalDialog from "$shared/components/ModalDialog.svelte";
-  import { extractRemoteImageUrls, renderSafeMarkdown } from "$shared/markdown/safeMarkdown";
+  import {
+    chunkPreviewImageSources,
+    extractPreviewImageSources,
+    isRemoteImageSource,
+    renderSafeMarkdown,
+    replacePreviewImageWithPlaceholder
+  } from "$shared/markdown/safeMarkdown";
   import { platform, normalizeError } from "$platform/tauri";
   import { shortcutLabel } from "$platform/os";
   import { previewStateLabel } from "./previewModel";
@@ -66,9 +74,11 @@
   let loading = false;
   let loadError = "";
   let previewHtml = "";
-  let previewAssets: Record<string, string> = {};
+  let previewImageResults: Record<string, import("$shared/types/app").PreviewImageResult> = {};
   let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
-  let lastProjectId: string | null = store.getState().snapshot?.projectId ?? null;
+  let lastProjectKey: string | null = store.getState().snapshot
+    ? `${store.getState().snapshot!.projectId}:${store.getState().snapshot!.sessionGeneration}`
+    : null;
   let pendingArticle: ArticleSummary | null = null;
   let showSwitchGuard = false;
   let showCreate = false;
@@ -86,19 +96,22 @@
   let imageInput: HTMLInputElement;
   let projectMenuOpen = false;
   let advancedMenuOpen = false;
-  let remotePreviewAssets: Record<string, string | null> = {};
-  let remotePreviewPending = false;
-  let remoteImageUrls: string[] = [];
-  let remoteImageKey = "";
+  let previewImageSources: string[] = [];
+  let previewImageKey = "";
+  let previewImagesPending = false;
   let lastValidatedImageKey = "";
   let imageValidationSequence = 0;
   let editorScrollTop = 0;
   let markdownPreview: HTMLElement;
   const editorScrollByArticle = new Map<string, number>();
   const previewScrollByArticle = new Map<string, number>();
-  let assetRefreshAttempted = false;
-  let previewLoadSequence = 0;
   let componentAlive = true;
+  let coverErrors: Record<string, string> = {};
+  let coverFallbackUrls: Record<string, string> = {};
+  const coverChecksInFlight = new Set<string>();
+  const coverLastCheckedAt = new Map<string, number>();
+  const coverRecheckIntervalMs = 60_000;
+  let syncStatus: import("$shared/types/app").ContentSyncView = { enabled: false, status: "off", provider: "github", conflicts: [] };
 
   const unsubscribe = store.subscribe((state) => {
     editorState = state;
@@ -109,19 +122,30 @@
     window.addEventListener("keydown", closeEditorMenus);
     window.addEventListener("focus", handleWindowFocus);
     if (!session) return;
-    void loadPreviewAssets(session);
+    void refreshSyncStatus();
     if (!store.getState().snapshot && articles.length) void openArticle(articles[0]);
   });
 
   onDestroy(() => {
     componentAlive = false;
-    previewLoadSequence += 1;
     unsubscribe();
     clearTimeout(autoSaveTimer);
     window.removeEventListener("pointerdown", closeEditorMenus);
     window.removeEventListener("keydown", closeEditorMenus);
     window.removeEventListener("focus", handleWindowFocus);
   });
+
+  async function refreshSyncStatus(run = false) {
+    if (!session) return;
+    try {
+      syncStatus = run
+        ? await platform.runContentSync(session.projectId, session.generation)
+        : await platform.getContentSyncStatus(session.projectId, session.generation);
+      if (run) onNotice(syncStatus.message || "同步检查完成。");
+    } catch (error) {
+      onNotice(normalizeError(error).message);
+    }
+  }
 
   function closeEditorMenus(event: Event) {
     if (event instanceof KeyboardEvent && event.key !== "Escape") return;
@@ -131,17 +155,16 @@
     advancedMenuOpen = false;
   }
 
-  $: remoteImageUrls = extractRemoteImageUrls(editorState.content, previewAssets);
-  $: remoteImageKey = `${activeArticleId ?? ""}\u0000${remoteImageUrls.join("\u0000")}`;
-  $: if (session && editorState.snapshot && remoteImageKey !== lastValidatedImageKey) {
-    lastValidatedImageKey = remoteImageKey;
-    void refreshRemotePreviewImages();
+  $: previewImageSources = extractPreviewImageSources(editorState.content);
+  $: previewImageKey = `${activeArticleId ?? ""}\u0000${previewImageSources.join("\u0000")}`;
+  $: if (session && editorState.snapshot && previewImageKey !== lastValidatedImageKey) {
+    lastValidatedImageKey = previewImageKey;
+    void refreshPreviewImages();
   }
   $: previewHtml = renderSafeMarkdown(
     editorState.content,
-    previewAssets,
-    remotePreviewAssets,
-    remotePreviewPending
+    previewImageResults,
+    previewImagesPending
   );
   $: availableCategories = [...new Set(articles.flatMap((article) => article.categories))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   $: availableTags = [...new Set(articles.flatMap((article) => article.tags))].sort((a, b) => a.localeCompare(b, "zh-CN"));
@@ -160,16 +183,18 @@
       return Date.parse(b[field] ?? "") - Date.parse(a[field] ?? "");
     });
   $: wordCount = countWords(editorState.content);
-
-  $: if (session?.projectId !== lastProjectId) {
-    lastProjectId = session?.projectId ?? null;
+  $: if (`${session?.projectId ?? ""}:${session?.generation ?? 0}` !== lastProjectKey) {
+    lastProjectKey = session ? `${session.projectId}:${session.generation}` : null;
     activeArticleId = null;
     store.clear();
-    previewAssets = {};
-    remotePreviewAssets = {};
+    previewImageResults = {};
+    previewImagesPending = false;
+    coverErrors = {};
+    coverFallbackUrls = {};
+    coverChecksInFlight.clear();
+    coverLastCheckedAt.clear();
     lastValidatedImageKey = "";
     if (session) {
-      void loadPreviewAssets(session);
       if (articles.length) void openArticle(articles[0]);
     }
   }
@@ -204,7 +229,8 @@
       activeArticleId = article.articleId;
       editorScrollTop = editorScrollByArticle.get(article.articleId) ?? 0;
       store.load(snapshot);
-      remotePreviewAssets = {};
+      previewImageResults = {};
+      previewImagesPending = false;
       lastValidatedImageKey = "";
       requestAnimationFrame(() => {
         if (markdownPreview) markdownPreview.scrollTop = previewScrollByArticle.get(article.articleId) ?? 0;
@@ -213,43 +239,6 @@
       loadError = normalizeError(error).message;
     } finally {
       loading = false;
-    }
-  }
-
-  async function loadPreviewAssets(project: ProjectSessionView) {
-    const sequence = ++previewLoadSequence;
-    const expectedProjectId = project.projectId;
-    const expectedGeneration = project.generation;
-    try {
-      const localImages = await platform.listLocalImages(project.projectId, project.generation);
-      const next: Record<string, string> = {};
-      for (const image of localImages) {
-        const relative = image.relativePath.replace(/\\/g, "/");
-        const imageRelative = relative.replace(/^source\//, "");
-        const markdownUrl = image.markdownUrl.replace(/\\/g, "/");
-        next[relative] = image.previewUrl;
-        next[`/${relative}`] = image.previewUrl;
-        next[imageRelative] = image.previewUrl;
-        next[`/${imageRelative}`] = image.previewUrl;
-        next[markdownUrl] = image.previewUrl;
-        try {
-          next[decodeURI(markdownUrl)] = image.previewUrl;
-        } catch {
-          // The backend emits encoded URLs; keep the raw key if an old record is malformed.
-        }
-      }
-      if (
-        componentAlive
-        && sequence === previewLoadSequence
-        && session?.projectId === expectedProjectId
-        && session.generation === expectedGeneration
-      ) {
-        previewAssets = next;
-      }
-    } catch {
-      if (componentAlive && sequence === previewLoadSequence && session?.projectId === expectedProjectId) {
-        previewAssets = {};
-      }
     }
   }
 
@@ -385,8 +374,7 @@
       const failed = results.filter((result) => result.error);
       if (failed.length) onNotice(`${successes.length} 张图片已处理，${failed.length} 张失败：${failed[0].error?.message}`);
       else onNotice(`${successes.length} 张图片已处理${config.imageBed.autoInsertMarkdown ? "并插入文章" : ""}。`);
-      if (config.imageBed.defaultProvider === "local") void loadPreviewAssets(session);
-      setTimeout(() => void refreshRemotePreviewImages(true), 0);
+      setTimeout(() => void refreshPreviewImages(true), 0);
     } catch (error) {
       onNotice(normalizeError(error).message);
     }
@@ -422,19 +410,6 @@
     }
   }
 
-  async function refreshExpiredAssets() {
-    if (!session || assetRefreshAttempted) return;
-    assetRefreshAttempted = true;
-    try {
-      const next = await platform.listArticles(session.projectId, session.generation);
-      articles = next;
-      onArticlesChange(next);
-      await loadPreviewAssets(session);
-    } catch {
-      // A broken thumbnail remains a quiet placeholder; editing is unaffected.
-    }
-  }
-
   function startArticleResize(event: PointerEvent) {
     const startX = event.clientX;
     const startWidth = articleWidth;
@@ -456,6 +431,25 @@
 
   function handlePreviewInteraction(event: MouseEvent | KeyboardEvent) {
     if (event instanceof KeyboardEvent && event.key !== "Enter" && event.key !== " ") return;
+    const retry = (event.target as HTMLElement).closest<HTMLElement>("[data-preview-image-retry]");
+    if (retry) {
+      event.preventDefault();
+      const placeholder = retry.closest<HTMLElement>("[data-image-source]");
+      const source = placeholder?.dataset.imageSource;
+      if (source && isRemoteImageSource(source)) {
+        const image = document.createElement("img");
+        image.src = source;
+        image.dataset.imageSource = source;
+        image.alt = placeholder?.getAttribute("aria-label") ?? "";
+        image.loading = "lazy";
+        const style = placeholder?.getAttribute("style");
+        if (style) image.setAttribute("style", style);
+        placeholder?.replaceWith(image);
+      } else {
+        void refreshPreviewImages(true);
+      }
+      return;
+    }
     const target = (event.target as HTMLElement).closest<HTMLElement>("[data-external-href]");
     const url = target?.dataset.externalHref;
     if (!url) return;
@@ -474,105 +468,141 @@
     return Math.min(max, Math.max(min, value));
   }
 
-  async function refreshRemotePreviewImages(force = false) {
+  async function refreshPreviewImages(force = false) {
     if (!session || !editorState.snapshot) return;
-    const urls = extractRemoteImageUrls(editorState.content, previewAssets);
-    const validationKey = `${activeArticleId ?? ""}\u0000${urls.join("\u0000")}`;
-    if (!force && validationKey !== remoteImageKey) return;
+    const sources = extractPreviewImageSources(editorState.content);
+    const validationKey = `${activeArticleId ?? ""}\u0000${sources.join("\u0000")}`;
+    if (!force && validationKey !== previewImageKey) return;
     const sequence = ++imageValidationSequence;
     const expectedArticleId = activeArticleId;
     const expectedProjectId = session.projectId;
     const expectedGeneration = session.generation;
-    remotePreviewPending = urls.length > 0;
-    remotePreviewAssets = Object.fromEntries(urls.map((url) => [url, null]));
-    if (!urls.length) return;
+    previewImagesPending = sources.length > 0;
+    previewImageResults = {};
+    if (!sources.length) {
+      previewImagesPending = false;
+      return;
+    }
     try {
-      const results = await platform.resolveRemotePreviewImages({
-        projectId: expectedProjectId,
-        sessionGeneration: expectedGeneration,
-        urls
-      });
+      const results: import("$shared/types/app").PreviewImageResult[] = [];
+      for (const batchSources of chunkPreviewImageSources(sources)) {
+        const batch = await platform.resolveArticlePreviewImages({
+          projectId: expectedProjectId,
+          sessionGeneration: expectedGeneration,
+          articleId: expectedArticleId ?? "",
+          sources: batchSources
+        });
+        results.push(...batch);
+      }
       if (
         sequence !== imageValidationSequence
         || activeArticleId !== expectedArticleId
         || session?.projectId !== expectedProjectId
         || session.generation !== expectedGeneration
       ) return;
-      remotePreviewAssets = Object.fromEntries(
-        results.map((result) => [
-          result.originalUrl,
-          result.state === "ready" ? result.previewUrl ?? null : null
-        ])
-      );
-    } catch {
+      previewImageResults = Object.fromEntries(results.map((result) => [result.originalSource, result]));
+    } catch (error) {
       if (sequence === imageValidationSequence) {
-        remotePreviewAssets = Object.fromEntries(urls.map((url) => [url, null]));
+        previewImageResults = Object.fromEntries(sources.map((originalSource) => [originalSource, {
+          originalSource,
+          state: "unavailable",
+          failureKind: "network",
+          message: normalizeError(error).message
+        }]));
       }
     } finally {
-      if (sequence === imageValidationSequence) remotePreviewPending = false;
+      if (sequence === imageValidationSequence) previewImagesPending = false;
     }
   }
 
-  function handlePreviewImageError(event: Event) {
-    if (!(event.target instanceof HTMLImageElement) || event.target.dataset.errorRendered) return;
+  async function handlePreviewImageError(event: Event) {
+    if (!(event.target instanceof HTMLImageElement)) return;
     const image = event.target;
-    if (isRemotePreviewSource(image.dataset.imageSource || "")) {
-      void refreshRemotePreviewImages(true);
-      return;
+    const originalSource = image.dataset.imageSource || image.getAttribute("src") || "";
+    if (session && activeArticleId && isRemoteImageSource(originalSource) && !image.dataset.fallbackAttempted) {
+      image.dataset.fallbackAttempted = "true";
+      try {
+        const [result] = await platform.resolveArticlePreviewImages({
+          projectId: session.projectId,
+          sessionGeneration: session.generation,
+          articleId: activeArticleId,
+          sources: [originalSource]
+        });
+        if (image.isConnected && result?.state === "ready" && result.previewUrl) {
+          image.src = result.previewUrl;
+          return;
+        }
+        if (image.isConnected) {
+          replacePreviewImageWithPlaceholder(image, result?.message ?? "图片加载失败、返回为空或内容无法显示。");
+        }
+        return;
+      } catch (error) {
+        if (image.isConnected) replacePreviewImageWithPlaceholder(image, normalizeError(error).message);
+        return;
+      }
     }
-    image.dataset.errorRendered = "true";
-    const originalSource = image.dataset.imageSource || image.getAttribute("src") || "unknown";
-    if (session && !isRemotePreviewSource(originalSource) && !image.dataset.assetRetry) {
-      image.dataset.assetRetry = "true";
-      image.dataset.errorRendered = "";
-      void loadPreviewAssets(session);
-      window.setTimeout(() => {
-        if (!image.isConnected || image.dataset.errorRendered) return;
-        image.dataset.errorRendered = "true";
-        replacePreviewImageWithError(image, originalSource);
-      }, 1200);
-      return;
-    }
-    const source = image.dataset.imageSource || image.getAttribute("src") || "未知地址";
-    const alt = image.getAttribute("alt")?.trim();
-    const error = document.createElement("div");
-    error.className = "preview-image-error";
-    error.setAttribute("role", "img");
-    error.setAttribute("aria-label", `${alt ? `${alt}：` : ""}图片加载失败`);
-
-    const heading = document.createElement("strong");
-    heading.textContent = alt ? `图片加载失败：${alt}` : "图片加载失败";
-    const reason = document.createElement("span");
-    reason.textContent = "可能是 404、网络错误、访问限制或返回内容不是图片。";
-    const address = document.createElement("code");
-    address.textContent = source;
-    error.append(heading, reason, address);
-    image.replaceWith(error);
+    replacePreviewImageWithPlaceholder(image, "图片加载失败、返回为空或内容无法显示。");
   }
 
-  function replacePreviewImageWithError(image: HTMLImageElement, source: string) {
-    const alt = image.getAttribute("alt")?.trim();
-    const error = document.createElement("div");
-    error.className = "preview-image-error";
-    error.setAttribute("role", "img");
-    error.setAttribute("aria-label", `${alt ? `${alt}：` : ""}图片加载失败`);
-    const heading = document.createElement("strong");
-    heading.textContent = alt ? `图片加载失败：${alt}` : "图片加载失败";
-    const reason = document.createElement("span");
-    reason.textContent = "可能是图片资源正在刷新，或文件已不存在。";
-    const address = document.createElement("code");
-    address.textContent = source;
-    error.append(heading, reason, address);
-    image.replaceWith(error);
+  function coverSource(article: ArticleSummary) {
+    return article.cover.originalSource || article.cover.previewUrl || "";
   }
 
-  function isRemotePreviewSource(value: string) {
+  function clearCoverError(source: string) {
+    const { [source]: _removed, ...remaining } = coverErrors;
+    coverErrors = remaining;
+  }
+
+  async function checkFailedCover(article: ArticleSummary, force = false) {
+    const originalSource = coverSource(article);
+    if (!session || !originalSource || !isRemoteImageSource(originalSource)) return;
+    const lastCheckedAt = coverLastCheckedAt.get(originalSource) ?? 0;
+    if (
+      coverChecksInFlight.has(originalSource)
+      || (!force && Date.now() - lastCheckedAt < coverRecheckIntervalMs)
+    ) return;
+    const expectedProjectId = session.projectId;
+    const expectedGeneration = session.generation;
+    coverChecksInFlight.add(originalSource);
+    coverLastCheckedAt.set(originalSource, Date.now());
     try {
-      const url = new URL(value);
-      return url.protocol === "http:" || url.protocol === "https:";
-    } catch {
-      return false;
+      const [result] = await platform.resolveArticlePreviewImages({
+        projectId: expectedProjectId,
+        sessionGeneration: expectedGeneration,
+        articleId: article.articleId,
+        sources: [originalSource]
+      });
+      if (session?.projectId !== expectedProjectId || session.generation !== expectedGeneration) return;
+      if (result?.state === "ready" && result.previewUrl) {
+        coverFallbackUrls = { ...coverFallbackUrls, [originalSource]: result.previewUrl };
+        clearCoverError(originalSource);
+      } else {
+        coverErrors = { ...coverErrors, [originalSource]: result?.message ?? "图片加载失败或返回为空" };
+      }
+    } catch (error) {
+      if (session?.projectId === expectedProjectId && session.generation === expectedGeneration) {
+        coverErrors = { ...coverErrors, [originalSource]: normalizeError(error).message };
+      }
+    } finally {
+      coverChecksInFlight.delete(originalSource);
     }
+  }
+
+  function handleCoverError(article: ArticleSummary) {
+    const originalSource = coverSource(article);
+    if (!originalSource) return;
+    coverErrors = { ...coverErrors, [originalSource]: coverErrors[originalSource] ?? "图片加载失败，正在后台检查" };
+    if (coverFallbackUrls[originalSource]) {
+      const { [originalSource]: _removed, ...remaining } = coverFallbackUrls;
+      coverFallbackUrls = remaining;
+    }
+    void checkFailedCover(article, true);
+  }
+
+  async function recheckFailedCovers(articleList: ArticleSummary[]) {
+    await Promise.all(articleList
+      .filter((article) => Boolean(coverErrors[coverSource(article)]))
+      .map((article) => checkFailedCover(article)));
   }
 
   function startContentResize(event: PointerEvent) {
@@ -604,13 +634,13 @@
     if (!session) return;
     const expectedProjectId = session.projectId;
     const expectedGeneration = session.generation;
-    await loadPreviewAssets(session);
-    await refreshRemotePreviewImages(true);
+    await refreshPreviewImages(true);
     try {
       const next = await platform.listArticles(expectedProjectId, expectedGeneration);
       if (session?.projectId !== expectedProjectId || session.generation !== expectedGeneration) return;
       articles = next;
       onArticlesChange(next);
+      void recheckFailedCovers(next);
     } catch {
       // Image refresh failures do not interrupt editing.
     }
@@ -638,6 +668,7 @@
     </div>
     <div class="toolbar-spacer"></div>
     {#if session}
+      <button class={`button quiet editor-sync-status ${syncStatus.status}`} type="button" title={syncStatus.message || "内容同步"} on:click={() => syncStatus.enabled ? void refreshSyncStatus(true) : onOpenSettings("sync")}><RefreshCw size={15} />{syncStatus.status === "off" ? "同步关闭" : syncStatus.status}</button>
       <button class="button quiet" type="button" on:click={() => void onPreview(true)}><Server size={16} />浏览器预览</button>
       <button class="button quiet" type="button" on:click={openCreateDialog}><FilePlus2 size={16} />新建</button>
       <button class="icon-button" type="button" disabled={!editorState.snapshot} title="选择图片并插入" aria-label="选择图片并插入" on:click={() => imageInput?.click()}><ImagePlus size={17} /></button>
@@ -673,8 +704,8 @@
       {/if}
     </div>
   {:else}
-    <div class="editor-grid-wrap" style={`--article-width:${articleWidth}px; --writing-ratio:${1 - previewRatio}; --preview-ratio:${previewRatio}`}>
-      <div class="editor-grid" bind:this={editorGrid}>
+    <div class="editor-grid-wrap" style={`--article-width:${articleWidth}px; --writing-ratio:${config.layout.previewVisible ? 1 - previewRatio : 1}; --preview-ratio:${previewRatio}`}>
+      <div class:preview-hidden={!config.layout.previewVisible} class="editor-grid" bind:this={editorGrid}>
         <aside class="article-pane" aria-label="文章列表">
           <div class="pane-toolbar">
             <Search size={15} aria-hidden="true" />
@@ -709,7 +740,15 @@
                   on:keydown={(event) => handleArticleKeydown(event, article)}
                 >
                   {#if config.articleList.showCover}
-                    {#if article.cover.previewUrl}<img class="article-cover" src={article.cover.previewUrl} alt={article.cover.alt} on:error={refreshExpiredAssets} />{:else}<span class="article-cover placeholder" aria-hidden="true">{article.title.slice(0, 1)}</span>{/if}
+                    {@const originalCoverSource = coverSource(article)}
+                    {@const coverUrl = coverFallbackUrls[originalCoverSource] || article.cover.previewUrl || article.cover.originalSource}
+                    {#if coverErrors[originalCoverSource]}
+                      <span class="article-cover image-error" title={coverErrors[originalCoverSource]} aria-label={coverErrors[originalCoverSource]}><ImageOff size={18} /></span>
+                    {:else if coverUrl}
+                      <img class="article-cover" src={coverUrl} alt={article.cover.alt} on:error={() => handleCoverError(article)} />
+                    {:else}
+                      <span class="article-cover placeholder" aria-hidden="true">{article.title.slice(0, 1)}</span>
+                    {/if}
                   {/if}
                   <span class="article-copy"><span class="article-title">{article.title}</span><span class="article-meta">{article.kind === "draft" ? "草稿" : "文章"} · {new Date(article.modifiedAt).toLocaleDateString()}</span></span>
                   {#if activeArticleId === article.articleId && editorState.dirty}<span class="dirty-dot" title="未保存"></span>{/if}
@@ -752,7 +791,7 @@
           <section class="preview-pane" aria-label="文章预览">
             <div class="preview-mode-bar">
               <strong>即时预览</strong>
-              <span>{remotePreviewPending ? "正在验证远程图片" : "HTML 已安全渲染"}</span>
+              <span>{previewImagesPending ? "正在读取图片" : "HTML 已安全渲染"}</span>
             </div>
             {#if !editorState.snapshot}
               <EmptyState title="暂无预览" description="打开文章后显示渲染结果。" />

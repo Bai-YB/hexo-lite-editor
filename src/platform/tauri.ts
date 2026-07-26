@@ -18,11 +18,19 @@ import type {
   LocalImage,
   OpenProjectResult,
   ProjectSessionView,
+  ProjectRescanResult,
   RuntimeInfo,
   RecentProjectView,
   RemoteAssetPage,
-  RemotePreviewImageResult,
-  ResolveRemotePreviewImagesRequest,
+  PreviewImageResult,
+  ResolveArticlePreviewImagesRequest,
+  ContentSyncCandidate,
+  ContentSyncConflict,
+  ContentSyncDetection,
+  ContentSyncEvent,
+  ContentSyncPreflight,
+  WebDavConnectionTestResult,
+  ContentSyncView,
   PreviewServerView,
   SaveDocumentRequest,
   SaveDocumentResult,
@@ -210,18 +218,78 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.revealLocalImage();
     return call<void>("reveal_local_image", { projectId, sessionGeneration, imageId });
   },
-  resolveRemotePreviewImages(request: ResolveRemotePreviewImagesRequest) {
-    if (isBrowserDemo()) return browserMock.resolveRemotePreviewImages(request.urls);
+  resolveArticlePreviewImages(request: ResolveArticlePreviewImagesRequest) {
+    if (isBrowserDemo()) return browserMock.resolveArticlePreviewImages(request.sources);
     if (!isTauri()) {
-      return Promise.resolve<RemotePreviewImageResult[]>(
-        request.urls.map((originalUrl) => ({
-          originalUrl,
+      return Promise.resolve<PreviewImageResult[]>(
+        request.sources.map((originalSource) => ({
+          originalSource,
           state: "unavailable",
           message: "桌面后端不可用。"
         }))
       );
     }
-    return call<RemotePreviewImageResult[]>("resolve_remote_preview_images", { request });
+    return call<PreviewImageResult[]>("resolve_article_preview_images", { request });
+  },
+  detectContentSync(projectId: string, sessionGeneration: number) {
+    if (isBrowserDemo()) return browserMock.detectContentSync();
+    return call<ContentSyncDetection>("detect_content_sync", { projectId, sessionGeneration });
+  },
+  preflightContentSync(projectId: string, sessionGeneration: number, repository: string, branch: string) {
+    if (isBrowserDemo()) return browserMock.preflightContentSync(repository, branch);
+    return call<ContentSyncPreflight>("preflight_content_sync", { request: { projectId, sessionGeneration, repository, branch } });
+  },
+  testWebDavContentSync(request: { projectId: string; sessionGeneration: number; endpoint: string; remoteDir: string; username: string; password?: string }) {
+    if (isBrowserDemo()) return browserMock.testWebDavContentSync(request);
+    return call<WebDavConnectionTestResult>("test_webdav_content_sync", { request });
+  },
+  getContentSyncStatus(projectId: string, sessionGeneration: number) {
+    if (isBrowserDemo()) return browserMock.getContentSyncStatus();
+    return call<ContentSyncView>("get_content_sync_status", { projectId, sessionGeneration });
+  },
+  enableContentSync(request: { projectId: string; sessionGeneration: number; repository: string; branch: string; initialChoice?: "local" | "remote"; confirmPublic: boolean }) {
+    if (isBrowserDemo()) return browserMock.enableContentSync(request);
+    return call<ContentSyncView>("enable_content_sync", { request });
+  },
+  enableWebDavContentSync(request: { projectId: string; sessionGeneration: number; endpoint: string; remoteDir: string; initialChoice?: "local" | "remote" }) {
+    if (isBrowserDemo()) return browserMock.enableWebDavContentSync(request);
+    return call<ContentSyncView>("enable_webdav_content_sync", { request });
+  },
+  updateWebDavContentSync(request: { projectId: string; sessionGeneration: number; endpoint: string; remoteDir: string }) {
+    if (isBrowserDemo()) return browserMock.updateWebDavContentSync(request);
+    return call<ContentSyncView>("update_webdav_content_sync", { request });
+  },
+  disableContentSync(projectId: string, sessionGeneration: number) {
+    if (isBrowserDemo()) return browserMock.disableContentSync();
+    return call<ContentSyncView>("disable_content_sync", { projectId, sessionGeneration });
+  },
+  runContentSync(projectId: string, sessionGeneration: number, direction: "auto" | "local" | "remote" = "auto") {
+    if (isBrowserDemo()) return browserMock.runContentSync();
+    return call<ContentSyncView>("run_content_sync", { request: { projectId, sessionGeneration, direction } });
+  },
+  getContentSyncConflicts(projectId: string, sessionGeneration: number) {
+    if (isBrowserDemo()) return browserMock.getContentSyncConflicts();
+    return call<ContentSyncConflict[]>("get_content_sync_conflicts", { projectId, sessionGeneration });
+  },
+  resolveContentSyncConflicts(projectId: string, sessionGeneration: number, choices: Record<string, "local" | "remote">) {
+    if (isBrowserDemo()) return browserMock.resolveContentSyncConflicts();
+    return call<ContentSyncView>("resolve_content_sync_conflicts", { request: { projectId, sessionGeneration, choices } });
+  },
+  openContentSyncBackups(projectId: string, sessionGeneration: number) {
+    if (isBrowserDemo()) return Promise.resolve();
+    return call<void>("open_content_sync_backups", { projectId, sessionGeneration });
+  },
+  reconnectContentSync(projectId: string, sessionGeneration: number) {
+    if (isBrowserDemo()) return browserMock.runContentSync();
+    return call<ContentSyncView>("reconnect_content_sync", { projectId, sessionGeneration });
+  },
+  webDavCredentialStatus(endpoint: string) {
+    if (isBrowserDemo()) return browserMock.webDavCredentialStatus(endpoint);
+    return call<CredentialStatus>("webdav_credential_status", { endpoint });
+  },
+  webDavCredentialDelete(endpoint: string) {
+    if (isBrowserDemo()) return browserMock.webDavCredentialDelete(endpoint);
+    return call<CredentialStatus>("webdav_credential_delete", { endpoint });
   },
   async writeClipboard(text: string) {
     if (!isTauri()) {
@@ -275,6 +343,18 @@ export const platform = {
     if (!isTauri()) return () => undefined;
     return listen<PreviewServerView>("preview-status", ({ payload }) => handler(payload));
   },
+  async onContentSyncStatus(handler: (view: ContentSyncView) => void): Promise<UnlistenFn> {
+    if (!isTauri()) return () => undefined;
+    return listen<ContentSyncView>("content-sync-status", ({ payload }) => handler(payload));
+  },
+  async onContentSyncPhase(handler: (event: ContentSyncEvent) => void): Promise<UnlistenFn> {
+    if (!isTauri()) return () => undefined;
+    return listen<ContentSyncEvent>("content-sync-phase", ({ payload }) => handler(payload));
+  },
+  async onProjectRescanned(handler: (project: ProjectRescanResult) => void): Promise<UnlistenFn> {
+    if (!isTauri()) return () => undefined;
+    return listen<ProjectRescanResult>("project-rescanned", ({ payload }) => handler(payload));
+  },
   listTaskLogs() {
     if (isBrowserDemo()) return browserMock.listTaskLogs();
     return call<TaskLogSummary[]>("list_task_logs");
@@ -294,7 +374,7 @@ export const platform = {
   runtimeInfo() {
     if (!isTauri()) {
       return Promise.resolve<RuntimeInfo>({
-        version: "1.0.4",
+        version: "1.0.5",
         operatingSystem: navigator.platform,
         architecture: "browser preview",
         webview: navigator.userAgent

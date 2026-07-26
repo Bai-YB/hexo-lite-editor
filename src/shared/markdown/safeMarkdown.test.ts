@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   isSafeExternalLink,
   isSafeImageSource,
-  extractRemoteImageUrls,
+  chunkPreviewImageSources,
+  extractPreviewImageSources,
   renderSafeMarkdown,
   rewriteLocalImage,
   sanitizeInlineStyle,
@@ -35,7 +36,7 @@ describe("safe markdown", () => {
     expect(html).toContain("hlex-asset://localhost/id");
     expect(isSafeExternalLink("https://example.com")).toBe(true);
     expect(isSafeExternalLink("file:///secret")).toBe(false);
-    expect(isSafeImageSource("http://example.com/a.png")).toBe(false);
+    expect(isSafeImageSource("http://example.com/a.png")).toBe(true);
     expect(isSafeImageSource("https://example.com/a.png")).toBe(true);
   });
 
@@ -46,10 +47,12 @@ describe("safe markdown", () => {
 
   it("rewrites Hexo local images to session asset URLs", () => {
     const assets = {
-      "source/images/示例.png": "http://hlex-asset.localhost/token",
-      "images/示例.png": "http://hlex-asset.localhost/token"
+      "/images/%E7%A4%BA%E4%BE%8B.png": {
+        originalSource: "/images/%E7%A4%BA%E4%BE%8B.png",
+        state: "ready" as const,
+        previewUrl: "http://hlex-asset.localhost/token"
+      }
     };
-    expect(rewriteLocalImage("/images/示例.png", assets)).toContain("hlex-asset.localhost");
     expect(renderSafeMarkdown("![](/images/示例.png)", assets)).toContain(
       "http://hlex-asset.localhost/token"
     );
@@ -57,26 +60,37 @@ describe("safe markdown", () => {
       "/media/posts/示例.png": "http://hlex-asset.localhost/custom"
     })).toBe("http://hlex-asset.localhost/custom");
     const missing = renderSafeMarkdown("![已删除](/images/missing.png)");
-    expect(missing).toContain('src="/images/missing.png"');
+    expect(missing).toContain("图片不可用");
     expect(missing).toContain('data-image-source="/images/missing.png"');
   });
 
-  it("shows remote images only after the backend returns a safe asset", () => {
+  it("loads remote images directly and only resolves local sources", () => {
     const source = "![远程](https://example.com/a.png)\n<img src=\"https://example.com/b.png\" alt=\"HTML 图\">";
-    expect(extractRemoteImageUrls(source)).toEqual([
-      "https://example.com/a.png",
-      "https://example.com/b.png"
-    ]);
-    const pending = renderSafeMarkdown(source, {}, {}, true);
-    expect(pending).toContain("正在验证图片");
-    expect(pending).not.toContain('src="https://example.com/a.png"');
-    const html = renderSafeMarkdown(source, {}, {
-      "https://example.com/a.png": "hlex-asset://localhost/a",
-      "https://example.com/b.png": null
-    });
-    expect(html).toContain("hlex-asset://localhost/a");
-    expect(html).toContain("图片不可用：HTML 图");
-    expect(html).not.toContain('src="https://example.com/a.png"');
+    expect(extractPreviewImageSources(source)).toEqual([]);
+    const pending = renderSafeMarkdown(source, {}, true);
+    expect(pending).toContain('src="https://example.com/a.png"');
+    expect(pending).toContain('src="https://example.com/b.png"');
+    expect(pending).not.toContain("正在读取图片");
+  });
+
+  it("preserves bounded placeholder dimensions and rejects oversized styles", () => {
+    const html = renderSafeMarkdown(
+      '<img src="/missing.png" width="320" height="180" style="max-width: 100%; width: 999999px; position: fixed">',
+      { "/missing.png": { originalSource: "/missing.png", state: "unavailable", failureKind: "notFound", message: "本地图片不存在。" } }
+    );
+    expect(html).toContain("width: 320px");
+    expect(html).toContain("height: 180px");
+    expect(html).toContain("max-width: 100%");
+    expect(html).not.toContain("999999");
+    expect(html).not.toContain("position");
+    const defaultSized = renderSafeMarkdown('<img src="/missing.png" style="position: fixed">');
+    expect(defaultSized).toContain("preview-image-error default-size");
+  });
+
+  it("splits any number of preview images into backend-safe batches", () => {
+    const sources = Array.from({ length: 65 }, (_, index) => `/images/${index}.png`);
+    expect(chunkPreviewImageSources(sources).map((batch) => batch.length)).toEqual([32, 32, 1]);
+    expect(chunkPreviewImageSources(sources).flat()).toEqual(sources);
   });
 
   it("supports common semantic HTML attributes while keeping active content blocked", () => {

@@ -241,6 +241,21 @@
   justify-content: flex-end;
 }
 
+.sync-summary { display: grid; gap: 4px; margin: 12px 0; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--bg-control); overflow-wrap: anywhere; }
+.sync-summary span, .sync-status-row span:last-child { color: var(--text-tertiary); font-size: 12px; }
+.sync-warning { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; color: var(--warning); font-size: 12px; line-height: 1.5; }
+.sync-error { margin: 12px 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border-subtle)); border-radius: 8px; background: color-mix(in srgb, var(--danger) 8%, var(--bg-control)); color: var(--danger); font-size: 12px; line-height: 1.5; }
+.sync-status-row { display: flex; align-items: baseline; gap: 10px; margin: 12px 0; }
+.sync-status { color: var(--accent); font-size: 12px; font-weight: 700; }
+.sync-status.conflict, .sync-status.authRequired, .sync-status.error { color: var(--danger); }
+.sync-status.offline, .sync-status.remoteAhead, .sync-status.localPending { color: var(--warning); }
+.sync-conflict-list { display: grid; gap: 10px; margin: 12px 0; }
+.sync-conflict-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-control); }
+.sync-conflict-card > span { color: var(--text-tertiary); font-size: 12px; }
+.sync-conflict-hashes { overflow-wrap: anywhere; color: var(--text-tertiary); font-size: 10px; }
+.sync-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.sync-diff pre { max-height: 220px; margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; border-radius: 8px; background: var(--bg-canvas); font: 11px/1.5 var(--font-mono); }
+
 .credential-actions {
   width: min(430px, 100%);
   justify-self: end;

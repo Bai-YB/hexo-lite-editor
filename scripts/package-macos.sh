@@ -4,7 +4,7 @@ set -euo pipefail
 if [[ "${1:-}" == "--" ]]; then
   shift
 fi
-version="${1:-1.0.4}"
+version="${1:-1.0.5}"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
   echo "Invalid release version: $version" >&2
   exit 1

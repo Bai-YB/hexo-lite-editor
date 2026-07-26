@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
+import type { PreviewImageResult } from "$shared/types/app";
 
 const markdown = new MarkdownIt({
   html: true,
@@ -113,33 +114,32 @@ DOMPurify.addHook("uponSanitizeAttribute", (_node, event) => {
 
 export function renderSafeMarkdown(
   source: string,
-  localAssets: Record<string, string> = {},
-  remoteAssets: Record<string, string | null> = {},
-  remotePending = false
+  imageResults: Record<string, PreviewImageResult> = {},
+  imagePending = false
 ): string {
   const rendered = markdown.render(stripFrontMatter(source));
   const renderedDocument = new DOMParser().parseFromString(rendered, "text/html");
   sanitizeSourceAttributes(renderedDocument);
   renderedDocument.querySelectorAll("img").forEach((image) => {
     const original = image.getAttribute("src") ?? "";
-    const rewritten = rewriteLocalImage(original, localAssets);
     image.dataset.imageSource = original;
-    if (isRemoteImageSource(rewritten)) {
-      const resolved = remoteAssets[rewritten];
-      if (resolved) image.setAttribute("src", resolved);
-      else image.replaceWith(imagePlaceholder(renderedDocument, image.getAttribute("alt") ?? "", remotePending));
-    } else {
-      image.setAttribute("src", rewritten);
+    if (isEmbeddedImageSource(original)) return;
+    if (isRemoteImageSource(original)) {
+      image.setAttribute("src", original);
+      return;
     }
+    const result = imageResults[original];
+    if (result?.state === "ready" && result.previewUrl) image.setAttribute("src", result.previewUrl);
+    else image.replaceWith(imagePlaceholder(renderedDocument, image, result, imagePending));
   });
   const clean = DOMPurify.sanitize(renderedDocument.body.innerHTML, {
     ALLOWED_TAGS: allowedTags,
     ALLOWED_ATTR: [
       "abbr", "alt", "aria-label", "cite", "class", "colspan", "datetime", "dir", "height",
       "high", "href", "lang", "low", "max", "min", "open", "optimum", "reversed", "role",
-      "data-image-source", "rowspan", "scope", "src", "start", "style", "title", "value", "width"
+      "data-image-source", "data-preview-image-retry", "rowspan", "scope", "src", "start", "style", "tabindex", "title", "value", "width"
     ],
-    ADD_ATTR: [...safeSemanticAttributes, "data-image-source"],
+    ADD_ATTR: [...safeSemanticAttributes, "data-image-source", "data-preview-image-retry"],
     ALLOW_DATA_ATTR: false,
     FORBID_TAGS: ["form", "iframe", "object", "script", "style", "svg", "math"],
     ALLOWED_URI_REGEXP: /^(?:(?:https?|hlex-asset):|blob:|data:image\/(?:png|jpeg|gif|webp);base64,|(?:\.{0,2}\/|\/)?[^:/?#][^:]*)/i
@@ -155,26 +155,30 @@ export function renderSafeMarkdown(
     }
   });
   document.querySelectorAll("img").forEach((image) => {
-    const original = image.getAttribute("src") ?? "";
-    const src = rewriteLocalImage(original, localAssets);
-    if (src !== original) image.setAttribute("src", src);
+    const src = image.getAttribute("src") ?? "";
     if (isSafeImageSource(src)) image.setAttribute("loading", "lazy");
   });
   return document.body.innerHTML;
 }
 
-export function extractRemoteImageUrls(
-  source: string,
-  localAssets: Record<string, string> = {}
-): string[] {
+export function extractPreviewImageSources(source: string): string[] {
   const rendered = markdown.render(stripFrontMatter(source));
   const document = new DOMParser().parseFromString(rendered, "text/html");
   const urls = new Set<string>();
   document.querySelectorAll("img").forEach((image) => {
-    const value = rewriteLocalImage(image.getAttribute("src") ?? "", localAssets);
-    if (isRemoteImageSource(value)) urls.add(value);
+    const value = image.getAttribute("src") ?? "";
+    if (value && !isEmbeddedImageSource(value) && !isRemoteImageSource(value)) urls.add(value);
   });
   return [...urls];
+}
+
+export function chunkPreviewImageSources(sources: string[], size = 32): string[][] {
+  if (!Number.isInteger(size) || size < 1) throw new RangeError("Preview image batch size must be positive.");
+  const batches: string[][] = [];
+  for (let offset = 0; offset < sources.length; offset += size) {
+    batches.push(sources.slice(offset, offset + size));
+  }
+  return batches;
 }
 
 function sanitizeSourceAttributes(document: Document) {
@@ -202,13 +206,92 @@ export function sanitizeInlineStyle(value: string): string {
     .join("; ");
 }
 
-function imagePlaceholder(document: Document, alt: string, pending: boolean): HTMLElement {
+function imagePlaceholder(
+  document: Document,
+  image: HTMLImageElement,
+  result: PreviewImageResult | undefined,
+  pending: boolean
+): HTMLElement {
   const placeholder = document.createElement("span");
-  placeholder.className = "remote-image-placeholder";
+  const alt = image.getAttribute("alt")?.trim() ?? "";
+  const source = image.getAttribute("src") ?? "";
+  placeholder.className = `preview-image-error${hasDeclaredImageSize(image) ? " declared-size" : " default-size"}`;
   placeholder.setAttribute("role", "img");
-  placeholder.setAttribute("aria-label", alt || (pending ? "正在验证图片" : "图片不可用"));
-  placeholder.textContent = pending ? "正在验证图片…" : `图片不可用${alt ? `：${alt}` : ""}`;
+  placeholder.setAttribute("aria-label", alt ? `${alt}：${pending ? "正在读取图片" : "图片不可用"}` : pending ? "正在读取图片" : "图片不可用");
+  placeholder.dataset.imageSource = source;
+  copyImageDimensions(image, placeholder);
+
+  const heading = document.createElement("strong");
+  heading.textContent = pending ? "正在读取图片…" : alt ? `图片不可用：${alt}` : "图片不可用";
+  const reason = document.createElement("span");
+  reason.className = "preview-image-reason";
+  reason.textContent = pending ? "正在检查图片返回的实际内容。" : result?.message ?? "图片尚未成功解析。";
+  const address = document.createElement("code");
+  address.textContent = source;
+  placeholder.append(heading, reason, address);
+  if (!pending) {
+    const retry = document.createElement("span");
+    retry.className = "preview-image-retry";
+    retry.setAttribute("role", "button");
+    retry.setAttribute("tabindex", "0");
+    retry.dataset.previewImageRetry = "true";
+    retry.textContent = "重新加载";
+    placeholder.append(retry);
+  }
   return placeholder;
+}
+
+export function replacePreviewImageWithPlaceholder(image: HTMLImageElement, message: string) {
+  const result: PreviewImageResult = {
+    originalSource: image.dataset.imageSource || image.getAttribute("src") || "未知地址",
+    state: "unavailable",
+    failureKind: "notImage",
+    message
+  };
+  image.replaceWith(imagePlaceholder(document, image, result, false));
+}
+
+function hasDeclaredImageSize(image: HTMLImageElement) {
+  return Boolean(
+    image.getAttribute("width")
+    || image.getAttribute("height")
+    || sanitizePlaceholderSizeStyle(image.getAttribute("style") ?? "")
+  );
+}
+
+function copyImageDimensions(image: HTMLImageElement, placeholder: HTMLElement) {
+  const declarations: string[] = [];
+  const width = image.getAttribute("width");
+  const height = image.getAttribute("height");
+  const safeStyle = sanitizePlaceholderSizeStyle(image.getAttribute("style") ?? "");
+  if (safeStyle) declarations.push(safeStyle);
+  if (width && /^\d+(?:\.\d+)?$/.test(width)) declarations.push(`width: ${Math.min(2000, Number(width))}px`);
+  if (height && /^\d+(?:\.\d+)?$/.test(height)) declarations.push(`height: ${Math.min(2000, Number(height))}px`);
+  if (declarations.length) placeholder.setAttribute("style", declarations.join("; "));
+}
+
+function sanitizePlaceholderSizeStyle(value: string): string {
+  const allowed = new Set(["width", "height", "min-width", "min-height", "max-width", "max-height"]);
+  return sanitizeInlineStyle(value)
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter(Boolean)
+    .filter((declaration) => {
+      const [property, cssValue = ""] = declaration.split(/:(.*)/s).map((part) => part.trim());
+      if (!allowed.has(property)) return false;
+      if (cssValue === "auto") return true;
+      const match = cssValue.match(/^(\d+(?:\.\d+)?)(px|%)$/);
+      if (!match) return false;
+      return Number(match[1]) <= (match[2] === "%" ? 100 : 2000);
+    })
+    .join("; ");
+}
+
+function isEmbeddedImageSource(value: string) {
+  return /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(value)
+    || value.startsWith("blob:")
+    || value.startsWith("hlex-asset:")
+    || value.startsWith("http://hlex-asset.localhost/");
 }
 
 export function rewriteLocalImage(value: string, localAssets: Record<string, string>): string {
@@ -262,8 +345,9 @@ export function isSafeImageSource(value: string): boolean {
   try {
     const parsed = new URL(value);
     if (parsed.protocol === "hlex-asset:") return true;
-    if (parsed.protocol === "https:" && parsed.username === "" && parsed.password === "") return true;
-    return parsed.protocol === "http:" && parsed.hostname === "hlex-asset.localhost";
+    return (parsed.protocol === "https:" || parsed.protocol === "http:")
+      && parsed.username === ""
+      && parsed.password === "";
   } catch {
     return false;
   }
@@ -272,7 +356,9 @@ export function isSafeImageSource(value: string): boolean {
 export function isRemoteImageSource(value: string): boolean {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "https:" && parsed.username === "" && parsed.password === "";
+    return (parsed.protocol === "https:" || parsed.protocol === "http:")
+      && parsed.username === ""
+      && parsed.password === "";
   } catch {
     return false;
   }

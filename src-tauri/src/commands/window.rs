@@ -14,6 +14,11 @@ pub fn signal_background_shutdown(state: &AppState) {
             let _ = cancel.send(());
         }
     }
+    if let Ok(mut schedules) = state.sync_schedules.lock() {
+        for (_, cancel) in schedules.drain() {
+            let _ = cancel.send(());
+        }
+    }
 }
 
 #[tauri::command]

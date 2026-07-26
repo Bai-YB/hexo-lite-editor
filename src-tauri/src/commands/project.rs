@@ -3,8 +3,8 @@ use crate::{
     data::load_config,
     domain::{
         AppError, AppResult, ArticleSummary, CreateArticleRequest, DocumentSnapshot,
-        FrontMatterResult, OpenProjectResult, ProjectSessionView, RecentProjectView,
-        SaveDocumentRequest, SaveDocumentResult,
+        FrontMatterResult, OpenProjectResult, ProjectRescanResult, ProjectSessionView,
+        RecentProjectView, SaveDocumentRequest, SaveDocumentResult,
     },
     engine::{
         article_target, parse_front_matter, scan_articles, summarize_article, validate_hexo_root,
@@ -171,6 +171,7 @@ pub fn parse_document_front_matter(content: String) -> FrontMatterResult {
 #[tauri::command]
 pub fn save_document(
     request: SaveDocumentRequest,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<SaveDocumentResult> {
     let save_lock = state.article_save_lock(&request.article_id)?;
@@ -242,11 +243,14 @@ pub fn save_document(
         asset.generation = request.session_generation;
         project.assets.insert(token, asset);
     }
-    Ok(SaveDocumentResult {
+    let result = SaveDocumentResult {
         article_id: request.article_id,
         accepted_revision: request.revision,
         saved_at: Local::now().to_rfc3339(),
-    })
+    };
+    drop(project_guard);
+    super::sync::schedule_sync_after_save(app, root);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -327,6 +331,8 @@ pub fn create_article(
 
 fn open_project_path(state: &AppState, path: &Path) -> AppResult<OpenProjectResult> {
     let (root, name, warnings) = validate_hexo_root(path)?;
+    super::sync::sync_before_open(state, &root);
+    let sync = super::sync::content_sync_view_for_root(state, &root);
     let (articles, records, mut assets) = scan_articles(&root)?;
     let generation = state.next_generation();
     for asset in assets.values_mut() {
@@ -353,6 +359,44 @@ fn open_project_path(state: &AppState, path: &Path) -> AppResult<OpenProjectResu
     *guard = Some(session);
     Ok(OpenProjectResult {
         session: view,
+        articles,
+        sync,
+    })
+}
+
+pub fn rescan_project_after_sync(state: &AppState, root: &Path) -> AppResult<ProjectRescanResult> {
+    let (validated_root, name, warnings) = validate_hexo_root(root)?;
+    let (articles, records, mut assets) = scan_articles(&validated_root)?;
+    let generation = state.next_generation();
+    for asset in assets.values_mut() {
+        asset.generation = generation;
+    }
+    let project_id = state
+        .project
+        .read()
+        .ok()
+        .and_then(|project| project.as_ref().map(|project| project.id.clone()))
+        .unwrap_or_else(AppState::new_project_id);
+    let session = ProjectSession {
+        id: project_id.clone(),
+        generation,
+        name,
+        root: validated_root.clone(),
+        warnings,
+        article_summaries: articles.clone(),
+        articles: records,
+        assets,
+        remote_assets: Default::default(),
+    };
+    cancel_project_work(state);
+    let mut guard = state
+        .project
+        .write()
+        .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
+    *guard = Some(session);
+    Ok(ProjectRescanResult {
+        project_id,
+        generation,
         articles,
     })
 }

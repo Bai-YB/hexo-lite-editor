@@ -11,7 +11,15 @@ import type {
   PreviewServerView,
   RemoteAssetItem,
   RemoteAssetPage,
-  RemotePreviewImageResult,
+  PreviewImageResult,
+  ContentSyncCandidate,
+  ContentSyncConflict,
+  ContentSyncDetection,
+  ContentSyncPreflight,
+  ContentSyncView,
+  CredentialStatus,
+  WebDavContentSyncPreflight,
+  WebDavConnectionTestResult,
   TaskLogPage,
   TaskLogSummary,
   SaveDocumentRequest,
@@ -27,7 +35,11 @@ const session = {
   warnings: []
 };
 
-const image = (seed: string) => `https://picsum.photos/seed/${seed}/480/320`;
+const demoFlag = (name: string) =>
+  typeof location !== "undefined" && new URLSearchParams(location.search).get(name) === "1";
+const image = (seed: string) => demoFlag("imageFail") && seed === "quiet-desk"
+  ? "http://127.0.0.1:1420/__empty-image"
+  : `https://picsum.photos/seed/${seed}/480/320`;
 
 let config: AppConfigV3 = structuredClone(defaultConfig);
 config.imageBed.cloudflareApiUrl = "https://img.example.com";
@@ -39,7 +51,7 @@ let articles: ArticleSummary[] = [
 ];
 
 const documents = new Map<string, string>([
-  ["welcome", `---\ntitle: 欢迎使用 Hexo Lite Editor\ndate: 2026-07-17 20:00\ntags:\n  - Hexo\n  - 写作\ncategories:\n  - 指南\n---\n\n# 欢迎使用\n\n这是一个保留专注感的 Markdown 桌面写作工作区。\n\n![安静的桌面](${image("quiet-desk")})\n\n## 从这里开始\n\n${Array.from({ length: 520 }, (_, index) => `${index + 1}. 这是一段用于验证长文章滚动、PageDown 与独立预览滚动的正文。`).join("\n\n")}`],
+  ["welcome", `---\ntitle: 欢迎使用 Hexo Lite Editor\ndate: 2026-07-17 20:00\ntags:\n  - Hexo\n  - 写作\ncategories:\n  - 指南\n---\n\n# 欢迎使用\n\n这是一个保留专注感的 Markdown 桌面写作工作区。\n\n<img src="${image("quiet-desk")}" alt="安静的桌面" width="320" height="180">\n\n## 从这里开始\n\n${Array.from({ length: 520 }, (_, index) => `${index + 1}. 这是一段用于验证长文章滚动、PageDown 与独立预览滚动的正文。`).join("\n\n")}`],
   ["summer", "# 盛夏散步\n\n城市很热，但树影下仍有一些安静的时刻。"],
   ["tauri", "# Tauri 桌面应用整理笔记\n\n- 自绘标题栏\n- 安全 IPC\n- 结构化任务"],
   ["draft", "# 下一篇文章的提纲\n\n- 开场\n- 主要内容\n- 收尾"]
@@ -83,6 +95,11 @@ const remoteAssets: RemoteAssetItem[] = [
 const taskHandlers = new Set<(event: TaskEvent) => void>();
 const previewHandlers = new Set<(view: PreviewServerView) => void>();
 let preview: PreviewServerView = { projectId: session.projectId, sessionGeneration: 1, state: "stopped", port: 4000, draftsEnabled: true };
+let contentSync: ContentSyncView = demoFlag("syncConflict")
+  ? { enabled: true, status: "conflict", provider: "github", repository: "https://github.com/example/quiet-notes.git", branch: "hexo-lite-content", visibility: "public", conflicts: ["source/_posts/welcome.md", "source/images/cover.png"], message: "本地和远端同时修改了文件。" }
+  : { enabled: false, status: "off", provider: "github", conflicts: [] };
+let webDavCredentialConfigured = demoFlag("webdavConfigured");
+let webDavCredentialUsername = webDavCredentialConfigured ? "blogger" : "";
 
 function project(): OpenProjectResult {
   return { session: { ...session }, articles: structuredClone(articles) };
@@ -126,12 +143,59 @@ export const browserMock = {
   importLocalImages: async () => structuredClone(localImages),
   deleteLocalImage: async () => undefined,
   revealLocalImage: async () => undefined,
-  resolveRemotePreviewImages: async (urls: string[]): Promise<RemotePreviewImageResult[]> =>
-    urls.map((originalUrl) => ({
-      originalUrl,
+  resolveArticlePreviewImages: async (sources: string[]): Promise<PreviewImageResult[]> => {
+    if (typeof document !== "undefined") {
+      document.documentElement.dataset.imageResolveCalls = String(Number(document.documentElement.dataset.imageResolveCalls ?? "0") + 1);
+    }
+    if (demoFlag("imageDelay")) await new Promise((resolve) => setTimeout(resolve, 350));
+    return sources.map((originalSource) => demoFlag("imageFail") ? {
+      originalSource,
+      state: "unavailable",
+      httpStatus: 200,
+      failureKind: "empty",
+      message: "图片返回为空。"
+    } : {
+      originalSource,
       state: "ready",
-      previewUrl: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="
-    })),
+      httpStatus: demoFlag("valid404") ? 404 : 200,
+      previewUrl: "/favicon.png"
+    });
+  },
+  detectContentSync: async (): Promise<ContentSyncDetection> => {
+    const candidates: ContentSyncCandidate[] = [{ repository: "https://github.com/example/quiet-notes.git", source: "Hexo deploy 配置", pagesBranch: "gh-pages", visibility: demoFlag("syncPublic") || demoFlag("syncConflict") ? "public" : "unknown" }];
+    if (demoFlag("syncMultiple")) candidates.push({ repository: "git@github.com:example/quiet-mirror.git", source: "Hexo deploy 配置", pagesBranch: "main", visibility: "unknown" });
+    return { candidates, requiresSelection: candidates.length > 1 };
+  },
+  preflightContentSync: async (repository: string, branch: string): Promise<ContentSyncPreflight> => ({ candidate: { repository, source: "Hexo deploy 配置", pagesBranch: "gh-pages", visibility: demoFlag("syncPublic") ? "public" : "unknown" }, branch, fileCount: 12, totalBytes: 256000, remoteFileCount: 0, remoteTotalBytes: 0, localOnlyCount: 12, remoteOnlyCount: 0, differentCount: 0, remoteBranchExists: false, remoteManifestValid: false }),
+  preflightWebDavContentSync: async (endpoint: string, remoteDir: string): Promise<WebDavContentSyncPreflight> => ({ endpoint: endpoint.replace(/\/$/, ""), remoteDir, fileCount: 12, totalBytes: 256000, remoteFileCount: demoFlag("webdavRemote") ? 9 : 0, remoteTotalBytes: demoFlag("webdavRemote") ? 192000 : 0, localOnlyCount: demoFlag("webdavRemote") ? 3 : 12, remoteOnlyCount: demoFlag("webdavRemote") ? 1 : 0, differentCount: demoFlag("webdavRemote") ? 2 : 0, remoteExists: demoFlag("webdavRemote"), remoteManifestValid: demoFlag("webdavRemote") }),
+  testWebDavContentSync: async (request: { endpoint: string; remoteDir: string; username: string; password?: string }): Promise<WebDavConnectionTestResult> => {
+    if (demoFlag("webdavAuthFail") && request.password !== "correct-password") {
+      throw { code: "sync_auth_required", message: "WebDAV 认证失败，请检查用户名和密码。", recoverable: true };
+    }
+    webDavCredentialConfigured = true;
+    webDavCredentialUsername = request.username;
+    return {
+      preflight: await browserMock.preflightWebDavContentSync(request.endpoint, request.remoteDir),
+      username: request.username,
+      testedAt: new Date().toISOString(),
+      sync: contentSync.enabled && contentSync.provider === "webdav"
+        ? (contentSync = { ...contentSync, status: "localPending", message: "WebDAV 凭据和服务器连接已验证，可以重新同步。" })
+        : structuredClone(contentSync)
+    };
+  },
+  getContentSyncStatus: async (): Promise<ContentSyncView> => structuredClone(contentSync),
+  enableContentSync: async (request?: { repository?: string; branch?: string }): Promise<ContentSyncView> => (contentSync = { enabled: true, status: "localPending", provider: "github", repository: request?.repository ?? "https://github.com/example/quiet-notes.git", branch: request?.branch ?? "hexo-lite-content", visibility: "unknown", conflicts: [], message: "等待选择首次同步方向。" }),
+  enableWebDavContentSync: async (request: { endpoint: string; remoteDir: string }): Promise<ContentSyncView> => (contentSync = { enabled: true, status: "localPending", provider: "webdav", endpoint: request.endpoint.replace(/\/$/, ""), remoteDir: request.remoteDir, conflicts: [], message: "WebDAV 同步已启用，等待首次选择同步方向。" }),
+  updateWebDavContentSync: async (request: { endpoint: string; remoteDir: string }): Promise<ContentSyncView> => (contentSync = { ...contentSync, enabled: true, status: "localPending", provider: "webdav", endpoint: request.endpoint.replace(/\/$/, ""), remoteDir: request.remoteDir, conflicts: [], message: "WebDAV 连接设置已应用，请选择首次同步方向。" }),
+  disableContentSync: async (): Promise<ContentSyncView> => (contentSync = { enabled: false, status: "off", provider: "github", conflicts: [] }),
+  runContentSync: async (): Promise<ContentSyncView> => (contentSync = { ...contentSync, status: "synced", message: "演示项目内容已同步。" }),
+  getContentSyncConflicts: async (): Promise<ContentSyncConflict[]> => demoFlag("syncConflict") ? [
+    { path: "source/_posts/welcome.md", kind: "markdown", localHash: "local-md", remoteHash: "remote-md", localSize: 120, remoteSize: 132, localText: "# 本地标题", remoteText: "# 远端标题" },
+    { path: "source/images/cover.png", kind: "binary", localHash: "local-bin", remoteHash: "remote-bin", localSize: 2048, remoteSize: 4096 }
+  ] : [],
+  resolveContentSyncConflicts: async (): Promise<ContentSyncView> => (contentSync = { ...contentSync, status: "synced", conflicts: [], message: "冲突已解决。" }),
+  webDavCredentialStatus: async (_endpoint?: string): Promise<CredentialStatus> => ({ configured: webDavCredentialConfigured, username: webDavCredentialUsername || undefined }),
+  webDavCredentialDelete: async (_endpoint?: string): Promise<CredentialStatus> => (webDavCredentialConfigured = false, webDavCredentialUsername = "", { configured: false }),
   uploadCloudflareImage: async () => ({ url: remoteAssets[3].url!, markdown: `![${remoteAssets[3].name}](${remoteAssets[3].url})`, fileName: remoteAssets[3].fileName }),
   listCloudflareAssets: async (_offset: number, _count: number, search: string, directory: string): Promise<RemoteAssetPage> => {
     const normalized = directory.replace(/^\/+|\/+$/g, "");

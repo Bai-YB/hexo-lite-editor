@@ -44,6 +44,9 @@
   let taskEvents: TaskEvent[] = [];
   let unlistenTask: (() => void) | undefined;
   let unlistenPreview: (() => void) | undefined;
+  let unlistenSync: (() => void) | undefined;
+  let unlistenSyncPhase: (() => void) | undefined;
+  let unlistenRescan: (() => void) | undefined;
   let unlistenClose: (() => void) | undefined;
   let configTimer: ReturnType<typeof setTimeout> | undefined;
   let notice = "";
@@ -95,6 +98,19 @@
         if (view.state === "error" && view.error) showNotice(view.error.message);
       }
     });
+    unlistenSync = await platform.onContentSyncStatus((view) => {
+      if (["offline", "authRequired", "remoteAhead", "conflict", "error"].includes(view.status)) {
+        showNotice(view.message || `内容同步：${view.status}`);
+      }
+    });
+    unlistenSyncPhase = await platform.onContentSyncPhase((event) => {
+      if (event.phase === "failed" && event.message) showNotice(event.message);
+    });
+    unlistenRescan = await platform.onProjectRescanned((project) => {
+      if (!session || project.projectId !== session.projectId) return;
+      acceptProject({ ...session, generation: project.generation }, project.articles);
+      showNotice("远端内容已应用，文章列表已刷新。");
+    });
     if (isTauri()) {
       unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
         if (allowWindowClose) return;
@@ -114,6 +130,9 @@
     window.removeEventListener("keydown", handleShortcut);
     unlistenTask?.();
     unlistenPreview?.();
+    unlistenSync?.();
+    unlistenSyncPhase?.();
+    unlistenRescan?.();
     unlistenClose?.();
     clearTimeout(configTimer);
     clearTimeout(noticeTimer);
@@ -184,7 +203,8 @@
   function acceptProject(nextSession: ProjectSessionView, nextArticles: ArticleSummary[]) {
     session = nextSession;
     articles = nextArticles;
-    if (editorStore.getState().snapshot?.projectId !== nextSession.projectId) editorStore.clear();
+    const snapshot = editorStore.getState().snapshot;
+    if (snapshot?.projectId !== nextSession.projectId || snapshot.sessionGeneration !== nextSession.generation) editorStore.clear();
     void platform.listRecentProjects().then((items) => (recentProjects = items));
     previewServer = null;
     void platform.getPreviewStatus(nextSession.projectId, nextSession.generation)
@@ -438,7 +458,7 @@
             onTogglePreviewServer={togglePreviewServer}
             onOpenPreviewHome={openPreviewHome}
             onNotice={showNotice}
-            onOpenSettings={() => navigate("settings", "maintenance")}
+            onOpenSettings={(section?: SettingsSectionId) => navigate("settings", section ?? "maintenance")}
               />
             {/await}
           </PageTransition>
