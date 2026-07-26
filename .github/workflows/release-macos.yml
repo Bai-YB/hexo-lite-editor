@@ -95,7 +95,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: Hexo-Lite-Editor-${{ inputs.version || '1.0.5' }}-macos-universal
-          path: release-artifacts/${{ inputs.version || '1.0.5' }}/*macos*
+          path: release-artifacts/${{ inputs.version || '1.0.5' }}/Hexo-Lite-Editor_${{ inputs.version || '1.0.5' }}_macos-universal.dmg
           if-no-files-found: error
 
       - name: Publish macOS assets to existing release
@@ -109,5 +109,6 @@ jobs:
             echo "::error title=Missing GitHub Release::Release $tag must exist before publishing macOS assets."
             exit 1
           fi
-          find "release-artifacts/$version" -maxdepth 1 -type f -print0 \
-            | xargs -0 gh release upload "$tag" --clobber
+          gh release upload "$tag" \
+            "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.dmg" \
+            --clobber
