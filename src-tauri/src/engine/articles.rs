@@ -563,6 +563,8 @@ mod tests {
     #[test]
     fn rejects_non_normal_relative_paths() {
         assert!(validate_relative_path(Path::new("../outside")).is_err());
+        assert!(validate_relative_path(Path::new("/outside")).is_err());
+        #[cfg(windows)]
         assert!(validate_relative_path(Path::new("C:\\outside")).is_err());
     }
 

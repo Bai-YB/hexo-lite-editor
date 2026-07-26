@@ -3335,9 +3335,18 @@ mod tests {
 
     fn real_webdav_credential_test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        let guard = LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
             .lock()
-            .unwrap()
+            .unwrap();
+        static INITIALIZE_STORE: std::sync::Once = std::sync::Once::new();
+        INITIALIZE_STORE.call_once(|| {
+            keyring_core::set_default_store(
+                keyring_core::mock::Store::new()
+                    .expect("mock credential store should be available in tests"),
+            );
+        });
+        guard
     }
 
     struct TestWebDavServer {

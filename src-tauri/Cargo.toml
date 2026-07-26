@@ -47,6 +47,7 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
+keyring-core = "1"
 tempfile = "3"
 tauri = { version = "2", features = ["test"] }
 
