@@ -7,6 +7,8 @@
 
   export let onRequestClose: () => void;
   export let onMaximizedChange: (value: boolean) => void = () => {};
+  export let documentTitle = "";
+  export let dirty = false;
 
   let maximized = false;
 
@@ -38,9 +40,16 @@
 </script>
 
 <div class:macos={isMacOS} class="titlebar">
-  <div class="titlebar-brand">
+  <div
+    class="titlebar-brand"
+    data-tauri-drag-region
+    role="presentation"
+    on:dblclick={toggleMaximize}
+  >
     <img src="/favicon.png" alt="" />
     <span>Hexo Lite Editor</span>
+    {#if documentTitle}<span class="titlebar-document">· {documentTitle}</span>{/if}
+    {#if dirty}<span class="titlebar-dirty" aria-label="有未保存更改" title="有未保存更改"></span>{/if}
   </div>
   <div
     class="titlebar-drag"

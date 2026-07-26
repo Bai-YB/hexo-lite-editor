@@ -17,13 +17,14 @@
 
 <nav class="nav-rail" aria-label="主导航">
   <div class="nav-mark" title="Hexo Lite Editor"><img src="/favicon.png" alt="" /></div>
-  {#each primary as item}
+  {#each primary as item, index}
     <button
       class:active={page === item.id}
       class="nav-item"
       type="button"
       aria-current={page === item.id ? "page" : undefined}
-      title={item.label}
+      title={`${item.label} (Ctrl+${index + 1})`}
+      aria-keyshortcuts={`Control+${index + 1}`}
       on:click={() => onNavigate(item.id)}
     >
       <svelte:component this={item.icon} size={20} strokeWidth={1.7} />
@@ -31,13 +32,14 @@
     </button>
   {/each}
   <div class="nav-spacer"></div>
-  {#each secondary as item}
+  {#each secondary as item, index}
     <button
       class:active={page === item.id}
       class="nav-item"
       type="button"
       aria-current={page === item.id ? "page" : undefined}
-      title={item.label}
+      title={`${item.label} (Ctrl+${index + 3})`}
+      aria-keyshortcuts={`Control+${index + 3}`}
       on:click={() => onNavigate(item.id)}
     >
       <svelte:component this={item.icon} size={20} strokeWidth={1.7} />

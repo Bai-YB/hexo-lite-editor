@@ -46,6 +46,22 @@ describe("EditorSessionStore", () => {
     expect(store.getState().dirty).toBe(false);
   });
 
+  it("rebases a dirty draft onto a rescanned project generation", () => {
+    const store = new EditorSessionStore(async (request) => ({
+      articleId: request.articleId,
+      acceptedRevision: request.revision,
+      savedAt: "now"
+    }));
+    store.load(snapshot);
+    store.update("unsaved draft");
+    store.rebaseSessionGeneration(2);
+
+    const state = store.getState();
+    expect(state.snapshot?.sessionGeneration).toBe(2);
+    expect(state.content).toBe("unsaved draft");
+    expect(state.dirty).toBe(true);
+  });
+
   it("inserts an image at the document end before a cursor has been placed", () => {
     const store = new EditorSessionStore(async (request) => ({
       articleId: request.articleId,

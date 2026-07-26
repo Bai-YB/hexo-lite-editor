@@ -1,22 +1,16 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import {
-    Eye,
-    EyeOff,
-    ChevronDown,
-    FilePlus2,
-    FolderOpen,
-    ImagePlus,
-    Rocket,
     RefreshCw,
-    Save,
     Search,
-    Server,
     SlidersHorizontal,
-    MoreHorizontal,
-    ImageOff
+    ImageOff,
+    Link2,
+    Unlink2
   } from "@lucide/svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
+  import EditorToolbar from "./EditorToolbar.svelte";
+  import WelcomePanel from "./WelcomePanel.svelte";
   import type { EditorSessionStore, EditorSessionState } from "./EditorSessionStore";
   import EmptyState from "$shared/components/EmptyState.svelte";
   import ErrorState from "$shared/components/ErrorState.svelte";
@@ -30,7 +24,6 @@
     replacePreviewImageWithPlaceholder
   } from "$shared/markdown/safeMarkdown";
   import { platform, normalizeError } from "$platform/tauri";
-  import { shortcutLabel } from "$platform/os";
   import { previewStateLabel } from "./previewModel";
   import type {
     AppConfigV3,
@@ -60,6 +53,7 @@
   export let onOpenSettings: (section?: SettingsSectionId) => void = () => {};
   export let previewServer: PreviewServerView | null = null;
   export let taskBusy = false;
+  export let previewBusy = false;
   export let autoSaveSuspended = false;
 
   const store = editorStore;
@@ -71,6 +65,7 @@
   let tag = "";
   let sortMode: "modifiedDesc" | "createdDesc" | "dateDesc" | "titleAsc" = "modifiedDesc";
   let filterMenuOpen = false;
+  let filterButton: HTMLButtonElement;
   let loading = false;
   let loadError = "";
   let previewHtml = "";
@@ -81,6 +76,7 @@
     : null;
   let pendingArticle: ArticleSummary | null = null;
   let showSwitchGuard = false;
+  let switchBusy = false;
   let showCreate = false;
   let createTitle = "";
   let createFileName = "";
@@ -94,14 +90,14 @@
   let previewRatio = config.layout.previewRatio ?? 0.5;
   let editorGrid: HTMLDivElement;
   let imageInput: HTMLInputElement;
-  let projectMenuOpen = false;
-  let advancedMenuOpen = false;
   let previewImageSources: string[] = [];
   let previewImageKey = "";
   let previewImagesPending = false;
   let lastValidatedImageKey = "";
   let imageValidationSequence = 0;
+  let articleLoadSequence = 0;
   let editorScrollTop = 0;
+  let previewScrollSync = true;
   let markdownPreview: HTMLElement;
   const editorScrollByArticle = new Map<string, number>();
   const previewScrollByArticle = new Map<string, number>();
@@ -112,15 +108,19 @@
   const coverLastCheckedAt = new Map<string, number>();
   const coverRecheckIntervalMs = 60_000;
   let syncStatus: import("$shared/types/app").ContentSyncView = { enabled: false, status: "off", provider: "github", conflicts: [] };
+  let syncBusy = false;
+  let articleResizeActive = false;
+  let contentResizeActive = false;
 
   const unsubscribe = store.subscribe((state) => {
     editorState = state;
   });
 
   onMount(() => {
-    window.addEventListener("pointerdown", closeEditorMenus);
-    window.addEventListener("keydown", closeEditorMenus);
     window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("pointerdown", closeFilterMenu);
+    window.addEventListener("keydown", closeFilterMenu);
+    window.addEventListener("hexo-editor-new-article", openCreateDialog);
     if (!session) return;
     void refreshSyncStatus();
     if (!store.getState().snapshot && articles.length) void openArticle(articles[0]);
@@ -130,29 +130,40 @@
     componentAlive = false;
     unsubscribe();
     clearTimeout(autoSaveTimer);
-    window.removeEventListener("pointerdown", closeEditorMenus);
-    window.removeEventListener("keydown", closeEditorMenus);
     window.removeEventListener("focus", handleWindowFocus);
+    window.removeEventListener("pointerdown", closeFilterMenu);
+    window.removeEventListener("keydown", closeFilterMenu);
+    window.removeEventListener("hexo-editor-new-article", openCreateDialog);
   });
 
   async function refreshSyncStatus(run = false) {
-    if (!session) return;
+    if (!session || syncBusy) return;
+    syncBusy = true;
     try {
+      if (run && store.hasDirty()) await saveAndRefresh();
       syncStatus = run
         ? await platform.runContentSync(session.projectId, session.generation)
         : await platform.getContentSyncStatus(session.projectId, session.generation);
       if (run) onNotice(syncStatus.message || "同步检查完成。");
     } catch (error) {
       onNotice(normalizeError(error).message);
+    } finally {
+      syncBusy = false;
     }
   }
 
-  function closeEditorMenus(event: Event) {
-    if (event instanceof KeyboardEvent && event.key !== "Escape") return;
+  function closeFilterMenu(event: Event) {
+    if (!filterMenuOpen) return;
+    if (event instanceof KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      filterMenuOpen = false;
+      requestAnimationFrame(() => filterButton?.focus());
+      return;
+    }
     const target = event.target as HTMLElement;
-    if (!(event instanceof KeyboardEvent) && target.closest?.(".project-switcher-wrap, .advanced-menu-wrap")) return;
-    projectMenuOpen = false;
-    advancedMenuOpen = false;
+    if (target.closest?.(".article-filter-popover, .filter-menu-button")) return;
+    filterMenuOpen = false;
   }
 
   $: previewImageSources = extractPreviewImageSources(editorState.content);
@@ -185,8 +196,14 @@
   $: wordCount = countWords(editorState.content);
   $: if (`${session?.projectId ?? ""}:${session?.generation ?? 0}` !== lastProjectKey) {
     lastProjectKey = session ? `${session.projectId}:${session.generation}` : null;
-    activeArticleId = null;
-    store.clear();
+    const currentSnapshot = store.getState().snapshot;
+    const snapshotMatchesSession = Boolean(
+      session
+      && currentSnapshot?.projectId === session.projectId
+      && currentSnapshot.sessionGeneration === session.generation
+    );
+    activeArticleId = snapshotMatchesSession ? currentSnapshot?.articleId ?? null : null;
+    if (!snapshotMatchesSession) store.clear();
     previewImageResults = {};
     previewImagesPending = false;
     coverErrors = {};
@@ -194,8 +211,10 @@
     coverChecksInFlight.clear();
     coverLastCheckedAt.clear();
     lastValidatedImageKey = "";
+    syncStatus = { enabled: false, status: "off", provider: "github", conflicts: [] };
     if (session) {
-      if (articles.length) void openArticle(articles[0]);
+      void refreshSyncStatus();
+      if (!snapshotMatchesSession && articles.length) void openArticle(articles[0]);
     }
   }
 
@@ -208,6 +227,7 @@
 
   async function openArticle(article: ArticleSummary) {
     if (!session) return;
+    const sequence = ++articleLoadSequence;
     loading = true;
     loadError = "";
     const expectedId = article.articleId;
@@ -220,6 +240,8 @@
         session.generation
       );
       if (
+        sequence !== articleLoadSequence
+        ||
         expectedId !== snapshot.articleId
         || session?.projectId !== expectedProjectId
         || session.generation !== expectedGeneration
@@ -236,9 +258,9 @@
         if (markdownPreview) markdownPreview.scrollTop = previewScrollByArticle.get(article.articleId) ?? 0;
       });
     } catch (error) {
-      loadError = normalizeError(error).message;
+      if (sequence === articleLoadSequence) loadError = normalizeError(error).message;
     } finally {
-      loading = false;
+      if (sequence === articleLoadSequence) loading = false;
     }
   }
 
@@ -266,11 +288,13 @@
   }
 
   async function resolveSwitch(action: "save" | "discard" | "cancel") {
+    if (switchBusy) return;
     if (action === "cancel") {
       pendingArticle = null;
       showSwitchGuard = false;
       return;
     }
+    switchBusy = true;
     try {
       if (action === "save") await saveAndRefresh();
       else store.discard();
@@ -280,6 +304,8 @@
       if (next) await openArticle(next);
     } catch (error) {
       onNotice(normalizeError(error).message);
+    } finally {
+      switchBusy = false;
     }
   }
 
@@ -390,7 +416,6 @@
 
   async function runAdvanced(kind: TaskType) {
     if (!session) return;
-    advancedMenuOpen = false;
     try {
       await platform.startTask(session.projectId, kind);
       onNotice(`${kind === "gitStatus" ? "Git 检查" : "任务"}已在后台开始。`);
@@ -399,9 +424,14 @@
     }
   }
 
-  function recordEditorScroll(value: number) {
+  function recordEditorScroll(value: number, scrollHeight: number, clientHeight: number) {
     editorScrollTop = value;
     if (activeArticleId) editorScrollByArticle.set(activeArticleId, value);
+    if (previewScrollSync && markdownPreview) {
+      const editorRange = Math.max(1, scrollHeight - clientHeight);
+      const previewRange = Math.max(0, markdownPreview.scrollHeight - markdownPreview.clientHeight);
+      markdownPreview.scrollTop = (value / editorRange) * previewRange;
+    }
   }
 
   function recordPreviewScroll() {
@@ -413,20 +443,53 @@
   function startArticleResize(event: PointerEvent) {
     const startX = event.clientX;
     const startWidth = articleWidth;
-    const move = (moveEvent: PointerEvent) => {
+    articleResizeActive = true;
+    beginResize(event, (moveEvent) => {
       const delta = moveEvent.clientX - startX;
       articleWidth = clamp(startWidth + delta, 220, 420);
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    }, () => {
+      articleResizeActive = false;
       onConfigChange({
         ...config,
         layout: { ...config.layout, articleListWidth: articleWidth }
       });
+    });
+  }
+
+  function resetArticleWidth() {
+    articleWidth = 280;
+    onConfigChange({ ...config, layout: { ...config.layout, articleListWidth: articleWidth } });
+  }
+
+  function handleArticleResizeKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    articleWidth = clamp(articleWidth + (event.key === "ArrowRight" ? 8 : -8), 220, 420);
+    onConfigChange({ ...config, layout: { ...config.layout, articleListWidth: articleWidth } });
+  }
+
+  function beginResize(
+    event: PointerEvent,
+    onMove: (event: PointerEvent) => void,
+    onEnd: () => void
+  ) {
+    event.preventDefault();
+    const target = event.currentTarget as HTMLElement;
+    target.setPointerCapture?.(event.pointerId);
+    document.body.classList.add("is-col-resizing");
+    const move = (moveEvent: PointerEvent) => {
+      onMove(moveEvent);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      document.body.classList.remove("is-col-resizing");
+      onEnd();
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up, { once: true });
+    window.addEventListener("pointercancel", up, { once: true });
   }
 
   function handlePreviewInteraction(event: MouseEvent | KeyboardEvent) {
@@ -606,24 +669,33 @@
   }
 
   function startContentResize(event: PointerEvent) {
-    const move = (moveEvent: PointerEvent) => {
+    contentResizeActive = true;
+    beginResize(event, (moveEvent) => {
       const bounds = editorGrid.getBoundingClientRect();
       const available = Math.max(1, bounds.width - articleWidth - 4);
       const writingWidth = moveEvent.clientX - bounds.left - articleWidth;
       const minimumShare = Math.min(0.4, Math.max(0.15, 240 / available));
       const writingRatio = clamp(writingWidth / available, minimumShare, 1 - minimumShare);
       previewRatio = 1 - writingRatio;
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+    }, () => {
+      contentResizeActive = false;
       onConfigChange({
         ...config,
         layout: { ...config.layout, previewRatio }
       });
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up, { once: true });
+    });
+  }
+
+  function resetPreviewRatio() {
+    previewRatio = 0.5;
+    onConfigChange({ ...config, layout: { ...config.layout, previewRatio } });
+  }
+
+  function handleContentResizeKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    previewRatio = clamp(previewRatio + (event.key === "ArrowLeft" ? 0.02 : -0.02), 0.15, 0.85);
+    onConfigChange({ ...config, layout: { ...config.layout, previewRatio } });
   }
 
   function handleWindowFocus() {
@@ -649,60 +721,37 @@
 </script>
 
 <div class="editor-page">
-  <header class="editor-toolbar">
-    <div class="project-switcher-wrap">
-      <button class="project-switcher" type="button" aria-expanded={projectMenuOpen} on:click={() => { projectMenuOpen = !projectMenuOpen; advancedMenuOpen = false; }}>
-        <FolderOpen size={17} />
-        <span>{session?.name ?? "打开博客"}</span>
-        <ChevronDown size={14} />
-      </button>
-      {#if projectMenuOpen}
-        <div class="project-menu quiet-menu">
-          {#if session}<div class="project-menu-current"><strong>{session.name}</strong><span>{session.displayPath}</span></div>{/if}
-          {#each recentProjects.slice(0, 10) as recent (recent.recentId)}
-            <button type="button" disabled={!recent.available} on:click={() => { projectMenuOpen = false; onOpenRecentProject(recent.recentId); }}><span>{recent.name}</span><small>{recent.available ? recent.displayPath : "位置不可用"}</small></button>
-          {/each}
-          <button class="project-menu-open" type="button" on:click={() => { projectMenuOpen = false; onOpenProject(); }}><FolderOpen size={15} /><span>打开其他博客</span></button>
-        </div>
-      {/if}
-    </div>
-    <div class="toolbar-spacer"></div>
-    {#if session}
-      <button class={`button quiet editor-sync-status ${syncStatus.status}`} type="button" title={syncStatus.message || "内容同步"} on:click={() => syncStatus.enabled ? void refreshSyncStatus(true) : onOpenSettings("sync")}><RefreshCw size={15} />{syncStatus.status === "off" ? "同步关闭" : syncStatus.status}</button>
-      <button class="button quiet" type="button" on:click={() => void onPreview(true)}><Server size={16} />浏览器预览</button>
-      <button class="button quiet" type="button" on:click={openCreateDialog}><FilePlus2 size={16} />新建</button>
-      <button class="icon-button" type="button" disabled={!editorState.snapshot} title="选择图片并插入" aria-label="选择图片并插入" on:click={() => imageInput?.click()}><ImagePlus size={17} /></button>
-      <button class="button quiet" type="button" disabled={!editorState.dirty || editorState.saving} on:click={saveCurrent}><Save size={16} />{editorState.saving ? "保存中" : "保存"}</button>
-      <button class="icon-button" type="button" title={config.layout.previewVisible ? "隐藏预览" : "显示预览"} aria-label={config.layout.previewVisible ? "隐藏预览" : "显示预览"} on:click={togglePreview}>{#if config.layout.previewVisible}<EyeOff size={16} />{:else}<Eye size={16} />{/if}</button>
-      <div class="advanced-menu-wrap">
-        <button class="icon-button" type="button" title="高级操作" aria-label="高级操作" aria-expanded={advancedMenuOpen} on:click={() => { advancedMenuOpen = !advancedMenuOpen; projectMenuOpen = false; }}><MoreHorizontal size={18} /></button>
-        {#if advancedMenuOpen}
-          <div class="advanced-menu quiet-menu">
-            <button type="button" on:click={() => void runAdvanced("clean")}>清理缓存</button>
-            <button type="button" on:click={() => void runAdvanced("generate")}>生成站点</button>
-            <button type="button" on:click={() => void runAdvanced("deploy")}>单独部署</button>
-            <button type="button" on:click={() => void runAdvanced("gitStatus")}>检查 Git 状态</button>
-            <div class="menu-separator"></div>
-            <button type="button" on:click={() => { advancedMenuOpen = false; onTogglePreviewServer(); }}>{previewServer?.state === "running" ? "停止本地预览" : "启动本地预览"}</button>
-            <button type="button" on:click={() => { advancedMenuOpen = false; onOpenPreviewHome(); }}>打开博客首页</button>
-            <button type="button" on:click={() => { advancedMenuOpen = false; onOpenSettings("maintenance"); }}>诊断与日志</button>
-          </div>
-        {/if}
-      </div>
-      <button class="button primary" type="button" disabled={taskBusy} title={`发布（${shortcutLabel("⇧P")}）`} on:click={onPublish}><Rocket size={16} />{taskBusy ? "处理中" : "发布"}</button>
-    {/if}
-  </header>
+  {#if session}
+    <EditorToolbar
+      {session}
+      {recentProjects}
+      previewVisible={config.layout.previewVisible}
+      {previewServer}
+      {taskBusy}
+      {previewBusy}
+      saving={editorState.saving}
+      saveDisabled={!editorState.dirty || editorState.saving}
+      imageDisabled={!editorState.snapshot}
+      {onOpenProject}
+      {onOpenRecentProject}
+      onPreview={() => void onPreview(true)}
+      onCreate={openCreateDialog}
+      onSelectImages={() => imageInput?.click()}
+      onSave={saveCurrent}
+      onTogglePreview={togglePreview}
+      onRunAdvanced={(task) => void runAdvanced(task)}
+      {onTogglePreviewServer}
+      {onOpenPreviewHome}
+      {onOpenSettings}
+      {onPublish}
+    />
+  {:else}
+    <header class="editor-toolbar"><strong class="editor-toolbar-brand">Hexo Lite Editor</strong></header>
+  {/if}
   <input hidden bind:this={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple on:change={(event) => { void handleImageFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = ""; }} />
 
   {#if !session}
-    <div class="editor-welcome">
-      <EmptyState title="还没有打开项目" description="选择包含 _config.yml、package.json 与 source/_posts 的 Hexo 根目录。">
-        <button class="button primary" type="button" on:click={onOpenProject}><FolderOpen size={16} />选择项目文件夹</button>
-      </EmptyState>
-      {#if recentProjects.length}
-        <section class="welcome-recents" aria-label="最近项目"><h2>最近项目</h2>{#each recentProjects.slice(0, 5) as recent (recent.recentId)}<button type="button" disabled={!recent.available} on:click={() => onOpenRecentProject(recent.recentId)}><span><strong>{recent.name}</strong><small>{recent.displayPath}</small></span><small>{recent.available ? "打开" : "位置不可用"}</small></button>{/each}</section>
-      {/if}
-    </div>
+    <WelcomePanel {recentProjects} {onOpenProject} {onOpenRecentProject} {onOpenSettings} />
   {:else}
     <div class="editor-grid-wrap" style={`--article-width:${articleWidth}px; --writing-ratio:${config.layout.previewVisible ? 1 - previewRatio : 1}; --preview-ratio:${previewRatio}`}>
       <div class:preview-hidden={!config.layout.previewVisible} class="editor-grid" bind:this={editorGrid}>
@@ -716,7 +765,7 @@
             <button class:active={filter === "post"} class="filter-chip" type="button" on:click={() => (filter = "post")}>文章</button>
             <button class:active={filter === "draft"} class="filter-chip" type="button" on:click={() => (filter = "draft")}>草稿</button>
             <span class="filter-spacer"></span>
-            <button class:active={Boolean(category || tag || sortMode !== "modifiedDesc")} class="filter-menu-button" type="button" aria-label="筛选与排序" aria-expanded={filterMenuOpen} on:click={() => (filterMenuOpen = !filterMenuOpen)}><SlidersHorizontal size={15} /></button>
+             <button bind:this={filterButton} class:active={Boolean(category || tag || sortMode !== "modifiedDesc")} class="filter-menu-button" type="button" aria-label="筛选与排序" aria-expanded={filterMenuOpen} on:click={() => (filterMenuOpen = !filterMenuOpen)}><SlidersHorizontal size={15} /></button>
           </div>
           {#if filterMenuOpen}
             <div class="article-filter-popover">
@@ -745,7 +794,7 @@
                     {#if coverErrors[originalCoverSource]}
                       <span class="article-cover image-error" title={coverErrors[originalCoverSource]} aria-label={coverErrors[originalCoverSource]}><ImageOff size={18} /></span>
                     {:else if coverUrl}
-                      <img class="article-cover" src={coverUrl} alt={article.cover.alt} on:error={() => handleCoverError(article)} />
+                      <img class="article-cover" src={coverUrl} alt={article.cover.alt} loading="lazy" decoding="async" on:error={() => handleCoverError(article)} />
                     {:else}
                       <span class="article-cover placeholder" aria-hidden="true">{article.title.slice(0, 1)}</span>
                     {/if}
@@ -786,12 +835,35 @@
           {/if}
         </main>
         {#if config.layout.previewVisible}
-          <div class="content-resize-handle" role="separator" aria-label="调整编辑与预览比例" on:pointerdown={startContentResize}></div>
+          <div
+            class:dragging={contentResizeActive}
+            class="content-resize-handle"
+            role="slider"
+            tabindex="0"
+            aria-label="调整编辑与预览比例"
+            aria-orientation="vertical"
+            aria-valuemin="15"
+            aria-valuemax="85"
+            aria-valuenow={Math.round(previewRatio * 100)}
+            on:pointerdown={startContentResize}
+            on:dblclick={resetPreviewRatio}
+            on:keydown={handleContentResizeKeydown}
+          ></div>
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <section class="preview-pane" aria-label="文章预览">
             <div class="preview-mode-bar">
               <strong>即时预览</strong>
               <span>{previewImagesPending ? "正在读取图片" : "HTML 已安全渲染"}</span>
+              <button
+                class:active={previewScrollSync}
+                class="icon-button small"
+                type="button"
+                aria-pressed={previewScrollSync}
+                title={previewScrollSync ? "关闭编辑器与预览同步滚动" : "开启编辑器与预览同步滚动"}
+                on:click={() => (previewScrollSync = !previewScrollSync)}
+              >
+                {#if previewScrollSync}<Link2 size={14} />{:else}<Unlink2 size={14} />{/if}
+              </button>
             </div>
             {#if !editorState.snapshot}
               <EmptyState title="暂无预览" description="打开文章后显示渲染结果。" />
@@ -802,26 +874,42 @@
           </section>
         {/if}
       </div>
-      <div class="resize-handle" style={`left:${articleWidth}px`} role="separator" aria-label="调整文章列表宽度" on:pointerdown={startArticleResize}></div>
+      <div
+        class:dragging={articleResizeActive}
+        class="resize-handle"
+        style={`left:${articleWidth}px`}
+        role="slider"
+        tabindex="0"
+        aria-label="调整文章列表宽度"
+        aria-orientation="vertical"
+        aria-valuemin="220"
+        aria-valuemax="420"
+        aria-valuenow={articleWidth}
+        on:pointerdown={startArticleResize}
+        on:dblclick={resetArticleWidth}
+        on:keydown={handleArticleResizeKeydown}
+      ></div>
     </div>
   {/if}
 
   <footer class="editor-status">
-    <span>{editorState.error ? "保存失败" : editorState.saving ? "正在保存" : editorState.dirty ? "有未保存更改" : editorState.snapshot ? "已保存" : "就绪"}</span>
+    <span class:error={Boolean(editorState.error)} title={editorState.error || undefined}>{editorState.error ? "保存失败" : editorState.saving ? "正在保存" : editorState.dirty ? "有未保存更改" : editorState.snapshot ? "已保存" : "就绪"}</span>
     <span>{wordCount} 字</span>
+    {#if editorState.snapshot}<span>第 {editorState.content.slice(0, editorState.selection.from).split("\n").length} 行</span>{/if}
     <span class="status-spacer"></span>
+    {#if session}<button class={`status-sync ${syncStatus.status}`} type="button" disabled={syncBusy} title={syncStatus.message || "内容同步"} on:click={() => syncStatus.enabled ? void refreshSyncStatus(true) : onOpenSettings("sync")}><RefreshCw size={12} class={syncBusy ? "spin" : undefined} />{syncBusy ? "同步中" : syncStatus.status === "off" ? "同步关闭" : `同步 ${syncStatus.status}`}</button>{/if}
+    {#if session?.warnings.length}<span class="status-warning" title={session.warnings.join("；")}>诊断 {session.warnings.length} 项</span>{/if}
     {#if editorState.savedAt}<span>最后保存 {new Date(editorState.savedAt).toLocaleTimeString()}</span>{/if}
     {#if session}<span>预览 {previewStateLabel(previewServer?.state)}</span>{/if}
-    {#if activeArticleId}<span>revision {editorState.revision}</span>{/if}
   </footer>
 </div>
 
 {#if showSwitchGuard}
   <ModalDialog title="保存当前文章？" description="切换文章前需要处理未保存的内容。" onClose={() => resolveSwitch("cancel")}>
     <svelte:fragment slot="actions">
-      <button class="button" type="button" on:click={() => resolveSwitch("cancel")}>取消</button>
-      <button class="button danger" type="button" on:click={() => resolveSwitch("discard")}>放弃更改</button>
-      <button class="button primary" type="button" data-autofocus on:click={() => resolveSwitch("save")}>保存并继续</button>
+      <button class="button" type="button" disabled={switchBusy} on:click={() => resolveSwitch("cancel")}>取消</button>
+      <button class="button danger" type="button" disabled={switchBusy} on:click={() => resolveSwitch("discard")}>放弃更改</button>
+      <button class="button primary" type="button" data-autofocus disabled={switchBusy} on:click={() => resolveSwitch("save")}>{switchBusy ? "处理中" : "保存并继续"}</button>
     </svelte:fragment>
   </ModalDialog>
 {/if}

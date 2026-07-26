@@ -43,9 +43,11 @@ struct CreateTokenResponse {
 #[tauri::command]
 pub async fn acquire_cloudflare_imgbed_token(
     request: AcquireCloudflareImgbedTokenRequest,
+    connection_id: String,
 ) -> AppResult<AcquireCloudflareImgbedTokenResult> {
+    let base_url = request.base_url.clone();
     let (result, token) = request_cloudflare_imgbed_token(request).await?;
-    set_cloudflare_token(&token)?;
+    set_cloudflare_token(&connection_id, &base_url, &token)?;
     Ok(result)
 }
 
@@ -143,9 +145,10 @@ async fn request_cloudflare_imgbed_token(
 #[tauri::command]
 pub async fn test_cloudflare_imgbed_token(
     base_url: String,
+    connection_id: String,
 ) -> AppResult<ImgBedConnectionTestResult> {
     let base = normalize_imgbed_base_url(&base_url)?;
-    let token = cloudflare_token()?;
+    let token = cloudflare_token(&connection_id, &base_url)?;
     let mut endpoint = api_endpoint(&base, "api/manage/list")?;
     endpoint
         .query_pairs_mut()

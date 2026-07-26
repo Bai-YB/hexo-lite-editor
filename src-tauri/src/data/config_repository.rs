@@ -73,7 +73,11 @@ pub fn load_config(state: &AppState) -> AppResult<ConfigLoadResult> {
             .filter(|token| !token.trim().is_empty())
             .map(str::to_string);
         if let Some(token) = legacy_token.as_deref() {
-            set_cloudflare_token(token)?;
+            set_cloudflare_token(
+                &config.image_bed.cloudflare_connection_id,
+                &config.image_bed.cloudflare_api_url,
+                token,
+            )?;
         }
         let scrubbed = scrub_legacy_secrets(value);
         let scrubbed_bytes = serde_json::to_vec_pretty(&scrubbed)
@@ -338,6 +342,7 @@ mod tests {
         image_bed.remove("localImageDir");
         image_bed.remove("localMarkdownPrefix");
         image_bed.remove("cloudflareName");
+        image_bed.remove("cloudflareConnectionId");
         image_bed.remove("cloudflareTokenId");
         image_bed.remove("uploadFolder");
         fs::write(
@@ -351,6 +356,7 @@ mod tests {
         assert_eq!(loaded.config.image_bed.local_image_dir, "source/images");
         assert_eq!(loaded.config.image_bed.local_markdown_prefix, "/images");
         assert_eq!(loaded.config.image_bed.upload_folder, "blog");
+        assert_eq!(loaded.config.image_bed.cloudflare_connection_id, "primary");
         assert!(!fs::read_dir(temp.path()).unwrap().any(|entry| {
             entry
                 .unwrap()

@@ -260,10 +260,13 @@ export const browserMock = {
     return { currentDirectory: normalized, breadcrumbs, items: structuredClone(items), totalCount: items.length, returnedCount: items.length };
   },
   deleteCloudflareAsset: async () => undefined,
-  credentialStatus: async () => ({ configured: true }),
-  credentialSet: async () => ({ configured: true }),
-  credentialDelete: async () => ({ configured: false }),
+  credentialStatus: async (_connectionId?: string, _baseUrl?: string) => ({ configured: true }),
+  credentialSet: async (_connectionId?: string, _baseUrl?: string, _token?: string) => ({ configured: true }),
+  credentialDelete: async (_connectionId?: string) => ({ configured: false }),
+  credentialLegacyAvailable: async () => false,
+  credentialMigrate: async (_connectionId?: string, _baseUrl?: string) => ({ configured: true }),
   acquireCloudflareImgbedToken: async (
+    _connectionId: string,
     request: AcquireCloudflareImgbedTokenRequest
   ): Promise<AcquireCloudflareImgbedTokenResult> => ({
     configured: true,
@@ -274,7 +277,7 @@ export const browserMock = {
     createdAt: new Date().toISOString(),
     expiresAt: request.expiresAt ?? null
   }),
-  testCloudflareImgbedToken: async (baseUrl: string) => ({
+  testCloudflareImgbedToken: async (_connectionId: string, baseUrl: string) => ({
     ok: true,
     baseUrl: baseUrl.replace(/\/+$/, ""),
     listEndpoint: `${baseUrl.replace(/\/+$/, "")}/api/manage/list?start=0&count=1`,

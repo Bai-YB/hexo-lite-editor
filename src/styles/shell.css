@@ -25,9 +25,10 @@
 }
 
 .titlebar-brand {
+  min-width: 0;
   display: flex;
   align-items: center;
-  min-width: 190px;
+  max-width: min(52vw, 620px);
   padding-left: 12px;
   gap: 8px;
   color: var(--text-secondary);
@@ -35,10 +36,32 @@
   font-weight: 600;
 }
 
+.titlebar-brand img,
+.titlebar-brand > span {
+  pointer-events: none;
+}
+
 .titlebar-brand img {
   width: 20px;
   height: 20px;
   object-fit: contain;
+}
+
+.titlebar-document {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titlebar-dirty {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--warning);
 }
 
 .titlebar.macos .titlebar-brand {
@@ -156,7 +179,7 @@
 }
 
 .nav-item.active {
-  color: var(--accent);
+  color: var(--accent-active);
   background: var(--accent-soft);
 }
 

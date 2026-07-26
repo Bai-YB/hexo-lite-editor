@@ -261,6 +261,8 @@ pub struct ImageBedConfig {
     #[serde(default)]
     pub cloudflare_name: String,
     pub cloudflare_api_url: String,
+    #[serde(default = "default_cloudflare_connection_id")]
+    pub cloudflare_connection_id: String,
     #[serde(default)]
     pub cloudflare_token_id: Option<String>,
     #[serde(default = "default_upload_folder")]
@@ -320,6 +322,10 @@ fn default_local_markdown_prefix() -> String {
 
 fn default_upload_folder() -> String {
     "blog".to_string()
+}
+
+fn default_cloudflare_connection_id() -> String {
+    "primary".to_string()
 }
 
 fn validate_local_image_dir(value: &str) -> AppResult<()> {
@@ -423,6 +429,7 @@ impl Default for AppConfigV3 {
                 local_markdown_prefix: default_local_markdown_prefix(),
                 cloudflare_name: String::new(),
                 cloudflare_api_url: String::new(),
+                cloudflare_connection_id: default_cloudflare_connection_id(),
                 cloudflare_token_id: None,
                 upload_folder: default_upload_folder(),
                 auto_insert_markdown: true,
@@ -479,6 +486,17 @@ impl AppConfigV3 {
         validate_local_image_dir(&self.image_bed.local_image_dir)?;
         validate_local_markdown_prefix(&self.image_bed.local_markdown_prefix)?;
         validate_upload_folder(&self.image_bed.upload_folder)?;
+        let connection_id = self.image_bed.cloudflare_connection_id.trim();
+        if connection_id.is_empty()
+            || connection_id.len() > 128
+            || !connection_id
+                .chars()
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_'))
+        {
+            return Err(AppError::invalid(
+                "Cloudflare-ImgBed 连接 ID 只能包含字母、数字、短横线或下划线。",
+            ));
+        }
         let image_api = self.image_bed.cloudflare_api_url.trim();
         if !image_api.is_empty() {
             let url = url::Url::parse(image_api)

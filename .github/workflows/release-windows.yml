@@ -98,4 +98,9 @@ jobs:
             throw "Missing release notes: $notes"
           }
           $assets = Get-ChildItem -LiteralPath "release-artifacts/$env:RELEASE_VERSION" -File | ForEach-Object FullName
-          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes --latest
+          if (gh release view $env:GITHUB_REF_NAME 2>$null) {
+            gh release upload $env:GITHUB_REF_NAME @assets --clobber
+            gh release edit $env:GITHUB_REF_NAME --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes --latest
+          } else {
+            gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes --latest
+          }

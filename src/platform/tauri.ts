@@ -298,25 +298,42 @@ export const platform = {
     }
     await writeText(text);
   },
-  credentialStatus() {
-    if (isBrowserDemo()) return browserMock.credentialStatus();
-    return call<CredentialStatus>("credential_status");
+  credentialStatus(connectionId: string, baseUrl: string) {
+    if (isBrowserDemo()) return browserMock.credentialStatus(connectionId, baseUrl);
+    return call<CredentialStatus>("credential_status", { connectionId, baseUrl });
   },
-  credentialSet(token: string) {
-    if (isBrowserDemo()) return browserMock.credentialSet();
-    return call<CredentialStatus>("credential_set", { token });
+  credentialSet(connectionId: string, baseUrl: string, token: string) {
+    if (isBrowserDemo()) return browserMock.credentialSet(connectionId, baseUrl, token);
+    return call<CredentialStatus>("credential_set", { connectionId, baseUrl, token });
   },
-  credentialDelete() {
-    if (isBrowserDemo()) return browserMock.credentialDelete();
-    return call<CredentialStatus>("credential_delete");
+  credentialDelete(connectionId: string) {
+    if (isBrowserDemo()) return browserMock.credentialDelete(connectionId);
+    return call<CredentialStatus>("credential_delete", { connectionId });
   },
-  acquireCloudflareImgbedToken(request: AcquireCloudflareImgbedTokenRequest) {
-    if (isBrowserDemo()) return browserMock.acquireCloudflareImgbedToken(request);
-    return call<AcquireCloudflareImgbedTokenResult>("acquire_cloudflare_imgbed_token", { request });
+  credentialLegacyAvailable() {
+    if (isBrowserDemo()) return browserMock.credentialLegacyAvailable();
+    return call<boolean>("credential_legacy_available");
   },
-  testCloudflareImgbedToken(baseUrl: string) {
-    if (isBrowserDemo()) return browserMock.testCloudflareImgbedToken(baseUrl);
-    return call<ImgBedConnectionTestResult>("test_cloudflare_imgbed_token", { baseUrl });
+  credentialMigrate(connectionId: string, baseUrl: string) {
+    if (isBrowserDemo()) return browserMock.credentialMigrate(connectionId, baseUrl);
+    return call<CredentialStatus>("credential_migrate", { connectionId, baseUrl });
+  },
+  acquireCloudflareImgbedToken(
+    connectionId: string,
+    request: AcquireCloudflareImgbedTokenRequest
+  ) {
+    if (isBrowserDemo()) return browserMock.acquireCloudflareImgbedToken(connectionId, request);
+    return call<AcquireCloudflareImgbedTokenResult>("acquire_cloudflare_imgbed_token", {
+      connectionId,
+      request
+    });
+  },
+  testCloudflareImgbedToken(connectionId: string, baseUrl: string) {
+    if (isBrowserDemo()) return browserMock.testCloudflareImgbedToken(connectionId, baseUrl);
+    return call<ImgBedConnectionTestResult>("test_cloudflare_imgbed_token", {
+      connectionId,
+      baseUrl
+    });
   },
   cleanupBeforeExit() {
     if (isBrowserDemo() || !isTauri()) return Promise.resolve();

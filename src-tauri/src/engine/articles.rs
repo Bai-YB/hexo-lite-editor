@@ -11,6 +11,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Component, Path, PathBuf},
+    process::Command,
     time::{Duration, SystemTime},
 };
 use uuid::Uuid;
@@ -53,6 +54,7 @@ pub fn validate_hexo_root(path: &Path) -> AppResult<(PathBuf, String, Vec<String
             true,
         ));
     }
+    warnings.extend(runtime_warnings(&root, &package));
     let name = root
         .file_name()
         .and_then(|value| value.to_str())
@@ -60,6 +62,36 @@ pub fn validate_hexo_root(path: &Path) -> AppResult<(PathBuf, String, Vec<String
         .unwrap_or("Hexo Project")
         .to_string();
     Ok((root, name, warnings))
+}
+
+fn runtime_warnings(root: &Path, package: &Path) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let node_available = Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !node_available {
+        warnings.push("未检测到 Node.js；文章编辑可用，但本地预览与发布不可用".to_string());
+    }
+
+    let package_has_hexo = fs::read_to_string(package)
+        .ok()
+        .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        .is_some_and(|value| {
+            ["dependencies", "devDependencies"].iter().any(|section| {
+                value
+                    .get(section)
+                    .and_then(Value::as_object)
+                    .is_some_and(|items| items.contains_key("hexo"))
+            })
+        });
+    let local_hexo = ["node_modules/.bin/hexo", "node_modules/.bin/hexo.cmd"]
+        .iter()
+        .any(|path| root.join(path).is_file());
+    if !package_has_hexo && !local_hexo {
+        warnings.push("项目未声明或安装 Hexo；文章编辑可用，预览与发布前请先安装依赖".to_string());
+    }
+    warnings
 }
 
 pub fn scan_articles(root: &Path) -> AppResult<ArticleScan> {

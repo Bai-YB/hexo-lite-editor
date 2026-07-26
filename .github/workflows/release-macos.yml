@@ -12,7 +12,7 @@ on:
         default: "1.0.5"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -97,3 +97,17 @@ jobs:
           name: Hexo-Lite-Editor-${{ inputs.version || '1.0.5' }}-macos-universal
           path: release-artifacts/${{ inputs.version || '1.0.5' }}/*macos*
           if-no-files-found: error
+
+      - name: Publish macOS assets to existing release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${{ inputs.version || '1.0.5' }}"
+          tag="v$version"
+          if ! gh release view "$tag" >/dev/null; then
+            echo "::error title=Missing GitHub Release::Release $tag must exist before publishing macOS assets."
+            exit 1
+          fi
+          find "release-artifacts/$version" -maxdepth 1 -type f -print0 \
+            | xargs -0 gh release upload "$tag" --clobber

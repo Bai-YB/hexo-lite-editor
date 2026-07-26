@@ -2,7 +2,7 @@ use crate::{
     app::AppState,
     data::load_config,
     domain::{AppError, AppResult, TaskEvent, TaskLogPage, TaskLogSummary, TaskType},
-    platform::cloudflare_token,
+    platform::cloudflare_token_for_redaction,
 };
 use chrono::{DateTime, Duration, Local};
 use regex::Regex;
@@ -176,7 +176,7 @@ pub fn redact_log_line(line: &str) -> String {
     redacted = URL_SECRET
         .replace_all(&redacted, "$1[REDACTED]@")
         .into_owned();
-    if let Ok(secret) = cloudflare_token() {
+    if let Ok(secret) = cloudflare_token_for_redaction("primary") {
         if !secret.is_empty() {
             redacted = redacted.replace(&secret, "[REDACTED]");
         }
