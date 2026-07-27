@@ -57,6 +57,7 @@ pub async fn start_task(
     let config = load_config(&state)?.config;
     if kind == TaskType::Publish {
         ensure_no_pending_editor_images(&root)?;
+        validate_publish_articles(&root)?;
     }
     let steps = build_task_steps(kind, &config, &root)?;
     let modifies_project = !matches!(kind, TaskType::GitStatus);
@@ -151,6 +152,57 @@ fn ensure_no_pending_editor_images(root: &Path) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+fn validate_publish_articles(root: &Path) -> AppResult<()> {
+    let source = root.join("source");
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let mut invalid = Vec::new();
+    for entry in WalkDir::new(&source).follow_links(false) {
+        let entry = entry.map_err(|error| AppError::io("检查文章格式失败", error))?;
+        if !entry.file_type().is_file()
+            || !entry.path().extension().is_some_and(|extension| {
+                extension.to_str().is_some_and(|extension| {
+                    matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown")
+                })
+            })
+        {
+            continue;
+        }
+        let content = std::fs::read_to_string(entry.path())
+            .map_err(|error| AppError::io("检查文章格式失败", error))?;
+        if crate::engine::parse_front_matter(&content).error.is_some() {
+            let relative = entry
+                .path()
+                .strip_prefix(root)
+                .unwrap_or(entry.path())
+                .to_string_lossy()
+                .replace('\\', "/");
+            invalid.push(relative);
+        }
+    }
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    invalid.sort();
+    let examples = invalid
+        .iter()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("、");
+    let suffix = if invalid.len() > 3 {
+        format!("等 {} 篇", invalid.len())
+    } else {
+        format!("共 {} 篇", invalid.len())
+    };
+    Err(AppError::new(
+        "invalid_article_front_matter",
+        format!("发布已停止：{examples} 的文章信息格式无效（{suffix}）。请修正文章开头后重试，未生成的内容不会被上传。"),
+        true,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -287,6 +339,7 @@ async fn run_step(
     step: &TaskStep,
     cancel_rx: &mut oneshot::Receiver<()>,
 ) -> Result<Option<i32>, String> {
+    let semantic_failure = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut command = CommandWrap::with_new(&step.program, |command| {
         command
             .args(&step.args)
@@ -318,6 +371,7 @@ async fn run_step(
             step.name.to_string(),
             TaskStream::Stdout,
             stdout,
+            semantic_failure.clone(),
         )
     });
     let stderr_task = child.stderr().take().map(|stderr| {
@@ -329,6 +383,7 @@ async fn run_step(
             step.name.to_string(),
             TaskStream::Stderr,
             stderr,
+            semantic_failure.clone(),
         )
     });
 
@@ -349,6 +404,13 @@ async fn run_step(
     if let Some(task) = stderr_task {
         let _ = task.await;
     }
+    if result.as_ref().is_ok_and(|code| *code == Some(0)) && semantic_failure.load(Ordering::SeqCst)
+    {
+        return Err(format!(
+            "{} 输出了错误，发布已停止，未继续使用不完整的生成结果。",
+            step.name
+        ));
+    }
     result
 }
 
@@ -361,6 +423,7 @@ fn spawn_log_reader<R>(
     step: String,
     stream: TaskStream,
     reader: R,
+    semantic_failure: Arc<std::sync::atomic::AtomicBool>,
 ) -> tauri::async_runtime::JoinHandle<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -370,6 +433,9 @@ where
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
+                    if contains_process_error(&line) {
+                        semantic_failure.store(true, Ordering::SeqCst);
+                    }
                     emit_log(&app, &task_id, &project_id, &sequence, &step, stream, &line)
                 }
                 Ok(None) => break,
@@ -388,6 +454,17 @@ where
             }
         }
     })
+}
+
+fn contains_process_error(line: &str) -> bool {
+    let plain = regex::Regex::new(r"\x1b\[[0-9;]*[A-Za-z]")
+        .expect("static ANSI pattern")
+        .replace_all(line, "");
+    let normalized = plain.trim().to_ascii_uppercase();
+    normalized.starts_with("ERROR")
+        || normalized.starts_with("FATAL")
+        || normalized.contains("YAMLEXCEPTION:")
+        || normalized.contains("PROCESS FAILED:")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -479,5 +556,33 @@ mod tests {
         )
         .unwrap();
         assert!(ensure_no_pending_editor_images(temp.path()).is_ok());
+    }
+
+    #[test]
+    fn publish_preflight_rejects_invalid_front_matter() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let posts = temp.path().join("source/_posts");
+        std::fs::create_dir_all(&posts).unwrap();
+        let article = posts.join("broken.md");
+        std::fs::write(&article, "---\ntitle: broken\ntags:\n* Hexo\n---\n正文").unwrap();
+        let error = validate_publish_articles(temp.path()).unwrap_err();
+        assert_eq!(error.code, "invalid_article_front_matter");
+        assert!(error.message.contains("source/_posts/broken.md"));
+        std::fs::write(&article, "---\ntitle: ready\ntags:\n  - Hexo\n---\n正文").unwrap();
+        assert!(validate_publish_articles(temp.path()).is_ok());
+    }
+
+    #[test]
+    fn treats_hexo_error_output_as_failure_even_with_a_zero_exit_code() {
+        assert!(contains_process_error(
+            "\u{1b}[41mERROR\u{1b}[49m Process failed: post.md"
+        ));
+        assert!(contains_process_error(
+            "YAMLException: invalid front matter"
+        ));
+        assert!(!contains_process_error("INFO Generated: index.html"));
+        assert!(!contains_process_error(
+            "warning: LF will be replaced by CRLF"
+        ));
     }
 }

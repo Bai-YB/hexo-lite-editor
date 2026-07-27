@@ -189,6 +189,17 @@ export const browserMock = {
     const item: ArticleSummary = { articleId: `new-${Date.now()}`, relativePath: `source/_${request.kind === "post" ? "posts" : "drafts"}/new.md`, title: request.title, kind: request.kind, modifiedAt: new Date().toISOString(), tags: [], categories: [], cover: { source: "placeholder", alt: "无封面" } };
     articles = [item, ...articles]; documents.set(item.articleId, `# ${item.title}\n`); return structuredClone(item);
   },
+  deleteArticle: async (articleId: string) => {
+    articles = articles.filter((item) => item.articleId !== articleId);
+    documents.delete(articleId);
+  },
+  moveArticle: async (articleId: string, kind: "post" | "draft") => {
+    const item = articles.find((article) => article.articleId === articleId);
+    if (!item) throw { code: "article_not_found", message: "文章不存在。", recoverable: true };
+    item.kind = kind;
+    item.relativePath = item.relativePath.replace(/source\/_(?:posts|drafts)/, `source/_${kind === "post" ? "posts" : "drafts"}`);
+    return structuredClone(item);
+  },
   listLocalImages: async () => structuredClone(localImages),
   importLocalImages: async () => structuredClone(localImages),
   deleteLocalImage: async () => undefined,

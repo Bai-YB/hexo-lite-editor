@@ -144,6 +144,18 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.createArticle(request);
     return call<ArticleSummary>("create_article", { request });
   },
+  deleteArticle(projectId: string, sessionGeneration: number, articleId: string) {
+    if (isBrowserDemo()) return browserMock.deleteArticle(articleId);
+    return call<void>("delete_article", { projectId, sessionGeneration, articleId });
+  },
+  moveArticle(projectId: string, sessionGeneration: number, articleId: string, kind: "post" | "draft") {
+    if (isBrowserDemo()) return browserMock.moveArticle(articleId, kind);
+    return call<ArticleSummary>("move_article", { projectId, sessionGeneration, articleId, kind });
+  },
+  revealArticle(projectId: string, sessionGeneration: number, articleId: string) {
+    if (isBrowserDemo()) return Promise.resolve();
+    return call<void>("reveal_article", { projectId, sessionGeneration, articleId });
+  },
   parseFrontMatter(content: string) {
     return call<FrontMatterResult>("parse_document_front_matter", { content });
   },

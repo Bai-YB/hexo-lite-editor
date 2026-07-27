@@ -11,7 +11,7 @@ use crate::{
     platform::cloudflare_token,
 };
 use serde_json::{Map, Value};
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(target_os = "macos")]
 use std::process::Command;
 use std::{
     collections::HashMap,
@@ -575,7 +575,7 @@ pub fn reveal_local_image(
     })?;
     #[cfg(windows)]
     {
-        Command::new("explorer.exe")
+        crate::platform::silent_command("explorer.exe")
             .arg(format!("/select,{}", path.display()))
             .spawn()
             .map_err(|error| AppError::io("在文件夹中显示图片失败", error))?;

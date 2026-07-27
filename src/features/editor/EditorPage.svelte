@@ -7,7 +7,12 @@
     SlidersHorizontal,
     ImageOff,
     Link2,
-    Unlink2
+    Unlink2,
+    FileText,
+    FolderOpen,
+    Send,
+    ArchiveRestore,
+    Trash2
   } from "@lucide/svelte";
   import MarkdownEditor from "./MarkdownEditor.svelte";
   import EditorToolbar from "./EditorToolbar.svelte";
@@ -120,6 +125,10 @@
   let syncBusy = false;
   let articleResizeActive = false;
   let contentResizeActive = false;
+  let articleContext: { article: ArticleSummary; x: number; y: number; opener: HTMLElement } | null = null;
+  let articleContextMenu: HTMLDivElement;
+  let deletingArticle: ArticleSummary | null = null;
+  let articleActionBusy = false;
 
   const unsubscribe = store.subscribe((state) => {
     editorState = state;
@@ -168,6 +177,19 @@
   }
 
   function closeFilterMenu(event: Event) {
+    if (articleContext) {
+      if (event instanceof KeyboardEvent && event.key === "Escape") {
+        event.preventDefault();
+        const opener = articleContext.opener;
+        articleContext = null;
+        requestAnimationFrame(() => opener.focus());
+        return;
+      }
+      const target = event.target as HTMLElement;
+      if (!(target.closest?.(".article-context-menu") || articleContext.opener.contains(target))) {
+        articleContext = null;
+      }
+    }
     if (!filterMenuOpen) return;
     if (event instanceof KeyboardEvent) {
       if (event.key !== "Escape") return;
@@ -238,7 +260,7 @@
 
   $: {
     clearTimeout(autoSaveTimer);
-    if (!autoSaveSuspended && config.general.autoSave && editorState.dirty && !editorState.saving) {
+    if (!autoSaveSuspended && !deletingArticle && config.general.autoSave && editorState.dirty && !editorState.saving) {
       autoSaveTimer = setTimeout(() => void saveCurrent(), config.general.autoSaveDelayMs);
     }
   }
@@ -433,6 +455,90 @@
       setTimeout(() => void refreshPreviewImages(true), 0);
     } catch (error) {
       onNotice(normalizeError(error).message);
+    }
+  }
+
+  function showArticleContext(event: MouseEvent, article: ArticleSummary, opener: HTMLElement) {
+    event.preventDefault();
+    const width = 210;
+    const height = 190;
+    articleContext = {
+      article,
+      x: Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6)),
+      y: Math.max(6, Math.min(event.clientY, window.innerHeight - height - 6)),
+      opener
+    };
+    requestAnimationFrame(() => articleContextMenu?.querySelector<HTMLButtonElement>("button")?.focus());
+  }
+
+  function handleArticleMenuKeydown(event: KeyboardEvent, article: ArticleSummary) {
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault();
+      const target = event.currentTarget as HTMLElement;
+      const bounds = target.getBoundingClientRect();
+      showArticleContext(
+        new MouseEvent("contextmenu", { clientX: bounds.left + 20, clientY: bounds.top + 20 }),
+        article,
+        target
+      );
+      return;
+    }
+    handleArticleKeydown(event, article);
+  }
+
+  async function revealArticle(article: ArticleSummary) {
+    if (!session) return;
+    articleContext = null;
+    try {
+      await platform.revealArticle(session.projectId, session.generation, article.articleId);
+    } catch (error) {
+      onNotice(normalizeError(error).message);
+    }
+  }
+
+  async function moveArticle(article: ArticleSummary, kind: ArticleKind) {
+    if (!session || articleActionBusy || taskBusy || pendingImageUploads > 0) return;
+    articleContext = null;
+    articleActionBusy = true;
+    try {
+      if (article.articleId === activeArticleId && store.hasDirty()) await saveAndRefresh();
+      const updated = await platform.moveArticle(
+        session.projectId,
+        session.generation,
+        article.articleId,
+        kind
+      );
+      const next = articles.map((item) => item.articleId === updated.articleId ? updated : item);
+      articles = next;
+      onArticlesChange(next);
+      onNotice(kind === "post" ? "文章已从草稿发布到文章列表。" : "文章已移到草稿。" );
+    } catch (error) {
+      onNotice(normalizeError(error).message);
+    } finally {
+      articleActionBusy = false;
+    }
+  }
+
+  async function confirmDeleteArticle() {
+    if (!session || !deletingArticle || articleActionBusy || taskBusy || pendingImageUploads > 0) return;
+    const article = deletingArticle;
+    articleActionBusy = true;
+    try {
+      await platform.deleteArticle(session.projectId, session.generation, article.articleId);
+      const next = articles.filter((item) => item.articleId !== article.articleId);
+      articles = next;
+      onArticlesChange(next);
+      deletingArticle = null;
+      if (article.articleId === activeArticleId) {
+        store.clear();
+        activeArticleId = null;
+        if (next.length) await openArticle(next[0]);
+      }
+      onNotice("文章已移到系统回收站，可从回收站恢复。" );
+    } catch (error) {
+      onNotice(normalizeError(error).message);
+    } finally {
+      articleActionBusy = false;
     }
   }
 
@@ -881,7 +987,8 @@
                   type="button"
                   data-article-id={article.articleId}
                   on:click={() => requestArticle(article)}
-                  on:keydown={(event) => handleArticleKeydown(event, article)}
+                  on:contextmenu={(event) => showArticleContext(event, article, event.currentTarget)}
+                  on:keydown={(event) => handleArticleMenuKeydown(event, article)}
                 >
                   {#if config.articleList.showCover}
                     {@const originalCoverSource = coverSource(article)}
@@ -998,6 +1105,27 @@
     {#if session}<span>预览 {previewStateLabel(previewServer?.state)}</span>{/if}
   </footer>
 </div>
+
+{#if articleContext}
+  <div bind:this={articleContextMenu} class="article-context-menu quiet-menu" role="menu" style={`left:${articleContext.x}px;top:${articleContext.y}px`}>
+    <button type="button" role="menuitem" on:click={() => { const article = articleContext!.article; articleContext = null; requestArticle(article); }}><FileText size={14} />打开文章</button>
+    <button type="button" role="menuitem" on:click={() => revealArticle(articleContext!.article)}><FolderOpen size={14} />在文件夹中显示</button>
+    <div class="menu-separator"></div>
+    {#if articleContext.article.kind === "draft"}
+      <button type="button" role="menuitem" disabled={taskBusy || articleActionBusy} on:click={() => moveArticle(articleContext!.article, "post")}><Send size={14} />转为正式文章</button>
+    {:else}
+      <button type="button" role="menuitem" disabled={taskBusy || articleActionBusy} on:click={() => moveArticle(articleContext!.article, "draft")}><ArchiveRestore size={14} />移到草稿</button>
+    {/if}
+    <div class="menu-separator"></div>
+    <button class="danger" type="button" role="menuitem" disabled={taskBusy || articleActionBusy} on:click={() => { deletingArticle = articleContext!.article; articleContext = null; }}><Trash2 size={14} />移到回收站</button>
+  </div>
+{/if}
+
+{#if deletingArticle}
+  <ModalDialog title="将文章移到回收站？" description={`“${deletingArticle.title}”将被移到系统回收站，可以从回收站恢复。${deletingArticle.articleId === activeArticleId && editorState.dirty ? " 当前未保存的修改也会丢失。" : ""}`} onClose={() => !articleActionBusy && (deletingArticle = null)}>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={articleActionBusy} on:click={() => (deletingArticle = null)}>取消</button><button class="button danger" type="button" data-autofocus disabled={articleActionBusy} on:click={confirmDeleteArticle}>{articleActionBusy ? "正在处理…" : "移到回收站"}</button></svelte:fragment>
+  </ModalDialog>
+{/if}
 
 {#if showSwitchGuard}
   <ModalDialog title="保存当前文章？" description="切换文章前需要处理未保存的内容。" onClose={() => resolveSwitch("cancel")}>

@@ -2,7 +2,7 @@ use crate::{
     app::{AppState, ArticleRecord, ProjectSession},
     data::load_config,
     domain::{
-        AppError, AppResult, ArticleSummary, CreateArticleRequest, DocumentSnapshot,
+        AppError, AppResult, ArticleKind, ArticleSummary, CreateArticleRequest, DocumentSnapshot,
         FrontMatterResult, OpenProjectResult, ProjectRescanResult, ProjectSessionView,
         RecentProjectView, SaveDocumentRequest, SaveDocumentResult,
     },
@@ -327,6 +327,189 @@ pub fn create_article(
         project.assets.insert(token, asset);
     }
     Ok(summary)
+}
+
+#[tauri::command]
+pub fn delete_article(
+    app: AppHandle,
+    project_id: String,
+    session_generation: u64,
+    article_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    ensure_article_action_available(&state)?;
+    let save_lock = state.article_save_lock(&article_id)?;
+    let _save_guard = save_lock
+        .lock()
+        .map_err(|_| AppError::new("save_queue_poisoned", "文章保存队列不可用。", false))?;
+    let (root, path) = state.with_project(&project_id, Some(session_generation), |project| {
+        Ok((
+            project.root.clone(),
+            project.article(&article_id)?.canonical_path.clone(),
+        ))
+    })?;
+    trash::delete(&path).map_err(|error| {
+        AppError::new(
+            "article_delete_failed",
+            format!("无法将文章移到回收站：{error}"),
+            true,
+        )
+    })?;
+
+    let mut guard = state
+        .project
+        .write()
+        .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
+    let project = guard.as_mut().ok_or_else(AppError::session_expired)?;
+    project.require_identity(&project_id, Some(session_generation))?;
+    project.articles.remove(&article_id);
+    project
+        .article_summaries
+        .retain(|summary| summary.article_id != article_id);
+    drop(guard);
+    super::sync::schedule_sync_after_save(app, root);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn move_article(
+    app: AppHandle,
+    project_id: String,
+    session_generation: u64,
+    article_id: String,
+    kind: ArticleKind,
+    state: State<'_, AppState>,
+) -> AppResult<ArticleSummary> {
+    ensure_article_action_available(&state)?;
+    let save_lock = state.article_save_lock(&article_id)?;
+    let _save_guard = save_lock
+        .lock()
+        .map_err(|_| AppError::new("save_queue_poisoned", "文章保存队列不可用。", false))?;
+    let (root, source, current_kind) =
+        state.with_project(&project_id, Some(session_generation), |project| {
+            let article = project.article(&article_id)?;
+            let current_kind = project
+                .article_summaries
+                .iter()
+                .find(|summary| summary.article_id == article_id)
+                .map(|summary| summary.kind)
+                .ok_or_else(|| {
+                    AppError::new("article_not_found", "文章已离开当前项目会话。", true)
+                })?;
+            Ok((
+                project.root.clone(),
+                article.canonical_path.clone(),
+                current_kind,
+            ))
+        })?;
+    if current_kind == kind {
+        return state.with_project(&project_id, Some(session_generation), |project| {
+            project
+                .article_summaries
+                .iter()
+                .find(|summary| summary.article_id == article_id)
+                .cloned()
+                .ok_or_else(|| AppError::new("article_not_found", "文章已离开当前项目会话。", true))
+        });
+    }
+    let folder = match kind {
+        ArticleKind::Post => "_posts",
+        ArticleKind::Draft => "_drafts",
+    };
+    let directory = root.join("source").join(folder);
+    fs::create_dir_all(&directory).map_err(|error| AppError::io("无法创建文章目录", error))?;
+    let file_name = source
+        .file_name()
+        .ok_or_else(|| AppError::new("invalid_article_path", "文章文件名无效。", false))?;
+    let target = directory.join(file_name);
+    if target.exists() {
+        return Err(AppError::new(
+            "article_exists",
+            "目标位置已有同名文章，请先处理同名文件。",
+            true,
+        ));
+    }
+    fs::rename(&source, &target).map_err(|error| AppError::io("移动文章失败", error))?;
+    let canonical = target
+        .canonicalize()
+        .map_err(|error| AppError::io("验证移动后的文章失败", error))?;
+    let (summary, cover_asset) = summarize_article(&root, &canonical, kind, &article_id)?;
+
+    let mut guard = state
+        .project
+        .write()
+        .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
+    let project = guard.as_mut().ok_or_else(AppError::session_expired)?;
+    project.require_identity(&project_id, Some(session_generation))?;
+    project
+        .articles
+        .get_mut(&article_id)
+        .ok_or_else(|| AppError::new("article_not_found", "文章已离开当前项目会话。", true))?
+        .canonical_path = canonical;
+    if let Some(existing) = project
+        .article_summaries
+        .iter_mut()
+        .find(|existing| existing.article_id == article_id)
+    {
+        *existing = summary.clone();
+    }
+    if let Some((token, mut asset)) = cover_asset {
+        asset.generation = session_generation;
+        project.assets.insert(token, asset);
+    }
+    drop(guard);
+    super::sync::schedule_sync_after_save(app, root);
+    Ok(summary)
+}
+
+#[tauri::command]
+pub fn reveal_article(
+    project_id: String,
+    session_generation: u64,
+    article_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let path = state.with_project(&project_id, Some(session_generation), |project| {
+        Ok(project.article(&article_id)?.canonical_path.clone())
+    })?;
+    #[cfg(windows)]
+    {
+        crate::platform::silent_command("explorer.exe")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+            .map_err(|error| AppError::io("在文件夹中显示文章失败", error))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|error| AppError::io("在 Finder 中显示文章失败", error))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        open::that_detached(path.parent().unwrap_or(Path::new(".")))
+            .map_err(|error| AppError::io("打开文章文件夹失败", error))?;
+    }
+    Ok(())
+}
+
+fn ensure_article_action_available(state: &AppState) -> AppResult<()> {
+    let available = state
+        .task_cancellations
+        .lock()
+        .map_err(|_| AppError::new("state_poisoned", "任务状态不可用。", false))?
+        .is_empty();
+    if available {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            "task_conflict",
+            "项目任务正在运行，请完成后再操作文章。",
+            true,
+        ))
+    }
 }
 
 fn open_project_path(state: &AppState, path: &Path) -> AppResult<OpenProjectResult> {

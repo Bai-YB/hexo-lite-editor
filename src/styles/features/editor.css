@@ -256,6 +256,16 @@
   background: var(--accent-soft);
 }
 
+.article-context-menu {
+  position: fixed;
+  z-index: 90;
+  width: 210px;
+}
+
+.article-context-menu > button.danger {
+  color: var(--danger);
+}
+
 .article-title {
   overflow: hidden;
   text-overflow: ellipsis;

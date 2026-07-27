@@ -54,6 +54,26 @@ test("Ctrl+Shift+P 单次发布并在保存失败时中止", async ({ page }) =>
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
 });
 
+test("文章右键菜单支持草稿互转和移到回收站", async ({ page }) => {
+  const article = page.locator(".article-item").filter({ hasText: "盛夏散步" });
+  await article.click({ button: "right" });
+  const menu = page.getByRole("menu");
+  await expect(menu.getByRole("menuitem", { name: "在文件夹中显示" })).toBeVisible();
+  await menu.getByRole("menuitem", { name: "移到草稿" }).click();
+  await expect(article).toContainText("草稿");
+
+  await article.press("Shift+F10");
+  await menu.getByRole("menuitem", { name: "转为正式文章" }).click();
+  await expect(article).toContainText("文章");
+
+  await article.click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "移到回收站" }).click();
+  const dialog = page.getByRole("dialog", { name: "将文章移到回收站？" });
+  await expect(dialog).toContainText("可以从回收站恢复");
+  await dialog.getByRole("button", { name: "移到回收站" }).click();
+  await expect(article).toHaveCount(0);
+});
+
 test("粘贴图片先保存本地地址，上传后只替换链接并清理缓存", async ({ page }) => {
   await page.goto("/?demo=1&imageUpload=1");
   await expect(page.getByRole("button", { name: /Quiet Notes/ })).toBeVisible({ timeout: 20_000 });

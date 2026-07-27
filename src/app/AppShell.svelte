@@ -64,6 +64,7 @@
   let previewServer: PreviewServerView | null = null;
   let previewBusy = false;
   let publishing = false;
+  let publishTaskId = "";
   let pendingImageUploads = 0;
   let settingsInitialSection: SettingsSectionId | null = null;
   let configRevision = 0;
@@ -80,6 +81,8 @@
 
   onMount(async () => {
     window.addEventListener("keydown", handleShortcut);
+    // Warm the small page modules so the first navigation is as quick as later ones.
+    void Promise.all(Object.values(pageLoaders).map((load) => load()));
     try {
       const loaded = await platform.loadConfig();
       config = loaded.config;
@@ -105,8 +108,23 @@
     }
     unlistenTask = await platform.onTaskEvent((event) => {
       taskEvents = appendTaskEvent(taskEvents, event);
-      if (event.kind === "finished" && event.success === false) {
-        showNotice("任务执行失败，请检查 Hexo 项目配置或网络连接后重试。", "error");
+      if (event.kind === "finished") {
+        const isPublish = event.taskId === publishTaskId;
+        if (event.success === false) {
+          const reason = latestTaskFailure(taskEvents, event.taskId);
+          showNotice(
+            isPublish
+              ? `发布失败：${reason || "未上传不完整的站点，请修正文章或项目设置后重试。"}`
+              : reason || "任务执行失败，请检查项目设置或网络连接后重试。",
+            "error"
+          );
+        } else if (isPublish) {
+          showNotice("博客发布完成，新生成的站点已上传。" );
+        }
+        if (isPublish) {
+          publishTaskId = "";
+          publishing = false;
+        }
       }
     });
     unlistenPreview = await platform.onPreviewStatus((view) => {
@@ -418,12 +436,12 @@
         await editorStore.save();
         articles = await platform.listArticles(session.projectId, session.generation);
       }
-      await platform.startTask(session.projectId, "publish");
-      showNotice("发布任务已在后台开始，可继续写作。");
+      const task = await platform.startTask(session.projectId, "publish");
+      publishTaskId = task.taskId;
+      showNotice("正在后台清理缓存、重新生成并发布博客。" );
     } catch (error) {
-      showNotice(normalizeError(error).message, "error");
-    } finally {
       publishing = false;
+      showNotice(normalizeError(error).message, "error");
     }
   }
 
@@ -557,6 +575,27 @@
       events.filter((event) => event.kind === "finished").map((event) => event.taskId)
     );
     return [...events].reverse().find((event) => !finished.has(event.taskId));
+  }
+
+  function latestTaskFailure(events: TaskEvent[], taskId: string) {
+    const output = events
+      .filter((event) => event.taskId === taskId && event.kind === "log")
+      .map((event) => event.line ?? "")
+      .join("\n")
+      .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+    if (/文章信息格式无效|YAMLException|Process failed/i.test(output)) {
+      return "文章开头的信息格式有误，请修正提示的文章后重试。";
+    }
+    if (/Authentication failed|Permission denied|publickey|could not read Username/i.test(output)) {
+      return "GitHub 身份验证失败，请检查 Git 凭据后重试。";
+    }
+    if (/Could not resolve host|timed out|Network is unreachable|connection reset/i.test(output)) {
+      return "网络连接失败，请检查网络后重试。";
+    }
+    if (/输出了错误，发布已停止/.test(output)) {
+      return "生成过程发现错误，已停止发布，未上传不完整的站点。";
+    }
+    return "任务没有成功完成，未上传不完整的站点。";
   }
 </script>
 
