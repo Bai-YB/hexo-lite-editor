@@ -218,5 +218,23 @@ export class EditorSessionStore {
 export function replaceMarkdownImageUrl(content: string, expectedUrl: string, replacementUrl: string) {
   const escaped = expectedUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const markdownImage = new RegExp(`(!\\[[^\\]\\r\\n]*\\]\\(\\s*)${escaped}(?=(?:\\s+['\"][^'\"]*['\"])?\\s*\\))`, "g");
-  return content.replace(markdownImage, `$1${replacementUrl}`);
+  return content.replace(markdownImage, (_match, prefix: string) => `${prefix}${replacementUrl}`);
+}
+
+export interface PendingEditorImage {
+  uploadId: string;
+  localUrl: string;
+}
+
+export function findPendingEditorImages(content: string): PendingEditorImage[] {
+  const pendingImage = /!\[[^\]\r\n]*\]\(\s*((?:hlex-asset:\/\/localhost\/|http:\/\/hlex-asset\.localhost\/)([0-9a-fA-F-]{36}))(?=(?:\s+['"][^'"]*['"])?\s*\))/g;
+  const found = new Map<string, PendingEditorImage>();
+  for (const match of content.matchAll(pendingImage)) {
+    const localUrl = match[1];
+    const uploadId = match[2];
+    if (localUrl && uploadId && !found.has(uploadId)) {
+      found.set(uploadId, { uploadId, localUrl });
+    }
+  }
+  return [...found.values()];
 }

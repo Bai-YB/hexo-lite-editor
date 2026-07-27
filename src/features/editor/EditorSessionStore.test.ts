@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { EditorSessionStore, replaceMarkdownImageUrl } from "./EditorSessionStore";
+import {
+  EditorSessionStore,
+  findPendingEditorImages,
+  replaceMarkdownImageUrl
+} from "./EditorSessionStore";
 
 const snapshot = {
   projectId: "project",
@@ -81,5 +85,30 @@ describe("EditorSessionStore", () => {
     expect(replaceMarkdownImageUrl(content, pending, "https://img.example.com/ready.png")).toBe(
       `![用户后来写的描述](https://img.example.com/ready.png)\n\n![另一张](${pending}-other)`
     );
+  });
+
+  it("keeps dollar signs in the remote image URL literal", () => {
+    const pending = "http://hlex-asset.localhost/upload-1";
+    expect(replaceMarkdownImageUrl(
+      `![描述](${pending})`,
+      pending,
+      "https://img.example.com/$folder/$&-ready.png"
+    )).toBe("![描述](https://img.example.com/$folder/$&-ready.png)");
+  });
+
+  it("finds cached markdown images that need upload recovery", () => {
+    const first = "0f5845c7-a9d8-40e9-97af-f770331f56c1";
+    const second = "bfbd7252-77bf-4c6c-9165-b71c1a16ae85";
+    const content = [
+      `![用户修改过的描述](http://hlex-asset.localhost/${first})`,
+      `![同一张](http://hlex-asset.localhost/${first})`,
+      `![带标题](hlex-asset://localhost/${second} "标题")`,
+      "[普通链接](http://hlex-asset.localhost/34ae4a51-98b2-42d1-beb0-128ae10fba81)"
+    ].join("\n");
+
+    expect(findPendingEditorImages(content)).toEqual([
+      { uploadId: first, localUrl: `http://hlex-asset.localhost/${first}` },
+      { uploadId: second, localUrl: `hlex-asset://localhost/${second}` }
+    ]);
   });
 });

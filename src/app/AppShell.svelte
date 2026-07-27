@@ -127,6 +127,11 @@
     if (isTauri()) {
       unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
         if (allowWindowClose) return;
+        if (pendingImageUploads > 0) {
+          event.preventDefault();
+          showNotice(`还有 ${pendingImageUploads} 张图片正在上传，请等待完成后再退出。`, "error");
+          return;
+        }
         const settingsDirty = settingsController?.hasDirty() ?? false;
         const editorDirty = editorStore.hasDirty();
         if (!editorDirty && !settingsDirty) {

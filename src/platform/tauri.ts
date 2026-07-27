@@ -185,6 +185,7 @@ export const platform = {
     provider: AppConfigV3["imageBed"]["defaultProvider"],
     files: EditorImageInput[]
   ) {
+    if (isBrowserDemo()) return browserMock.importEditorImages(provider, files);
     return call<ImageImportResult[]>("import_editor_images", {
       projectId,
       sessionGeneration,
@@ -206,6 +207,7 @@ export const platform = {
     });
   },
   uploadCachedEditorImage(projectId: string, sessionGeneration: number, uploadId: string) {
+    if (isBrowserDemo()) return browserMock.uploadCachedEditorImage(uploadId);
     return call<ImageImportResult>("upload_cached_editor_image", {
       projectId,
       sessionGeneration,
@@ -213,6 +215,7 @@ export const platform = {
     });
   },
   finalizeCachedEditorImage(projectId: string, sessionGeneration: number, uploadId: string) {
+    if (isBrowserDemo()) return browserMock.finalizeCachedEditorImage(uploadId);
     return call<void>("finalize_cached_editor_image", {
       projectId,
       sessionGeneration,

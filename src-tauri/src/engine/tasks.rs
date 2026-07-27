@@ -1,12 +1,11 @@
 use crate::{
     domain::{AppConfigV3, AppError, AppResult, TaskType},
-    platform::command_path,
+    platform::{command_path, silent_command},
 };
 use serde_json::Value;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,13 +120,13 @@ fn local_hexo_candidates(root: &Path) -> Vec<PathBuf> {
 
 fn command_available(program: &str) -> bool {
     if cfg!(windows) {
-        Command::new("where.exe")
+        silent_command("where.exe")
             .arg(platform_program(program))
             .env("PATH", command_path())
             .output()
             .is_ok_and(|output| output.status.success())
     } else {
-        Command::new("sh")
+        silent_command("sh")
             .args(["-c", &format!("command -v {program}")])
             .env("PATH", command_path())
             .output()

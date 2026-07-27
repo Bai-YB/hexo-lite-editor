@@ -4,6 +4,7 @@ use crate::{
         AppError, AppResult, ArticleCover, ArticleCoverSource, ArticleKind, ArticleSummary,
         FrontMatterResult,
     },
+    platform::silent_command,
 };
 use chrono::{DateTime, Local};
 use serde_json::{Map, Value};
@@ -11,7 +12,6 @@ use std::{
     collections::HashMap,
     fs,
     path::{Component, Path, PathBuf},
-    process::Command,
     time::{Duration, SystemTime},
 };
 use uuid::Uuid;
@@ -66,7 +66,7 @@ pub fn validate_hexo_root(path: &Path) -> AppResult<(PathBuf, String, Vec<String
 
 fn runtime_warnings(root: &Path, package: &Path) -> Vec<String> {
     let mut warnings = Vec::new();
-    let node_available = Command::new("node")
+    let node_available = silent_command("node")
         .arg("--version")
         .output()
         .is_ok_and(|output| output.status.success());

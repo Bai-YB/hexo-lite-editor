@@ -297,33 +297,29 @@ pub async fn finalize_cached_editor_image(
     upload_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let path = state.with_project(&project_id, Some(session_generation), |project| {
-        let asset = project
-            .assets
-            .get(&upload_id)
-            .ok_or_else(|| AppError::new("image_upload_expired", "图片缓存已清理。", true))?;
-        let AssetSource::Disk(path) = &asset.source else {
-            return Err(AppError::new(
-                "image_upload_invalid",
-                "图片缓存不可用。",
-                false,
-            ));
-        };
-        Ok(path.clone())
-    })?;
-    ensure_editor_cache_path(&state.editor_image_cache_dir, &path, &upload_id)?;
-    tokio::fs::remove_file(&path)
-        .await
-        .map_err(|error| AppError::io("清理已上传图片缓存失败", error))?;
-    if let Some(parent) = path.parent() {
-        let _ = tokio::fs::remove_dir(parent).await;
-    }
     let mut guard = state
         .project
         .write()
         .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
     let project = guard.as_mut().ok_or_else(AppError::session_expired)?;
     project.require_identity(&project_id, Some(session_generation))?;
+    let asset = project
+        .assets
+        .get(&upload_id)
+        .ok_or_else(|| AppError::new("image_upload_expired", "图片缓存已清理。", true))?;
+    let AssetSource::Disk(path) = &asset.source else {
+        return Err(AppError::new(
+            "image_upload_invalid",
+            "图片缓存不可用。",
+            false,
+        ));
+    };
+    let path = path.clone();
+    ensure_editor_cache_path(&state.editor_image_cache_dir, &path, &upload_id)?;
+    fs::remove_file(&path).map_err(|error| AppError::io("清理已上传图片缓存失败", error))?;
+    if let Some(parent) = path.parent() {
+        let _ = fs::remove_dir(parent);
+    }
     project.assets.remove(&upload_id);
     Ok(())
 }

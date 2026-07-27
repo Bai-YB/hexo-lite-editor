@@ -16,7 +16,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::Output,
     time::Duration,
 };
 use tauri::Emitter;
@@ -29,6 +29,9 @@ use super::sync_validation::{
 };
 use wait_timeout::ChildExt;
 use walkdir::WalkDir;
+
+#[cfg(test)]
+use std::process::Command;
 
 const MANIFEST: &str = ".hexo-lite-sync.json";
 const WEBDAV_OBJECTS: &str = ".hexo-lite-objects";
@@ -2859,7 +2862,7 @@ fn git_output_with_timeout(
     interactive: bool,
     timeout: Duration,
 ) -> Result<Output, GitFailure> {
-    let mut command = Command::new("git");
+    let mut command = crate::platform::silent_command("git");
     command
         .current_dir(root)
         .args(args)

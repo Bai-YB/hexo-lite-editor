@@ -12,7 +12,11 @@
   import MarkdownEditor from "./MarkdownEditor.svelte";
   import EditorToolbar from "./EditorToolbar.svelte";
   import WelcomePanel from "./WelcomePanel.svelte";
-  import type { EditorSessionStore, EditorSessionState } from "./EditorSessionStore";
+  import {
+    findPendingEditorImages,
+    type EditorSessionStore,
+    type EditorSessionState
+  } from "./EditorSessionStore";
   import EmptyState from "$shared/components/EmptyState.svelte";
   import ErrorState from "$shared/components/ErrorState.svelte";
   import LoadingState from "$shared/components/LoadingState.svelte";
@@ -105,6 +109,7 @@
   const previewScrollByArticle = new Map<string, number>();
   let componentAlive = true;
   let pendingImageUploads = 0;
+  const activeImageUploads = new Set<string>();
   let unlistenFileDrop: (() => void) | undefined;
   let coverErrors: Record<string, string> = {};
   let coverFallbackUrls: Record<string, string> = {};
@@ -224,6 +229,9 @@
     syncStatus = { enabled: false, status: "off", provider: "github", conflicts: [] };
     if (session) {
       void refreshSyncStatus();
+      if (snapshotMatchesSession && currentSnapshot) {
+        resumePendingImageUploads(currentSnapshot.content, currentSnapshot.articleId);
+      }
       if (!snapshotMatchesSession && articles.length) void openArticle(articles[0]);
     }
   }
@@ -261,6 +269,7 @@
       activeArticleId = article.articleId;
       editorScrollTop = editorScrollByArticle.get(article.articleId) ?? 0;
       store.load(snapshot);
+      resumePendingImageUploads(snapshot.content, article.articleId);
       previewImageResults = {};
       previewImagesPending = false;
       lastValidatedImageKey = "";
@@ -414,7 +423,9 @@
       if (failed.length) onNotice(`${successes.length} 张图片已处理，${failed.length} 张失败：${failed[0].error?.message}`);
       else if (results.some((result) => result.uploadId)) onNotice(`${successes.length} 张图片已插入，正在后台上传。`);
       else onNotice(`${successes.length} 张图片已处理并插入文章。`);
-      if (articleId) {
+      const pending = successes.filter((result) => result.uploadId && result.url);
+      if (articleId && pending.length) {
+        await store.save();
         for (const result of successes) {
           if (result.uploadId && result.url) void uploadPendingImage(result.uploadId, result.url, articleId);
         }
@@ -438,7 +449,9 @@
       const articleId = store.activeArticleId();
       const successes = results.filter((result) => result.markdown);
       for (const result of successes) store.insertMarkdown(result.markdown!);
-      if (articleId) {
+      const pending = successes.filter((result) => result.uploadId && result.url);
+      if (articleId && pending.length) {
+        await store.save();
         for (const result of successes) {
           if (result.uploadId && result.url) void uploadPendingImage(result.uploadId, result.url, articleId);
         }
@@ -454,26 +467,37 @@
   }
 
   async function uploadPendingImage(uploadId: string, localUrl: string, articleId: string) {
-    if (!session) return;
+    if (!session || activeImageUploads.has(uploadId)) return;
     const projectId = session.projectId;
     const generation = session.generation;
+    activeImageUploads.add(uploadId);
     pendingImageUploads += 1;
     onPendingImageUploadsChange(pendingImageUploads);
     try {
       const result = await platform.uploadCachedEditorImage(projectId, generation, uploadId);
       if (result.url) {
-        const sameArticle = store.activeArticleId() === articleId;
         const replaced = store.replaceMarkdownImageUrl(localUrl, result.url, articleId);
-        if (replaced) await store.save();
-        if (sameArticle) await platform.finalizeCachedEditorImage(projectId, generation, uploadId);
+        if (!replaced) {
+          throw new Error("文章中的本地图片地址已变化，已保留缓存，请重新打开文章后重试。");
+        }
+        await store.save();
+        const savedGeneration = store.getState().snapshot?.sessionGeneration ?? generation;
+        await platform.finalizeCachedEditorImage(projectId, savedGeneration, uploadId);
         onNotice(replaced ? "图片已上传，文章中的地址已自动更新。" : "图片已上传。");
         setTimeout(() => void refreshPreviewImages(true), 0);
       }
     } catch (error) {
       onNotice(`图片上传失败，本地图片已保留：${normalizeError(error).message}`);
     } finally {
+      activeImageUploads.delete(uploadId);
       pendingImageUploads = Math.max(0, pendingImageUploads - 1);
       onPendingImageUploadsChange(pendingImageUploads);
+    }
+  }
+
+  function resumePendingImageUploads(content: string, articleId: string) {
+    for (const pending of findPendingEditorImages(content)) {
+      void uploadPendingImage(pending.uploadId, pending.localUrl, articleId);
     }
   }
 

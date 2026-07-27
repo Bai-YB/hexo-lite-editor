@@ -372,6 +372,7 @@ pub fn rescan_project_after_sync(state: &AppState, root: &Path) -> AppResult<Pro
     for asset in assets.values_mut() {
         asset.generation = generation;
     }
+    super::images::recover_editor_image_assets(state, &records, &mut assets, generation)?;
     let project_id = state
         .project
         .read()

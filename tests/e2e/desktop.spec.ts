@@ -54,6 +54,42 @@ test("Ctrl+Shift+P 单次发布并在保存失败时中止", async ({ page }) =>
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
 });
 
+test("粘贴图片先保存本地地址，上传后只替换链接并清理缓存", async ({ page }) => {
+  await page.goto("/?demo=1&imageUpload=1");
+  await expect(page.getByRole("button", { name: /Quiet Notes/ })).toBeVisible({ timeout: 20_000 });
+  const editor = page.locator(".cm-content");
+  await editor.click();
+  await page.keyboard.press("Control+End");
+  await editor.evaluate((element) => {
+    const data = new DataTransfer();
+    data.items.add(new File([new Uint8Array([137, 80, 78, 71])], "old.png", { type: "image/png" }));
+    element.dispatchEvent(new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: data
+    }));
+  });
+
+  await expect(editor).toContainText("old.png");
+  const localUrl = "http://hlex-asset.localhost/0f5845c7-a9d8-40e9-97af-f770331f5000";
+  await page.keyboard.press("Control+End");
+  for (let index = 0; index < localUrl.length + 3; index += 1) {
+    await page.keyboard.press("ArrowLeft");
+  }
+  for (let index = 0; index < "old.png".length; index += 1) {
+    await page.keyboard.press("Shift+ArrowLeft");
+  }
+  await page.keyboard.type("用户描述");
+  await page.keyboard.press("Control+Shift+P");
+  expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
+
+  await expect(editor).toContainText("![用户描述](https://img.example.com/blog/$asset-ready.png)", { timeout: 15_000 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.imageCacheFinalized)).toBe("1");
+  expect(await page.evaluate(() => Number(document.documentElement.dataset.editorSaveCalls ?? "0"))).toBeGreaterThanOrEqual(2);
+  await page.keyboard.press("Control+Shift+P");
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.taskStarts)).toBe("1");
+});
+
 test("重复点击关闭只显示一个未保存确认框", async ({ page }) => {
   await page.locator(".cm-content").click();
   await page.keyboard.type("准备关闭的未保存内容");

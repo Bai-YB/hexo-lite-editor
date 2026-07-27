@@ -5,6 +5,8 @@ import type {
   AppConfigV3,
   ArticleSummary,
   DocumentSnapshot,
+  EditorImageInput,
+  ImageImportResult,
   LocalImage,
   OpenProjectResult,
   RecentProjectView,
@@ -45,6 +47,7 @@ const image = (seed: string) => {
 
 let config: AppConfigV3 = structuredClone(defaultConfig);
 config.imageBed.cloudflareApiUrl = "https://img.example.com";
+if (demoFlag("imageUpload")) config.imageBed.defaultProvider = "cloudflare-imgbed";
 let articles: ArticleSummary[] = [
   { articleId: "welcome", relativePath: "source/_posts/欢迎使用.md", title: "欢迎使用 Hexo Lite Editor", kind: "post", frontMatterDate: "2026-07-17 20:00", createdAt: "2026-07-17T12:00:00Z", modifiedAt: "2026-07-17T13:20:00Z", tags: ["Hexo", "写作"], categories: ["指南"], cover: { source: "cover", previewUrl: image("quiet-desk"), alt: "文章封面" } },
   { articleId: "summer", relativePath: "source/_posts/盛夏散步.md", title: "盛夏散步：城市里的安静时刻", kind: "post", frontMatterDate: "2026-07-16 09:30", createdAt: "2026-07-16T01:30:00Z", modifiedAt: "2026-07-17T09:10:00Z", tags: ["生活", "摄影"], categories: ["随笔"], cover: { source: "placeholder", alt: "无封面" } },
@@ -190,6 +193,31 @@ export const browserMock = {
   importLocalImages: async () => structuredClone(localImages),
   deleteLocalImage: async () => undefined,
   revealLocalImage: async () => undefined,
+  importEditorImages: async (
+    provider: AppConfigV3["imageBed"]["defaultProvider"],
+    files: EditorImageInput[]
+  ): Promise<ImageImportResult[]> => files.map((file, index) => {
+    if (provider === "local") {
+      const url = `/images/${encodeURIComponent(file.name)}`;
+      return { fileName: file.name, url, markdown: `![${file.name}](${url})` };
+    }
+    const uploadId = `0f5845c7-a9d8-40e9-97af-f770331f5${String(index).padStart(3, "0")}`;
+    const url = `http://hlex-asset.localhost/${uploadId}`;
+    return { fileName: file.name, url, markdown: `![${file.name}](${url})`, uploadId };
+  }),
+  uploadCachedEditorImage: async (uploadId: string): Promise<ImageImportResult> => {
+    if (demoFlag("imageUpload")) await new Promise((resolve) => setTimeout(resolve, 8000));
+    return {
+      fileName: "image.png",
+      uploadId,
+      url: "https://img.example.com/blog/$asset-ready.png"
+    };
+  },
+  finalizeCachedEditorImage: async (_uploadId: string) => {
+    if (typeof document !== "undefined") {
+      document.documentElement.dataset.imageCacheFinalized = "1";
+    }
+  },
   resolveArticlePreviewImages: async (sources: string[]): Promise<PreviewImageResult[]> => {
     if (typeof document !== "undefined") {
       document.documentElement.dataset.imageResolveCalls = String(Number(document.documentElement.dataset.imageResolveCalls ?? "0") + 1);
