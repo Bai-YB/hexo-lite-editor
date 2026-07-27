@@ -344,8 +344,7 @@ async fn run_preview_process(
     command.wrap(CreationFlags(
         windows::Win32::System::Threading::CREATE_NO_WINDOW,
     ));
-    #[cfg(windows)]
-    command.wrap(JobObject);
+    // JobObject adds CREATE_SUSPENDED, which makes Windows Terminal host these child processes.
     #[cfg(unix)]
     command.wrap(ProcessGroup::leader());
     command.wrap(KillOnDrop);
