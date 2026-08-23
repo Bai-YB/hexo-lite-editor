@@ -3,7 +3,9 @@ use crate::{
     domain::{AppError, AppResult, UpdateErrorStage, UpdateSnapshot, UpdateStatus},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
+
+const UPDATE_CHECK_RETRY_DELAY_MS: u64 = 750;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DownloadEvent {
@@ -68,6 +70,62 @@ fn failure(
     AppError::new("update_failed", error.to_string(), true)
 }
 
+fn describe_update_check_error(error: impl ToString) -> String {
+    let raw = error.to_string();
+    let normalized = raw.to_ascii_lowercase();
+    if normalized.contains("api.github.com/repos/bai-yb/hexo-lite-editor/releases/latest") {
+        return "当前安装包仍在使用旧的 GitHub API 更新地址，无法检查签名更新。请安装包含 latest.json 更新清单的新版本。".to_string();
+    }
+    if normalized.contains("latest.json")
+        && (normalized.contains("404") || normalized.contains("not found"))
+    {
+        return "更新发布尚未完成：GitHub Release 缺少 latest.json 签名更新清单。请稍后重试，或联系发布者完成对应版本的发布。".to_string();
+    }
+    if normalized.contains("403") || normalized.contains("forbidden") {
+        return "GitHub 拒绝了更新检查请求（可能是网络代理、访问限制或 API 限流）。请检查网络后重试；应用不会安装未经签名的更新。".to_string();
+    }
+    raw
+}
+
+fn is_transient_update_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    [
+        "sending request",
+        "network",
+        "timeout",
+        "timed out",
+        "connection reset",
+        "status 429",
+        "status 5",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+async fn check_for_update(app: &AppHandle) -> Result<Option<Update>, String> {
+    let first = app
+        .updater()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await;
+    match first {
+        Ok(update) => Ok(update),
+        Err(error) if is_transient_update_error(&error.to_string()) => {
+            let first_message = error.to_string();
+            tokio::time::sleep(std::time::Duration::from_millis(
+                UPDATE_CHECK_RETRY_DELAY_MS,
+            ))
+            .await;
+            app.updater()
+                .map_err(|error| error.to_string())?
+                .check()
+                .await
+                .map_err(|error| format!("{error}（已自动重试一次；首次失败：{first_message}）"))
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 #[tauri::command]
 pub fn get_update_snapshot(app: AppHandle, state: State<'_, AppState>) -> UpdateSnapshot {
     state
@@ -86,10 +144,7 @@ pub async fn check_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
     let mut snapshot = initial(&app);
     snapshot.status = UpdateStatus::Checking;
     store(&app, snapshot.clone());
-    let updater = app
-        .updater()
-        .map_err(|error| failure(&app, snapshot.clone(), UpdateErrorStage::Check, error))?;
-    match updater.check().await {
+    match check_for_update(&app).await {
         Ok(Some(update)) => {
             snapshot.status = UpdateStatus::Available;
             snapshot.latest_version = Some(update.version.clone());
@@ -104,7 +159,12 @@ pub async fn check_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
             store(&app, snapshot.clone());
             Ok(snapshot)
         }
-        Err(error) => Err(failure(&app, snapshot, UpdateErrorStage::Check, error)),
+        Err(error) => Err(failure(
+            &app,
+            snapshot,
+            UpdateErrorStage::Check,
+            describe_update_check_error(error),
+        )),
     }
 }
 
@@ -118,12 +178,16 @@ pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
     snapshot.error_message = None;
     store(&app, snapshot.clone());
 
-    let update = app
-        .updater()
-        .map_err(|error| failure(&app, snapshot.clone(), UpdateErrorStage::Download, error))?
-        .check()
+    let update = check_for_update(&app)
         .await
-        .map_err(|error| failure(&app, snapshot.clone(), UpdateErrorStage::Download, error))?
+        .map_err(|error| {
+            failure(
+                &app,
+                snapshot.clone(),
+                UpdateErrorStage::Download,
+                describe_update_check_error(error),
+            )
+        })?
         .ok_or_else(|| AppError::new("update_not_available", "No update is available.", true))?;
     let progress_app = app.clone();
     let progress_snapshot = std::sync::Arc::new(std::sync::Mutex::new(snapshot));
@@ -274,5 +338,14 @@ mod tests {
         apply_download_event(&mut value, DownloadEvent::Failed);
         assert_eq!(value.status, UpdateStatus::Error);
         assert_eq!(value.error_stage, Some(UpdateErrorStage::Download));
+    }
+
+    #[test]
+    fn explains_legacy_api_and_missing_manifest_failures() {
+        assert!(describe_update_check_error("error sending request for url (https://api.github.com/repos/Bai-YB/hexo-lite-editor/releases/latest)").contains("旧的 GitHub API"));
+        assert!(
+            describe_update_check_error("HTTP 404 latest.json not found")
+                .contains("缺少 latest.json")
+        );
     }
 }

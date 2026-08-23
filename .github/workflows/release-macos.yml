@@ -119,7 +119,7 @@ jobs:
           version="$RELEASE_VERSION"
           tag="v$version"
           notes=".github/release-notes/v$version.md"
-          gh release view "$tag" >/dev/null || gh release create "$tag" --title "Hexo Lite Editor $version" --notes-file "$notes"
+          gh release view "$tag" >/dev/null || gh release create "$tag" --draft --title "Hexo Lite Editor $version" --notes-file "$notes"
           gh release upload "$tag" \
             "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.dmg" \
             "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.zip" \
@@ -153,8 +153,23 @@ jobs:
             --macos-asset "release-artifacts/$version/Hexo Lite Editor.app.tar.gz" \
             --macos-signature "release-artifacts/$version/Hexo Lite Editor.app.tar.gz.sig" \
             --output "release-artifacts/$version/latest.json"
+          node scripts/verify-updater-manifest.mjs \
+            --manifest "release-artifacts/$version/latest.json" \
+            --version "$version" \
+            --platform windows-x86_64 \
+            --platform darwin-x86_64 \
+            --platform darwin-aarch64
           shasum -a 256 "release-artifacts/$version/latest.json" >> "release-artifacts/$version/SHA256SUMS-macos.txt"
           gh release upload "$tag" \
             "release-artifacts/$version/latest.json" \
             "release-artifacts/$version/SHA256SUMS-macos.txt" \
             --clobber
+          mkdir -p "release-artifacts/$version/updater-verify"
+          gh release download "$tag" --pattern latest.json --dir "release-artifacts/$version/updater-verify" --clobber
+          node scripts/verify-updater-manifest.mjs \
+            --manifest "release-artifacts/$version/updater-verify/latest.json" \
+            --version "$version" \
+            --platform windows-x86_64 \
+            --platform darwin-x86_64 \
+            --platform darwin-aarch64
+          gh release edit "$tag" --draft=false --latest
