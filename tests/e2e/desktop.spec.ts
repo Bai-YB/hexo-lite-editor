@@ -158,9 +158,9 @@ test("Cloudflare 资源按目录显示文件夹、压缩包和图片灯箱", asy
   await page.keyboard.press("Escape");
 });
 
-test("只保留即时预览和系统浏览器预览入口", async ({ page }) => {
-  await expect(page.getByText("即时预览", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "主题预览" })).toHaveCount(0);
+test("保留快速预览并提供受限真实主题预览入口", async ({ page }) => {
+  await expect(page.getByRole("button", { name: "快速预览" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "真实主题" })).toBeVisible();
   await expect(page.locator("iframe.theme-preview-frame")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "浏览器预览" })).toBeVisible();
   await expect(page.locator(".markdown-preview img")).toHaveAttribute("src", /^https?:\/\//);
@@ -340,7 +340,7 @@ test("维护页不向普通用户显示任务日志或终端输出，关于页�
   await expect(page.getByText("任务日志")).toHaveCount(0);
   await expect(page.locator(".diagnostic-log-view")).toHaveCount(0);
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByText("版本 1.0.5")).toBeVisible();
+  await expect(page.getByText("版本 1.0.6")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);
   await expect(page.getByText("操作系统")).toHaveCount(0);
 });
@@ -356,16 +356,18 @@ test("设置分类状态持久化，未保存标记和图床来源正确联动",
 
   await page.getByRole("button", { name: /图片与图床/ }).click();
   const imageBed = page.locator(".settings-content-panel");
-  await expect(imageBed.getByText("图片保存目录")).toBeVisible();
+  await expect(imageBed.getByText("图片保存目录")).toHaveCount(0);
+  await expect(imageBed.getByText("Markdown 访问前缀")).toHaveCount(0);
   await expect(imageBed.getByText("图床名称")).toHaveCount(0);
   await imageBed.locator("select").selectOption("cloudflare-imgbed");
   await expect(page.getByRole("button", { name: /图片与图床/ }).locator(".settings-dirty-dot")).toBeVisible();
   await expect(imageBed.getByText("图片保存目录")).toHaveCount(0);
-  await expect(imageBed.getByText("图床名称")).toBeVisible();
+  await expect(imageBed.getByText("Markdown 访问前缀")).toHaveCount(0);
+  await expect(imageBed.getByText("图床名称")).toHaveCount(0);
 
   const cloudflareInputs = imageBed.locator('[data-provider="cloudflare-imgbed"] input');
-  await cloudflareInputs.nth(0).fill("博客图床");
-  await cloudflareInputs.nth(1).fill("https://img.example.com");
+  await expect(cloudflareInputs).toHaveCount(1);
+  await cloudflareInputs.fill("https://img.example.com");
   await imageBed.getByRole("button", { name: /获取/ }).click();
   const tokenDialog = page.getByRole("dialog", { name: "获取 Cloudflare-ImgBed Token" });
   await expect(tokenDialog).toBeVisible();
@@ -457,4 +459,30 @@ test("欢迎页、图床、设置和关于生成浅色深色回归截图", async
   await page.goto("/?demo=1&welcome=1");
   await expect(page.getByRole("heading", { name: "从博客目录，直接开始写作。" })).toBeVisible({ timeout: 20_000 });
   await captureModes("welcome");
+});
+
+test("界面语言行和导航在双向切换时立即更新", async ({ page }) => {
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("界面语言").selectOption("en-US");
+  await expect(page.getByLabel("Interface language")).toHaveValue("en-US");
+  await expect(page.locator(".nav-item").filter({ hasText: "Images" })).toBeVisible();
+  await page.getByLabel("Interface language").selectOption("zh-CN");
+  await expect(page.getByLabel("界面语言")).toHaveValue("zh-CN");
+  await expect(page.locator(".nav-item").filter({ hasText: "图床" })).toBeVisible();
+});
+
+test("英文模式覆盖编辑器、图床、设置和插件管理 UI", async ({ page }) => {
+  await page.goto("/?demo=1&plugin=1");
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByLabel("界面语言").selectOption("en-US");
+  await expect(page.getByText("Startup", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Images & plugins" }).click();
+  await expect(page.getByText("Plugins", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Use as image host" })).toBeVisible();
+  await page.locator(".nav-item").filter({ hasText: "Images" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Save and continue" }).click();
+  await expect(page.getByRole("heading", { name: "Images", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import" })).toBeVisible();
+  await page.getByRole("button", { name: "Editor" }).click();
+  await expect(page.getByRole("button", { name: "Quick preview" })).toBeVisible();
 });

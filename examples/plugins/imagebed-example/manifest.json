@@ -1,0 +1,9 @@
+{
+  "id": "com.example.imagebed",
+  "name": "Example ImageBed",
+  "version": "1.0.0",
+  "apiVersion": "0.1",
+  "entry": "index.js",
+  "permissions": ["network:https://example.com", "image:read-selected"],
+  "contributes": { "imageBedProviders": ["example"], "settings": "settings.schema.json" }
+}

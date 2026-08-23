@@ -13,6 +13,9 @@
     FolderOpen,
     Image as ImageIcon,
     Import,
+    Download,
+    Move,
+    Pencil,
     Maximize2,
     MoreHorizontal,
     Music,
@@ -51,7 +54,7 @@
     | { source: "local"; id: string; kind: "image"; name: string; reference: string; previewUrl: string; size: number; item: LocalImage }
     | { source: "remote"; id: string; kind: RemoteAssetKind; name: string; reference?: string; previewUrl?: string; size?: number; directory: string; item: RemoteAssetItem };
 
-  let provider: Provider = config.imageBed.defaultProvider;
+  let provider: Provider = config.imageBed.defaultProvider === "cloudflare-imgbed" ? "cloudflare-imgbed" : "local";
   let sourceMenuOpen = false;
   let localImages: LocalImage[] = [];
   let remoteAssets: RemoteAssetItem[] = [];
@@ -68,6 +71,10 @@
   let credential: CredentialStatus = { configured: false };
   let credentialReady = false;
   let deleting: AssetView | null = null;
+  let renaming: AssetView | null = null;
+  let moving: AssetView | null = null;
+  let renameValue = "";
+  let moveValue = "";
   let context: { asset: AssetView; x: number; y: number; opener: HTMLElement } | null = null;
   let contextMenu: HTMLDivElement;
   let loadedKey = "";
@@ -358,6 +365,54 @@
     }
   }
 
+  async function renameAsset() {
+    if (!session || renaming?.source !== "remote" || !renameValue.trim()) return;
+    working = true;
+    try {
+      await platform.renameCloudflareAsset({ projectId: session.projectId, sessionGeneration: session.generation, assetId: renaming.item.assetId, newName: renameValue.trim() });
+      remoteAssets = remoteAssets.map((item) => item.assetId === renaming?.id ? { ...item, name: renameValue.trim(), fileName: renameValue.trim() } : item);
+      renaming = null;
+      loadedKey = "";
+      onNotice("远程资源已重命名。");
+    } catch (value) { onNotice(normalizeError(value).message); }
+    finally { working = false; }
+  }
+
+  async function moveAsset() {
+    if (!session || moving?.source !== "remote") return;
+    working = true;
+    try {
+      await platform.moveCloudflareAsset({ projectId: session.projectId, sessionGeneration: session.generation, assetId: moving.item.assetId, targetDirectory: moveValue.trim().replace(/^\/+|\/+$/g, "") });
+      moving = null;
+      loadedKey = "";
+      onNotice("远程资源已移动。");
+    } catch (value) { onNotice(normalizeError(value).message); }
+    finally { working = false; }
+  }
+
+  async function downloadAsset(asset: AssetView) {
+    if (!session || asset.source !== "remote") return;
+    context = null;
+    try {
+      const bytes = await platform.downloadCloudflareAsset(session.projectId, session.generation, asset.item.assetId);
+      const blob = new Blob([new Uint8Array(bytes)]);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = asset.name;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      onNotice("下载已开始。");
+    } catch (value) { onNotice(normalizeError(value).message); }
+  }
+
+  function prepareMove(asset: AssetView) {
+    if (asset.source !== "remote") return;
+    moving = asset;
+    moveValue = asset.directory;
+    context = null;
+  }
+
   async function openLightbox(asset: AssetView, opener: HTMLElement) {
     const index = previewableAssets.findIndex((item) => item.id === asset.id);
     if (index < 0) return;
@@ -527,12 +582,29 @@
 
 {#if context}
   <div bind:this={contextMenu} class="asset-context-menu quiet-menu" role="menu" style={`left:${context.x}px;top:${context.y}px`}>
-    {#if context.asset.kind === "image" && context.asset.reference}<button type="button" role="menuitem" on:click={() => copyText(markdownFor(context!.asset), "Markdown 已复制。") }><Copy size={14} />复制 Markdown</button>{/if}
-    {#if context.asset.reference}<button type="button" role="menuitem" on:click={() => copyText(context!.asset.reference!, context!.asset.source === "remote" ? "链接已复制。" : "图片引用已复制。") }><Copy size={14} />{context.asset.source === "remote" ? "复制链接" : "复制 Markdown 路径"}</button>{/if}
+    {#if context.asset.kind === "image" && context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyMarkdown)}<button type="button" role="menuitem" on:click={() => copyText(markdownFor(context!.asset), "Markdown 已复制。") }><Copy size={14} />复制 Markdown</button>{/if}
+    {#if context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyUrl)}<button type="button" role="menuitem" on:click={() => copyText(context!.asset.reference!, context!.asset.source === "remote" ? "链接已复制。" : "图片引用已复制。") }><Copy size={14} />{context.asset.source === "remote" ? "复制链接" : "复制 Markdown 路径"}</button>{/if}
     {#if context.asset.source === "local"}<button type="button" role="menuitem" on:click={() => revealLocal(context!.asset)}><FolderOpen size={14} />在文件夹中显示</button>{/if}
-    {#if context.asset.kind === "image"}<button type="button" role="menuitem" on:click={() => { const asset = context!.asset; const opener = context!.opener; context = null; void openLightbox(asset, opener); }}><Maximize2 size={14} />查看大图</button>{/if}
-    {#if context.asset.kind !== "folder"}<div class="menu-separator"></div><button class="danger" type="button" role="menuitem" on:click={() => { deleting = context!.asset; context = null; }}><Trash2 size={14} />{context.asset.source === "local" ? "移到回收站" : "删除远程资源"}</button>{/if}
+    {#if context.asset.kind === "image" && (context.asset.source === "local" || context.asset.item.capabilities.preview)}<button type="button" role="menuitem" on:click={() => { const asset = context!.asset; const opener = context!.opener; context = null; void openLightbox(asset, opener); }}><Maximize2 size={14} />查看大图</button>{/if}
+    {#if context.asset.source === "remote" && context.asset.item.capabilities.download}<button type="button" role="menuitem" on:click={() => downloadAsset(context!.asset)}><Download size={14} />下载</button>{/if}
+    {#if context.asset.source === "remote" && context.asset.item.capabilities.rename}<button type="button" role="menuitem" on:click={() => { renaming = context!.asset; renameValue = context!.asset.name; context = null; }}><Pencil size={14} />重命名</button>{/if}
+    {#if context.asset.source === "remote" && context.asset.item.capabilities.move}<button type="button" role="menuitem" on:click={() => prepareMove(context!.asset)}><Move size={14} />移动</button>{/if}
+    {#if (context.asset.source === "local" || context.asset.item.capabilities.delete)}<div class="menu-separator"></div><button class="danger" type="button" role="menuitem" on:click={() => { deleting = context!.asset; context = null; }}><Trash2 size={14} />{context.asset.source === "local" ? "移到回收站" : "删除远程资源"}</button>{/if}
   </div>
+{/if}
+
+{#if renaming}
+  <ModalDialog title="重命名远程资源" description={renaming.name} onClose={() => (renaming = null)}>
+    <label class="modal-form"><span>新名称</span><input class="input" data-autofocus bind:value={renameValue} on:keydown={(event) => event.key === "Enter" && renameAsset()} /></label>
+    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (renaming = null)}>取消</button><button class="button primary" type="button" disabled={working || !renameValue.trim()} on:click={renameAsset}>确认</button></svelte:fragment>
+  </ModalDialog>
+{/if}
+
+{#if moving}
+  <ModalDialog title="移动远程资源" description="填写目标目录；留空表示根目录。" onClose={() => (moving = null)}>
+    <label class="modal-form"><span>目标目录</span><input class="input" data-autofocus bind:value={moveValue} placeholder="blog/目标目录" on:keydown={(event) => event.key === "Enter" && moveAsset()} /></label>
+    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (moving = null)}>取消</button><button class="button primary" type="button" disabled={working} on:click={moveAsset}>确认</button></svelte:fragment>
+  </ModalDialog>
 {/if}
 
 {#if lightboxAsset}

@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.5",
+    [string]$Version = "1.0.6",
     [switch]$SkipBuild
 )
 
@@ -42,8 +42,10 @@ try {
     $msiSource = Join-Path $targetDir "bundle\msi\Hexo Lite Editor_${Version}_x64_en-US.msi"
     $exeSource = Join-Path $targetDir "hexo-lite-editor.exe"
     $routeHelper = Join-Path $targetDir "resources\resolve-hexo-route.cjs"
+    $updaterSource = Join-Path $targetDir "bundle\nsis\Hexo Lite Editor_${Version}_x64-setup.nsis.zip"
+    $updaterSignature = "$updaterSource.sig"
 
-    foreach ($required in @($nsisSource, $msiSource, $exeSource, $routeHelper)) {
+    foreach ($required in @($nsisSource, $msiSource, $exeSource, $routeHelper, $updaterSource, $updaterSignature)) {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
             throw "Missing release input: $required"
         }
@@ -54,6 +56,8 @@ try {
     $portableName = "Hexo-Lite-Editor_${Version}_windows-x64-portable.zip"
     Copy-Item -LiteralPath $nsisSource -Destination (Join-Path $outputDir $setupName)
     Copy-Item -LiteralPath $msiSource -Destination (Join-Path $outputDir $msiName)
+    Copy-Item -LiteralPath $updaterSource -Destination $outputDir
+    Copy-Item -LiteralPath $updaterSignature -Destination $outputDir
 
     $portableStage = Join-Path $outputDir "portable-stage"
     New-Item -ItemType Directory -Path (Join-Path $portableStage "resources") -Force | Out-Null
@@ -74,7 +78,9 @@ try {
     Compress-Archive -Path (Join-Path $portableStage "*") -DestinationPath (Join-Path $outputDir $portableName) -CompressionLevel Optimal
     Remove-Item -LiteralPath $portableStage -Recurse -Force
 
-    $assetNames = @($setupName, $msiName, $portableName)
+    $updaterName = Split-Path -Leaf $updaterSource
+    $updaterSignatureName = Split-Path -Leaf $updaterSignature
+    $assetNames = @($setupName, $msiName, $portableName, $updaterName, $updaterSignatureName)
     $commit = (& git rev-parse HEAD).Trim()
     $assetEntries = foreach ($name in $assetNames) {
         $file = Get-Item -LiteralPath (Join-Path $outputDir $name)

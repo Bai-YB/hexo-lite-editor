@@ -4,7 +4,7 @@ set -euo pipefail
 if [[ "${1:-}" == "--" ]]; then
   shift
 fi
-version="${1:-1.0.5}"
+version="${1:-1.0.6}"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
   echo "Invalid release version: $version" >&2
   exit 1
@@ -30,9 +30,12 @@ if [[ ! -d "$app_source" || ! -f "$dmg_source" ]]; then
 fi
 
 app_zip="Hexo-Lite-Editor_${version}_macos-universal.app.zip"
+updater_name="Hexo Lite Editor.app.tar.gz"
 dmg_name="Hexo-Lite-Editor_${version}_macos-universal.dmg"
 ditto -c -k --sequesterRsrc --keepParent "$app_source" "$output_dir/$app_zip"
 cp "$dmg_source" "$output_dir/$dmg_name"
+cp "$bundle_root/macos/$updater_name" "$output_dir/$updater_name"
+cp "$bundle_root/macos/$updater_name.sig" "$output_dir/$updater_name.sig"
 
 code_signed=false
 if codesign --verify --deep --strict "$app_source" 2>/dev/null; then
@@ -59,12 +62,12 @@ cat > "$output_dir/release-manifest-macos.json" <<EOF
   "generatedAt": "$generated_at",
   "codeSigned": $code_signed,
   "notarized": false,
-  "assets": ["$dmg_name", "$app_zip"]
+  "assets": ["$dmg_name", "$app_zip", "$updater_name", "$updater_name.sig"]
 }
 EOF
 
 (
   cd "$output_dir"
-  shasum -a 256 "$dmg_name" "$app_zip" release-manifest-macos.json > SHA256SUMS-macos.txt
+  shasum -a 256 "$dmg_name" "$app_zip" "$updater_name" "$updater_name.sig" release-manifest-macos.json > SHA256SUMS-macos.txt
 )
 echo "macOS release artifacts: $output_dir"

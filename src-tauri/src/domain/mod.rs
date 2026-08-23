@@ -68,7 +68,7 @@ pub struct ProjectRescanResult {
     pub articles: Vec<ArticleSummary>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateArticleRequest {
     pub project_id: String,
@@ -98,6 +98,7 @@ pub struct ArticleSummary {
     pub cover: ArticleCover,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parse_error: Option<String>,
+    pub asset_folder: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -147,6 +148,17 @@ pub struct SaveDocumentRequest {
     pub content: String,
     pub revision: u64,
     pub session_generation: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameArticleRequest {
+    pub project_id: String,
+    pub session_generation: u64,
+    pub article_id: String,
+    pub new_title: String,
+    #[serde(default)]
+    pub new_file_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,10 +211,23 @@ impl Default for ArticleListConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneralConfig {
+    #[serde(default)]
+    pub language: AppLanguage,
     pub open_recent_project_on_start: bool,
     pub auto_save: bool,
     pub auto_save_delay_ms: u64,
     pub backup_before_save: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AppLanguage {
+    #[default]
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "zh-CN")]
+    ZhCn,
+    #[serde(rename = "en-US")]
+    EnUs,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,11 +295,41 @@ pub struct ImageBedConfig {
     pub auto_insert_markdown: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImageProvider {
     Local,
     CloudflareImgbed,
+    Plugin(String),
+}
+
+impl Serialize for ImageProvider {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Local => serializer.serialize_str("local"),
+            Self::CloudflareImgbed => serializer.serialize_str("cloudflare-imgbed"),
+            Self::Plugin(id) => serializer.serialize_str(&format!("plugin:{id}")),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ImageProvider {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "local" => Ok(Self::Local),
+            "cloudflare-imgbed" => Ok(Self::CloudflareImgbed),
+            _ if value.starts_with("plugin:") && value.len() > 7 => {
+                Ok(Self::Plugin(value[7..].to_string()))
+            }
+            _ => Err(serde::de::Error::custom("unknown image provider")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -395,6 +450,7 @@ impl Default for AppConfigV3 {
         Self {
             schema_version: 3,
             general: GeneralConfig {
+                language: AppLanguage::System,
                 open_recent_project_on_start: true,
                 auto_save: true,
                 auto_save_delay_ms: 2_000,
@@ -682,7 +738,7 @@ pub struct PreviewImageResult {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorImageInput {
     pub name: String,
@@ -712,6 +768,7 @@ pub struct RemoteAssetItem {
     pub name: String,
     pub file_name: String,
     pub directory: String,
+    pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extension: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -725,6 +782,106 @@ pub struct RemoteAssetItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview_url: Option<String>,
     pub can_preview: bool,
+    pub capabilities: RemoteAssetCapabilities,
+}
+
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateStatus {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate,
+    Available,
+    Downloading,
+    Downloaded,
+    Installing,
+    Error,
+}
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateErrorStage {
+    Check,
+    Download,
+    Install,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSnapshot {
+    pub current_version: String,
+    pub status: UpdateStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub downloaded_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_stage: Option<UpdateErrorStage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_page_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_download_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAssetCapabilities {
+    pub open: bool,
+    pub preview: bool,
+    pub copy_url: bool,
+    pub copy_markdown: bool,
+    pub download: bool,
+    pub rename: bool,
+    #[serde(rename = "move")]
+    pub move_asset: bool,
+    pub delete: bool,
+    pub create_child_folder: bool,
+    pub extract: bool,
+}
+
+impl RemoteAssetCapabilities {
+    pub fn for_kind(kind: RemoteAssetKind) -> Self {
+        let folder = kind == RemoteAssetKind::Folder;
+        let image = kind == RemoteAssetKind::Image;
+        Self {
+            open: folder,
+            preview: image,
+            copy_url: !folder,
+            copy_markdown: image,
+            download: !folder,
+            rename: !folder,
+            move_asset: true,
+            delete: true,
+            // CloudFlare-ImgBed has no persistent empty-directory API.
+            create_child_folder: false,
+            extract: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameRemoteAssetRequest {
+    pub project_id: String,
+    pub session_generation: u64,
+    pub asset_id: String,
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveRemoteAssetRequest {
+    pub project_id: String,
+    pub session_generation: u64,
+    pub asset_id: String,
+    pub target_directory: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -832,16 +989,6 @@ pub struct RuntimeInfo {
     pub operating_system: String,
     pub architecture: String,
     pub webview: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateCheckResult {
-    pub current_version: String,
-    pub latest_version: String,
-    pub has_update: bool,
-    pub release_notes: Option<String>,
-    pub release_page_url: String,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

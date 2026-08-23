@@ -18,6 +18,7 @@ pub struct ArticleRecord {
     pub id: String,
     pub canonical_path: PathBuf,
     pub revision: u64,
+    pub remote_asset_folder: String,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,7 @@ pub struct AssetRecord {
 pub struct RemoteAssetRecord {
     pub delete_key: String,
     pub kind: RemoteAssetKind,
+    pub url: Option<String>,
 }
 
 pub struct PreviewRuntime {
@@ -98,6 +100,10 @@ pub struct AppState {
     pub sync_cache_dir: PathBuf,
     pub sync_backup_dir: PathBuf,
     pub editor_image_cache_dir: PathBuf,
+    pub plugins_dir: PathBuf,
+    pub plugin_registry: RwLock<crate::plugins::PluginRegistry>,
+    pub updater: Mutex<Option<crate::domain::UpdateSnapshot>>,
+    pub downloaded_update: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
     pub config_write_lock: Mutex<()>,
     pub task_log_write_lock: Mutex<()>,
     pub save_locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
@@ -122,6 +128,10 @@ impl AppState {
             sync_cache_dir: config_dir.join("content-sync-cache"),
             sync_backup_dir: config_dir.join("content-sync-backups"),
             editor_image_cache_dir: config_dir.join("editor-image-cache"),
+            plugins_dir: config_dir.join("plugins"),
+            plugin_registry: RwLock::new(crate::plugins::PluginRegistry::default()),
+            updater: Mutex::new(None),
+            downloaded_update: Mutex::new(None),
             config_write_lock: Mutex::new(()),
             task_log_write_lock: Mutex::new(()),
             save_locks: Mutex::new(HashMap::new()),

@@ -4,10 +4,11 @@ use crate::{
     domain::{
         AppError, AppResult, ArticleKind, ArticleSummary, CreateArticleRequest, DocumentSnapshot,
         FrontMatterResult, OpenProjectResult, ProjectRescanResult, ProjectSessionView,
-        RecentProjectView, SaveDocumentRequest, SaveDocumentResult,
+        RecentProjectView, RenameArticleRequest, SaveDocumentRequest, SaveDocumentResult,
     },
     engine::{
-        article_target, parse_front_matter, scan_articles, summarize_article, validate_hexo_root,
+        article_asset_folder, article_target, parse_front_matter, scan_articles, summarize_article,
+        validate_hexo_root,
     },
     platform::atomic_write,
 };
@@ -274,6 +275,10 @@ pub fn create_article(
         YamlValue::String(request.title.trim().to_string()),
     );
     attributes.insert(
+        YamlValue::String("imgbed_folder".to_string()),
+        YamlValue::String(article_asset_folder(&request.title)),
+    );
+    attributes.insert(
         YamlValue::String("date".to_string()),
         YamlValue::String(date.to_string()),
     );
@@ -307,6 +312,7 @@ pub fn create_article(
     }
     let article_id = Uuid::new_v4().to_string();
     let (summary, cover_asset) = summarize_article(&root, &canonical, request.kind, &article_id)?;
+    let remote_asset_folder = summary.asset_folder.clone();
     let mut guard = state
         .project
         .write()
@@ -319,6 +325,7 @@ pub fn create_article(
             id: article_id,
             canonical_path: canonical,
             revision: 0,
+            remote_asset_folder,
         },
     );
     project.article_summaries.insert(0, summary.clone());
@@ -326,6 +333,109 @@ pub fn create_article(
         asset.generation = generation;
         project.assets.insert(token, asset);
     }
+    Ok(summary)
+}
+
+#[tauri::command]
+pub fn rename_article(
+    request: RenameArticleRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<ArticleSummary> {
+    ensure_article_action_available(&state)?;
+    let new_title = request.new_title.trim();
+    if new_title.is_empty() {
+        return Err(AppError::invalid("文章标题不能为空。"));
+    }
+    let save_lock = state.article_save_lock(&request.article_id)?;
+    let _save_guard = save_lock
+        .lock()
+        .map_err(|_| AppError::new("save_queue_poisoned", "文章保存队列不可用。", false))?;
+    let (root, source, kind) = state.with_project(
+        &request.project_id,
+        Some(request.session_generation),
+        |project| {
+            let article = project.article(&request.article_id)?;
+            let kind = project
+                .article_summaries
+                .iter()
+                .find(|summary| summary.article_id == request.article_id)
+                .map(|summary| summary.kind)
+                .ok_or_else(|| {
+                    AppError::new("article_not_found", "文章已离开当前项目会话。", true)
+                })?;
+            Ok((project.root.clone(), article.canonical_path.clone(), kind))
+        },
+    )?;
+    let original =
+        fs::read_to_string(&source).map_err(|error| AppError::io("读取文章失败", error))?;
+    let parsed = parse_front_matter(&original);
+    if let Some(error) = parsed.error {
+        return Err(AppError::new("front_matter_invalid", error, true));
+    }
+    let mut attributes = parsed.attributes;
+    let object = attributes
+        .as_object_mut()
+        .ok_or_else(|| AppError::new("front_matter_invalid", "Front Matter 必须是对象。", true))?;
+    object.insert("title".into(), serde_json::Value::String(new_title.into()));
+    object.insert(
+        "imgbed_folder".into(),
+        serde_json::Value::String(article_asset_folder(new_title)),
+    );
+    let yaml = serde_yaml::to_string(&attributes)
+        .map_err(|error| AppError::new("front_matter_serialize", error.to_string(), false))?;
+    let content = format!(
+        "---\n{}---\n{}",
+        yaml.trim_start_matches("---\n"),
+        parsed.body
+    );
+    let target = request
+        .new_file_name
+        .as_deref()
+        .map(|name| article_target(&root, kind, name))
+        .transpose()?
+        .unwrap_or_else(|| source.clone());
+    if target != source && target.exists() {
+        return Err(AppError::new(
+            "article_exists",
+            "目标位置已有同名文章。",
+            true,
+        ));
+    }
+    atomic_write(&source, content.as_bytes())?;
+    if target != source {
+        if let Err(error) = fs::rename(&source, &target) {
+            let _ = atomic_write(&source, original.as_bytes());
+            return Err(AppError::io("重命名文章文件失败", error));
+        }
+    }
+    let canonical = target
+        .canonicalize()
+        .map_err(|error| AppError::io("验证重命名后的文章失败", error))?;
+    let (summary, cover_asset) = summarize_article(&root, &canonical, kind, &request.article_id)?;
+    let mut guard = state
+        .project
+        .write()
+        .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
+    let project = guard.as_mut().ok_or_else(AppError::session_expired)?;
+    project.require_identity(&request.project_id, Some(request.session_generation))?;
+    if let Some(record) = project.articles.get_mut(&request.article_id) {
+        record.canonical_path = canonical;
+        record.remote_asset_folder = summary.asset_folder.clone();
+    }
+    if let Some(existing) = project
+        .article_summaries
+        .iter_mut()
+        .find(|item| item.article_id == request.article_id)
+    {
+        *existing = summary.clone();
+    }
+    if let Some((token, mut asset)) = cover_asset {
+        asset.generation = request.session_generation;
+        project.assets.insert(token, asset);
+    }
+    drop(guard);
+    super::sync::schedule_sync_after_save(app, root);
     Ok(summary)
 }
 
@@ -726,5 +836,28 @@ mod tests {
         assert_eq!(records.len(), 10);
         assert_eq!(records[0].recent_id, original_id);
         assert_eq!(records[0].name, "重命名项目");
+    }
+
+    #[test]
+    fn article_metadata_rewrite_updates_title_folder_and_keeps_body() {
+        let source = "---\ntitle: Old\nimgbed_folder: blog/Old\ntags:\n  - Rust\n---\n\n# Body\n";
+        let parsed = parse_front_matter(source);
+        let mut attributes = parsed.attributes;
+        let object = attributes.as_object_mut().unwrap();
+        object.insert("title".into(), serde_json::Value::String("New".into()));
+        object.insert(
+            "imgbed_folder".into(),
+            serde_json::Value::String(article_asset_folder("New")),
+        );
+        let yaml = serde_yaml::to_string(&attributes).unwrap();
+        let rewritten = format!(
+            "---\n{}---\n{}",
+            yaml.trim_start_matches("---\n"),
+            parsed.body
+        );
+        let result = parse_front_matter(&rewritten);
+        assert_eq!(result.attributes["title"], "New");
+        assert_eq!(result.attributes["imgbed_folder"], "blog/New");
+        assert!(result.body.contains("# Body"));
     }
 }

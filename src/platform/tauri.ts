@@ -38,9 +38,9 @@ import type {
   TaskLogPage,
   TaskLogSummary,
   TaskType,
-  UpdateCheckResult,
   UploadResult
 } from "$shared/types/app";
+import { localizeAppError } from "$shared/i18n/errorMessages";
 import { defaultConfig } from "$shared/types/app";
 import { browserMock } from "./browserMock";
 
@@ -73,6 +73,12 @@ export function normalizeError(error: unknown): AppError {
     message: typeof error === "string" ? error : "发生未知错误。",
     recoverable: true
   };
+}
+
+export function displayError(error: unknown): string {
+  const normalized = normalizeError(error);
+  console.debug("Backend error", normalized.code, normalized.message);
+  return localizeAppError(normalized);
 }
 
 export const platform = {
@@ -152,6 +158,9 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.moveArticle(articleId, kind);
     return call<ArticleSummary>("move_article", { projectId, sessionGeneration, articleId, kind });
   },
+  renameArticle(request: import("$shared/types/app").RenameArticleRequest) {
+    return call<ArticleSummary>("rename_article", { request });
+  },
   revealArticle(projectId: string, sessionGeneration: number, articleId: string) {
     if (isBrowserDemo()) return Promise.resolve();
     return call<void>("reveal_article", { projectId, sessionGeneration, articleId });
@@ -218,11 +227,16 @@ export const platform = {
       paths
     });
   },
-  uploadCachedEditorImage(projectId: string, sessionGeneration: number, uploadId: string) {
+  readPluginEditorImagePaths(projectId: string, sessionGeneration: number, paths: string[]) {
+    if (isBrowserDemo()) return browserMock.readPluginEditorImagePaths(paths);
+    return call<EditorImageInput[]>("read_plugin_editor_image_paths", { projectId, sessionGeneration, paths });
+  },
+  uploadCachedEditorImage(projectId: string, sessionGeneration: number, articleId: string, uploadId: string) {
     if (isBrowserDemo()) return browserMock.uploadCachedEditorImage(uploadId);
     return call<ImageImportResult>("upload_cached_editor_image", {
       projectId,
       sessionGeneration,
+      articleId,
       uploadId
     });
   },
@@ -256,6 +270,33 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.deleteCloudflareAsset();
     return call<void>("delete_cloudflare_asset", { projectId, sessionGeneration, assetId });
   },
+  renameCloudflareAsset(request: import("$shared/types/app").RenameRemoteAssetRequest) {
+    if (isBrowserDemo()) return browserMock.renameCloudflareAsset(request);
+    return call<void>("rename_cloudflare_asset", { request });
+  },
+  moveCloudflareAsset(request: import("$shared/types/app").MoveRemoteAssetRequest) {
+    if (isBrowserDemo()) return browserMock.moveCloudflareAsset(request);
+    return call<void>("move_cloudflare_asset", { request });
+  },
+  downloadCloudflareAsset(projectId: string, sessionGeneration: number, assetId: string) {
+    if (isBrowserDemo()) return browserMock.downloadCloudflareAsset(assetId);
+    return call<number[]>("download_cloudflare_asset", { projectId, sessionGeneration, assetId });
+  },
+  listPlugins() {
+    if (isBrowserDemo()) return browserMock.listPlugins();
+    return call<import("$shared/plugins/types").PluginView[]>("list_plugins");
+  },
+  installPlugin(sourceDirectory: string) { return call<import("$shared/plugins/types").PluginView[]>("install_plugin", { sourceDirectory }); },
+  chooseAndInstallPlugin() { if (isBrowserDemo()) return browserMock.chooseAndInstallPlugin(); return call<import("$shared/plugins/types").PluginView[]>("choose_and_install_plugin"); },
+  pluginHttpRequest(request: { pluginId: string; url: string; method?: string; headers?: Record<string, string>; body?: number[] }) {
+    return call<{ status: number; headers: Record<string, string>; body: number[] }>("plugin_http_request", { request });
+  },
+  uninstallPlugin(pluginId: string) { if (isBrowserDemo()) return browserMock.uninstallPlugin(pluginId); return call<import("$shared/plugins/types").PluginView[]>("uninstall_plugin", { pluginId }); },
+  enablePlugin(pluginId: string) { if (isBrowserDemo()) return browserMock.enablePlugin(pluginId); return call<import("$shared/plugins/types").PluginView[]>("enable_plugin", { pluginId }); },
+  disablePlugin(pluginId: string) { if (isBrowserDemo()) return browserMock.disablePlugin(pluginId); return call<import("$shared/plugins/types").PluginView[]>("disable_plugin", { pluginId }); },
+  getPluginSettings(pluginId: string) { return call<Record<string, unknown>>("get_plugin_settings", { pluginId }); },
+  getPluginSettingsSchema(pluginId: string) { return call<Record<string, unknown> | null>("get_plugin_settings_schema", { pluginId }); },
+  savePluginSettings(pluginId: string, settings: Record<string, unknown>) { return call<void>("save_plugin_settings", { pluginId, settings }); },
   revealLocalImage(projectId: string, sessionGeneration: number, imageId: string) {
     if (isBrowserDemo()) return browserMock.revealLocalImage();
     return call<void>("reveal_local_image", { projectId, sessionGeneration, imageId });
@@ -397,6 +438,10 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.resolveArticlePreviewUrl(articleId);
     return call<string>("resolve_article_preview_url", { projectId, sessionGeneration, articleId });
   },
+  openHexoPreviewWebview(url: string) { if (isBrowserDemo()) return browserMock.openHexoPreviewWebview(url); return call<void>("open_hexo_preview_webview", { url }); },
+  navigateHexoPreviewWebview(url: string) { if (isBrowserDemo()) return browserMock.openHexoPreviewWebview(url); return call<void>("navigate_hexo_preview_webview", { url }); },
+  reloadHexoPreviewWebview() { if (isBrowserDemo()) return Promise.resolve(); return call<void>("reload_hexo_preview_webview"); },
+  closeHexoPreviewWebview() { if (isBrowserDemo()) return Promise.resolve(); return call<void>("close_hexo_preview_webview"); },
   async onPreviewStatus(handler: (view: PreviewServerView) => void): Promise<UnlistenFn> {
     if (isBrowserDemo()) return browserMock.onPreviewStatus(handler);
     if (!isTauri()) return () => undefined;
@@ -433,7 +478,7 @@ export const platform = {
   runtimeInfo() {
     if (!isTauri()) {
       return Promise.resolve<RuntimeInfo>({
-        version: "1.0.5",
+        version: "1.0.6",
         operatingSystem: navigator.platform,
         architecture: "browser preview",
         webview: navigator.userAgent
@@ -449,7 +494,13 @@ export const platform = {
   openMarkdownLink(url: string) {
     return call<void>("open_markdown_link", { url });
   },
-  checkUpdate() {
-    return call<UpdateCheckResult>("check_update");
+  checkUpdate() { if (isBrowserDemo()) return browserMock.checkUpdate(); return call<import("$shared/types/app").UpdateSnapshot>("check_update"); },
+  getUpdateSnapshot() { if (isBrowserDemo()) return browserMock.getUpdateSnapshot(); return call<import("$shared/types/app").UpdateSnapshot>("get_update_snapshot"); },
+  downloadUpdate() { if (isBrowserDemo()) return browserMock.downloadUpdate(); return call<import("$shared/types/app").UpdateSnapshot>("download_update"); },
+  installUpdate() { if (isBrowserDemo()) return browserMock.installUpdate(); return call<void>("install_update"); },
+  downloadAndInstallUpdate() { return call<void>("download_and_install_update"); },
+  async onUpdateSnapshot(handler: (snapshot: import("$shared/types/app").UpdateSnapshot) => void): Promise<UnlistenFn> {
+    if (!isTauri()) return () => undefined;
+    return listen<import("$shared/types/app").UpdateSnapshot>("update-snapshot-changed", ({ payload }) => handler(payload));
   }
 };

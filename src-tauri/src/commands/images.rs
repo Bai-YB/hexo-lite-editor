@@ -6,9 +6,10 @@ use crate::{
     data::load_config,
     domain::{
         AppError, AppResult, EditorImageInput, ImageImportResult, ImageProvider, LocalImage,
-        RemoteAssetBreadcrumb, RemoteAssetItem, RemoteAssetKind, RemoteAssetPage, UploadResult,
+        MoveRemoteAssetRequest, RemoteAssetBreadcrumb, RemoteAssetItem, RemoteAssetKind,
+        RemoteAssetPage, RenameRemoteAssetRequest, UploadResult,
     },
-    platform::cloudflare_token,
+    platform::{cloudflare_imgbed::CloudflareImgbedClient, cloudflare_token},
 };
 use serde_json::{Map, Value};
 #[cfg(target_os = "macos")]
@@ -165,6 +166,27 @@ pub async fn import_editor_image_paths(
     paths: Vec<PathBuf>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ImageImportResult>> {
+    let files = read_validated_editor_image_paths(paths).await?;
+    import_editor_images_impl(&project_id, session_generation, provider, files, &state).await
+}
+
+#[tauri::command]
+pub async fn read_plugin_editor_image_paths(
+    project_id: String,
+    session_generation: u64,
+    paths: Vec<PathBuf>,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<EditorImageInput>> {
+    state.with_project(&project_id, Some(session_generation), |_| Ok(()))?;
+    read_validated_editor_image_paths(paths).await
+}
+
+async fn read_validated_editor_image_paths(
+    paths: Vec<PathBuf>,
+) -> AppResult<Vec<EditorImageInput>> {
+    if paths.len() > 64 {
+        return Err(AppError::invalid("一次最多处理 64 张图片。"));
+    }
     let mut files = Vec::with_capacity(paths.len());
     for path in paths {
         validate_image_file(&path)?;
@@ -181,7 +203,7 @@ pub async fn import_editor_image_paths(
                 .map_err(|error| AppError::io("读取拖入的图片失败", error))?,
         });
     }
-    import_editor_images_impl(&project_id, session_generation, provider, files, &state).await
+    Ok(files)
 }
 
 async fn import_editor_images_impl(
@@ -216,6 +238,9 @@ async fn import_editor_images_impl(
                 &file.bytes,
             )
             .map(|(url, upload_id)| (url, Some(upload_id))),
+            ImageProvider::Plugin(_) => {
+                Err(AppError::invalid("插件图床上传必须由隔离 Worker 处理。"))
+            }
         });
         match result {
             Ok((url, upload_id)) => results.push(ImageImportResult {
@@ -241,26 +266,29 @@ async fn import_editor_images_impl(
 pub async fn upload_cached_editor_image(
     project_id: String,
     session_generation: u64,
+    article_id: String,
     upload_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<ImageImportResult> {
-    let (path, mime) = state.with_project(&project_id, Some(session_generation), |project| {
-        let asset = project.assets.get(&upload_id).ok_or_else(|| {
-            AppError::new(
-                "image_upload_expired",
-                "待上传图片已失效，请重新插入。",
-                true,
-            )
+    let (path, mime, asset_folder) =
+        state.with_project(&project_id, Some(session_generation), |project| {
+            let asset = project.assets.get(&upload_id).ok_or_else(|| {
+                AppError::new(
+                    "image_upload_expired",
+                    "待上传图片已失效，请重新插入。",
+                    true,
+                )
+            })?;
+            let AssetSource::Disk(path) = &asset.source else {
+                return Err(AppError::new(
+                    "image_upload_invalid",
+                    "待上传图片不可用。",
+                    false,
+                ));
+            };
+            let asset_folder = project.article(&article_id)?.remote_asset_folder.clone();
+            Ok((path.clone(), asset.mime.clone(), asset_folder))
         })?;
-        let AssetSource::Disk(path) = &asset.source else {
-            return Err(AppError::new(
-                "image_upload_invalid",
-                "待上传图片不可用。",
-                false,
-            ));
-        };
-        Ok((path.clone(), asset.mime.clone()))
-    })?;
     ensure_editor_cache_path(&state.editor_image_cache_dir, &path, &upload_id)?;
     let file_name = path
         .file_name()
@@ -268,10 +296,7 @@ pub async fn upload_cached_editor_image(
         .ok_or_else(|| AppError::invalid("缓存图片文件名无效。"))?
         .to_string();
     let config = load_config(&state)?.config;
-    let endpoint = cloudflare_upload_endpoint(
-        &config.image_bed.cloudflare_api_url,
-        &config.image_bed.upload_folder,
-    )?;
+    let endpoint = cloudflare_upload_endpoint(&config.image_bed.cloudflare_api_url, &asset_folder)?;
     let token = cloudflare_token(
         &config.image_bed.cloudflare_connection_id,
         &config.image_bed.cloudflare_api_url,
@@ -515,45 +540,164 @@ pub async fn delete_cloudflare_asset(
     asset_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let delete_key = state.with_project(&project_id, Some(session_generation), |project| {
-        project
-            .remote_assets
-            .get(&asset_id)
-            .and_then(|record| {
-                (record.kind != RemoteAssetKind::Folder).then(|| record.delete_key.clone())
-            })
-            .ok_or_else(|| {
-                AppError::new(
-                    "remote_asset_not_found",
-                    "远程资源已失效或不允许删除，请刷新后重试。",
-                    true,
-                )
-            })
-    })?;
+    let (delete_key, kind) =
+        state.with_project(&project_id, Some(session_generation), |project| {
+            project
+                .remote_assets
+                .get(&asset_id)
+                .map(|record| (record.delete_key.clone(), record.kind))
+                .ok_or_else(|| {
+                    AppError::new(
+                        "remote_asset_not_found",
+                        "远程资源已失效或不允许删除，请刷新后重试。",
+                        true,
+                    )
+                })
+        })?;
     let config = load_config(&state)?.config;
     let base = validate_cloudflare_url(&config.image_bed.cloudflare_api_url)?;
-    let response = reqwest::Client::new()
-        .delete(cloudflare_delete_endpoint(&base, &delete_key)?)
-        .bearer_auth(cloudflare_token(
-            &config.image_bed.cloudflare_connection_id,
-            &config.image_bed.cloudflare_api_url,
-        )?)
-        .send()
-        .await
-        .map_err(|error| AppError::new("remote_delete_failed", error.to_string(), true))?;
-    if !response.status().is_success() {
-        return Err(AppError::new(
-            "remote_delete_failed",
-            format!("删除失败，图床返回 HTTP {}。", response.status()),
-            true,
-        ));
-    }
+    let token = cloudflare_token(
+        &config.image_bed.cloudflare_connection_id,
+        &config.image_bed.cloudflare_api_url,
+    )?;
+    CloudflareImgbedClient::new(base, token)
+        .delete(&delete_key, kind == RemoteAssetKind::Folder)
+        .await?;
     if let Ok(mut guard) = state.project.write() {
         if let Some(project) = guard.as_mut() {
             project.remote_assets.remove(&asset_id);
         }
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn rename_cloudflare_asset(
+    request: RenameRemoteAssetRequest,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let (path, kind) = state.with_project(
+        &request.project_id,
+        Some(request.session_generation),
+        |project| {
+            project
+                .remote_assets
+                .get(&request.asset_id)
+                .map(|record| (record.delete_key.clone(), record.kind))
+                .ok_or_else(|| {
+                    AppError::new(
+                        "remote_asset_not_found",
+                        "远程资源已失效，请刷新后重试。",
+                        true,
+                    )
+                })
+        },
+    )?;
+    let new_name = request.new_name.trim();
+    if new_name.is_empty() || new_name.contains(['/', '\\']) {
+        return Err(AppError::invalid("新名称无效。"));
+    }
+    let config = load_config(&state)?.config;
+    let base = validate_cloudflare_url(&config.image_bed.cloudflare_api_url)?;
+    let token = cloudflare_token(
+        &config.image_bed.cloudflare_connection_id,
+        &config.image_bed.cloudflare_api_url,
+    )?;
+    let client = CloudflareImgbedClient::new(base, token);
+    if kind == RemoteAssetKind::Folder {
+        return Err(AppError::new(
+            "remote_folder_rename_unsupported",
+            "当前 CloudFlare-ImgBed API 不支持原子重命名文件夹。",
+            true,
+        ));
+    }
+    let new_path = CloudflareImgbedClient::renamed_path(&path, new_name);
+    client.rename(&path, &new_path).await?;
+    if let Ok(mut guard) = state.project.write() {
+        if let Some(record) = guard
+            .as_mut()
+            .and_then(|project| project.remote_assets.get_mut(&request.asset_id))
+        {
+            record.delete_key = new_path;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn move_cloudflare_asset(
+    request: MoveRemoteAssetRequest,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let (path, kind) = state.with_project(
+        &request.project_id,
+        Some(request.session_generation),
+        |project| {
+            project
+                .remote_assets
+                .get(&request.asset_id)
+                .map(|record| (record.delete_key.clone(), record.kind))
+                .ok_or_else(|| {
+                    AppError::new(
+                        "remote_asset_not_found",
+                        "远程资源已失效，请刷新后重试。",
+                        true,
+                    )
+                })
+        },
+    )?;
+    let config = load_config(&state)?.config;
+    let base = validate_cloudflare_url(&config.image_bed.cloudflare_api_url)?;
+    let token = cloudflare_token(
+        &config.image_bed.cloudflare_connection_id,
+        &config.image_bed.cloudflare_api_url,
+    )?;
+    CloudflareImgbedClient::new(base, token)
+        .move_asset(
+            &path,
+            &request.target_directory,
+            kind == RemoteAssetKind::Folder,
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn download_cloudflare_asset(
+    project_id: String,
+    session_generation: u64,
+    asset_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<u8>> {
+    let url = state.with_project(&project_id, Some(session_generation), |project| {
+        project
+            .remote_assets
+            .get(&asset_id)
+            .and_then(|record| record.url.clone())
+            .ok_or_else(|| {
+                AppError::new(
+                    "remote_download_unavailable",
+                    "此资源没有可下载地址。",
+                    true,
+                )
+            })
+    })?;
+    let response = reqwest::Client::new()
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| AppError::new("remote_download_failed", error.to_string(), true))?;
+    if !response.status().is_success() {
+        return Err(AppError::new(
+            "remote_download_failed",
+            format!("下载失败，HTTP {}。", response.status()),
+            true,
+        ));
+    }
+    response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|error| AppError::new("remote_download_failed", error.to_string(), true))
 }
 
 #[tauri::command]
@@ -821,6 +965,7 @@ fn cloudflare_api_endpoint(base: &Url, path: &str) -> AppResult<Url> {
         .map_err(|_| AppError::invalid("无法生成 Cloudflare-ImgBed API 地址。"))
 }
 
+#[cfg(test)]
 fn cloudflare_delete_endpoint(base: &Url, delete_key: &str) -> AppResult<Url> {
     let mut endpoint = cloudflare_api_endpoint(base, "api/manage/delete")?;
     let segments = delete_key
@@ -879,14 +1024,18 @@ fn normalize_remote_page(
             RemoteAssetRecord {
                 delete_key: child.clone(),
                 kind: RemoteAssetKind::Folder,
+                url: None,
             },
         );
+        let capabilities =
+            crate::domain::RemoteAssetCapabilities::for_kind(RemoteAssetKind::Folder);
         items.push(RemoteAssetItem {
             asset_id,
             kind: RemoteAssetKind::Folder,
             name: child.rsplit('/').next().unwrap_or(&child).to_string(),
             file_name: child.rsplit('/').next().unwrap_or(&child).to_string(),
-            directory: child,
+            directory: child.clone(),
+            path: child,
             extension: None,
             mime: None,
             size: None,
@@ -894,6 +1043,7 @@ fn normalize_remote_page(
             url: None,
             preview_url: None,
             can_preview: false,
+            capabilities,
         });
     }
 
@@ -978,13 +1128,22 @@ fn normalize_remote_page(
             .map(|value| value.to_ascii_lowercase());
         let kind = classify_remote_asset(extension.as_deref(), mime.as_deref());
         let asset_id = Uuid::new_v4().to_string();
-        records.insert(asset_id.clone(), RemoteAssetRecord { delete_key, kind });
+        records.insert(
+            asset_id.clone(),
+            RemoteAssetRecord {
+                delete_key: delete_key.clone(),
+                kind,
+                url: url.clone(),
+            },
+        );
+        let capabilities = crate::domain::RemoteAssetCapabilities::for_kind(kind);
         items.push(RemoteAssetItem {
             asset_id,
             kind,
             name,
             file_name,
             directory: item_directory,
+            path: delete_key,
             extension,
             mime,
             size: object_value(
@@ -1003,6 +1162,7 @@ fn normalize_remote_page(
                 .flatten(),
             url,
             can_preview: kind == RemoteAssetKind::Image,
+            capabilities,
         });
     }
     let total_count = ["/data/totalCount", "/data/total", "/totalCount", "/total"]
@@ -1365,6 +1525,7 @@ mod tests {
                 id: "article".to_string(),
                 canonical_path: article_path,
                 revision: 0,
+                remote_asset_folder: "blog/article".to_string(),
             },
         )]);
         let mut assets = HashMap::new();

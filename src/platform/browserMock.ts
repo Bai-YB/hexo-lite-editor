@@ -46,14 +46,16 @@ const image = (seed: string) => {
 };
 
 let config: AppConfigV3 = structuredClone(defaultConfig);
+// Browser fixtures are intentionally deterministic; system-language resolution is covered by unit tests.
+if (demoFlag("demo")) config.general.language = "zh-CN";
 config.imageBed.cloudflareApiUrl = "https://img.example.com";
 if (demoFlag("imageUpload")) config.imageBed.defaultProvider = "cloudflare-imgbed";
-let articles: ArticleSummary[] = [
+let articles: ArticleSummary[] = ([
   { articleId: "welcome", relativePath: "source/_posts/欢迎使用.md", title: "欢迎使用 Hexo Lite Editor", kind: "post", frontMatterDate: "2026-07-17 20:00", createdAt: "2026-07-17T12:00:00Z", modifiedAt: "2026-07-17T13:20:00Z", tags: ["Hexo", "写作"], categories: ["指南"], cover: { source: "cover", previewUrl: image("quiet-desk"), alt: "文章封面" } },
   { articleId: "summer", relativePath: "source/_posts/盛夏散步.md", title: "盛夏散步：城市里的安静时刻", kind: "post", frontMatterDate: "2026-07-16 09:30", createdAt: "2026-07-16T01:30:00Z", modifiedAt: "2026-07-17T09:10:00Z", tags: ["生活", "摄影"], categories: ["随笔"], cover: { source: "placeholder", alt: "无封面" } },
   { articleId: "tauri", relativePath: "source/_posts/Tauri桌面应用笔记.md", title: "Tauri 桌面应用整理笔记", kind: "post", frontMatterDate: "2026-07-14 15:00", createdAt: "2026-07-14T07:00:00Z", modifiedAt: "2026-07-16T18:45:00Z", tags: ["Tauri", "Rust"], categories: ["开发"], cover: { source: "thumbnail", previewUrl: image("tauri-notes"), alt: "文章缩略图" } },
   { articleId: "draft", relativePath: "source/_drafts/下一篇文章.md", title: "下一篇文章的提纲", kind: "draft", createdAt: "2026-07-17T14:00:00Z", modifiedAt: "2026-07-17T14:00:00Z", tags: ["待整理"], categories: [], cover: { source: "placeholder", alt: "无封面" } }
-];
+] satisfies Array<Omit<ArticleSummary, "assetFolder">>).map((article) => ({ ...article, assetFolder: `blog/${article.title.replace(/[\\/:*?\"<>|]/g, "-")}` }));
 
 const documents = new Map<string, string>([
   ["welcome", `---\ntitle: 欢迎使用 Hexo Lite Editor\ndate: 2026-07-17 20:00\ntags:\n  - Hexo\n  - 写作\ncategories:\n  - 指南\n---\n\n# 欢迎使用\n\n这是一个保留专注感的 Markdown 桌面写作工作区。\n\n<img src="${image("quiet-desk")}" alt="安静的桌面" width="320" height="180">\n\n## 从这里开始\n\n${Array.from({ length: 520 }, (_, index) => `${index + 1}. 这是一段用于验证长文章滚动、PageDown 与独立预览滚动的正文。`).join("\n\n")}`],
@@ -122,11 +124,11 @@ const localImages: LocalImage[] = Array.from({ length: 10 }, (_, index) => ({
   previewUrl: image(`local-${index + 1}`)
 }));
 
-const remoteAssets: RemoteAssetItem[] = [
+const remoteAssets: RemoteAssetItem[] = ([
   { assetId: "folder-course", kind: "folder", name: "可以导入 Wake Up 的课程表", fileName: "可以导入 Wake Up 的课程表", directory: "可以导入 Wake Up 的课程表", canPreview: false },
   { assetId: "folder-blog", kind: "folder", name: "blog", fileName: "blog", directory: "blog", canPreview: false },
   { assetId: "archive-7z", kind: "archive", name: "资料归档.7z", fileName: "资料归档.7z", directory: "", extension: "7z", size: 4200000, url: "https://example.com/archive.7z", canPreview: false },
-  ...Array.from({ length: 8 }, (_, index): RemoteAssetItem => ({
+  ...Array.from({ length: 8 }, (_, index): Omit<RemoteAssetItem, "path" | "capabilities"> => ({
     assetId: `remote-${index + 1}`,
     kind: "image",
     name: `remote-photo-${index + 1}.jpg`,
@@ -140,10 +142,30 @@ const remoteAssets: RemoteAssetItem[] = [
     createdAt: "2026-07-17T10:00:00Z",
     canPreview: true
   }))
-];
+] satisfies Array<Omit<RemoteAssetItem, "path" | "capabilities">>).map((asset) => ({
+  ...asset,
+  path: asset.kind === "folder" ? asset.directory : [asset.directory, asset.fileName].filter(Boolean).join("/"),
+  capabilities: {
+    open: asset.kind === "folder",
+    preview: asset.kind === "image",
+    copyUrl: asset.kind !== "folder",
+    copyMarkdown: asset.kind === "image",
+    download: asset.kind !== "folder",
+    rename: asset.kind !== "folder",
+    move: true,
+    delete: true,
+    createChildFolder: false,
+    extract: false
+  }
+}));
 
 const taskHandlers = new Set<(event: TaskEvent) => void>();
 const previewHandlers = new Set<(view: PreviewServerView) => void>();
+let mockPlugins: import("$shared/plugins/types").PluginView[] = demoFlag("plugin") ? [{
+  manifest: { id: "com.example.imagebed", name: "Example ImageBed", version: "1.0.0", apiVersion: "0.1", entry: "index.js", permissions: ["network:https://example.com", "image:read-selected"], contributes: { imageBedProviders: ["example"], settings: "settings.schema.json" } },
+  enabled: true,
+  entryUrl: "/mock-plugin.js"
+}] : [];
 let preview: PreviewServerView = { projectId: session.projectId, sessionGeneration: 1, state: "stopped", port: 4000, draftsEnabled: true };
 let contentSync: ContentSyncView = demoFlag("syncConflict")
   ? { enabled: true, status: "conflict", provider: "github", repository: "https://github.com/example/quiet-notes.git", branch: "hexo-lite-content", visibility: "public", conflicts: ["source/_posts/welcome.md", "source/images/cover.png"], message: "本地和远端同时修改了文件。" }
@@ -186,7 +208,7 @@ export const browserMock = {
     return { articleId: request.articleId, acceptedRevision: request.revision, savedAt: new Date().toISOString() };
   },
   createArticle: async (request: { title: string; kind: "post" | "draft" }) => {
-    const item: ArticleSummary = { articleId: `new-${Date.now()}`, relativePath: `source/_${request.kind === "post" ? "posts" : "drafts"}/new.md`, title: request.title, kind: request.kind, modifiedAt: new Date().toISOString(), tags: [], categories: [], cover: { source: "placeholder", alt: "无封面" } };
+    const item: ArticleSummary = { articleId: `new-${Date.now()}`, relativePath: `source/_${request.kind === "post" ? "posts" : "drafts"}/new.md`, title: request.title, kind: request.kind, modifiedAt: new Date().toISOString(), tags: [], categories: [], cover: { source: "placeholder", alt: "无封面" }, assetFolder: `blog/${request.title}` };
     articles = [item, ...articles]; documents.set(item.articleId, `# ${item.title}\n`); return structuredClone(item);
   },
   deleteArticle: async (articleId: string) => {
@@ -216,6 +238,7 @@ export const browserMock = {
     const url = `http://hlex-asset.localhost/${uploadId}`;
     return { fileName: file.name, url, markdown: `![${file.name}](${url})`, uploadId };
   }),
+  readPluginEditorImagePaths: async (_paths: string[]): Promise<EditorImageInput[]> => [],
   uploadCachedEditorImage: async (uploadId: string): Promise<ImageImportResult> => {
     if (demoFlag("imageUpload")) await new Promise((resolve) => setTimeout(resolve, 8000));
     return {
@@ -299,6 +322,27 @@ export const browserMock = {
     return { currentDirectory: normalized, breadcrumbs, items: structuredClone(items), totalCount: items.length, returnedCount: items.length };
   },
   deleteCloudflareAsset: async () => undefined,
+  renameCloudflareAsset: async (request: import("$shared/types/app").RenameRemoteAssetRequest) => {
+    const item = remoteAssets.find((asset) => asset.assetId === request.assetId);
+    if (item) { item.name = request.newName; item.fileName = request.newName; }
+  },
+  moveCloudflareAsset: async (request: import("$shared/types/app").MoveRemoteAssetRequest) => {
+    const item = remoteAssets.find((asset) => asset.assetId === request.assetId);
+    if (item) item.directory = request.targetDirectory;
+  },
+  downloadCloudflareAsset: async (_assetId: string) => [],
+  getUpdateSnapshot: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: "1.0.6", status: "idle" }),
+  checkUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: "1.0.6", status: "upToDate" }),
+  downloadUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: "1.0.6", latestVersion: "1.0.7", status: "downloaded", downloadedBytes: 1024, totalBytes: 1024 }),
+  installUpdate: async () => undefined,
+  listPlugins: async () => structuredClone(mockPlugins),
+  chooseAndInstallPlugin: async () => structuredClone(mockPlugins),
+  enablePlugin: async (pluginId: string) => (mockPlugins = mockPlugins.map((plugin) => plugin.manifest.id === pluginId ? { ...plugin, enabled: true } : plugin), structuredClone(mockPlugins)),
+  disablePlugin: async (pluginId: string) => (mockPlugins = mockPlugins.map((plugin) => plugin.manifest.id === pluginId ? { ...plugin, enabled: false } : plugin), structuredClone(mockPlugins)),
+  uninstallPlugin: async (pluginId: string) => (mockPlugins = mockPlugins.filter((plugin) => plugin.manifest.id !== pluginId), structuredClone(mockPlugins)),
+  getPluginSettings: async (_pluginId: string) => ({ endpoint: "https://example.com" }),
+  getPluginSettingsSchema: async (_pluginId: string) => ({ type: "object", properties: { endpoint: { type: "string", title: "Endpoint" } } }),
+  savePluginSettings: async (_pluginId: string, _settings: Record<string, unknown>) => undefined,
   credentialStatus: async (_connectionId?: string, _baseUrl?: string) => ({ configured: true }),
   credentialSet: async (_connectionId?: string, _baseUrl?: string, _token?: string) => ({ configured: true }),
   credentialDelete: async (_connectionId?: string) => ({ configured: false }),
@@ -338,6 +382,7 @@ export const browserMock = {
     return structuredClone(preview);
   },
   resolveArticlePreviewUrl: async (articleId: string) => `http://127.0.0.1:4000/posts/${articleId}/`,
+  openHexoPreviewWebview: async (url: string) => { if (typeof window !== "undefined") window.open(url, "hexo-theme-preview"); },
   onPreviewStatus: async (handler: (view: PreviewServerView) => void) => { previewHandlers.add(handler); return () => previewHandlers.delete(handler); },
   listTaskLogs: async (): Promise<TaskLogSummary[]> => [],
   readTaskLog: async (_taskId?: string): Promise<TaskLogPage> => ({ events: [] }),

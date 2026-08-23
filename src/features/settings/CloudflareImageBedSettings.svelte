@@ -17,18 +17,6 @@
 <div class="provider-settings" data-provider="cloudflare-imgbed">
   <div class="setting-row">
     <div class="setting-copy">
-      <strong>图床名称</strong>
-      <span>仅用于在本机识别这套图床配置。</span>
-    </div>
-    <input
-      class="input control-wide"
-      value={settings.cloudflareName}
-      placeholder="我的博客图床"
-      on:change={(event) => onChange({ ...settings, cloudflareName: event.currentTarget.value })}
-    />
-  </div>
-  <div class="setting-row">
-    <div class="setting-copy">
       <strong>服务地址</strong>
       <span>使用不含账号信息的 HTTPS 地址。</span>
     </div>

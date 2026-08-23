@@ -138,6 +138,7 @@ pub fn scan_articles(root: &Path) -> AppResult<ArticleScan> {
             }
             let article_id = Uuid::new_v4().to_string();
             let (summary, cover_asset) = summarize_article(&root, &canonical, kind, &article_id)?;
+            let remote_asset_folder = summary.asset_folder.clone();
             if let Some((token, asset)) = cover_asset {
                 assets.insert(token, asset);
             }
@@ -148,6 +149,7 @@ pub fn scan_articles(root: &Path) -> AppResult<ArticleScan> {
                     id: article_id,
                     canonical_path: canonical,
                     revision: 0,
+                    remote_asset_folder,
                 },
             );
         }
@@ -182,6 +184,14 @@ pub fn summarize_article(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(&fallback)
         .to_string();
+    let asset_folder = parsed
+        .attributes
+        .get("imgbed_folder")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| article_asset_folder(&title));
     let relative_path = canonical
         .strip_prefix(root)
         .map_err(|_| AppError::new("path_escape", "文章不属于当前项目。", false))?
@@ -216,9 +226,48 @@ pub fn summarize_article(
             categories,
             cover,
             parse_error: parsed.error,
+            asset_folder,
         },
         asset,
     ))
+}
+
+pub fn sanitize_asset_folder_name(title: &str) -> String {
+    let invalid = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+    let mut output = String::new();
+    let mut previous_space = false;
+    for character in title.trim().chars() {
+        if character.is_control() {
+            continue;
+        }
+        let character = if invalid.contains(&character) {
+            '-'
+        } else {
+            character
+        };
+        if character.is_whitespace() {
+            if !previous_space {
+                output.push(' ');
+            }
+            previous_space = true;
+        } else {
+            output.push(character);
+            previous_space = false;
+        }
+        if output.chars().count() >= 80 {
+            break;
+        }
+    }
+    let output = output.trim().trim_matches('.').trim().to_string();
+    if output.is_empty() {
+        "article".to_string()
+    } else {
+        output
+    }
+}
+
+pub fn article_asset_folder(title: &str) -> String {
+    format!("blog/{}", sanitize_asset_folder_name(title))
 }
 
 fn resolve_article_cover(

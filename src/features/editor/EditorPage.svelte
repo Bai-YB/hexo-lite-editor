@@ -45,6 +45,12 @@
     PreviewServerView,
     TaskType
   } from "$shared/types/app";
+  import { PreviewAssetRegistry, replacePreviewAssetInPlace } from "./PreviewAssetRegistry";
+  import PreviewModeSwitcher from "./preview/PreviewModeSwitcher.svelte";
+  import HexoThemePreview from "./preview/HexoThemePreview.svelte";
+  import type { PreviewMode } from "./preview/previewSession";
+  import { pluginForProvider, uploadWithPlugin } from "$shared/plugins/PluginProviderRuntime";
+  import type { PluginView } from "$shared/plugins/types";
 
   export let session: ProjectSessionView | null;
   export let articles: ArticleSummary[] = [];
@@ -129,6 +135,9 @@
   let articleContextMenu: HTMLDivElement;
   let deletingArticle: ArticleSummary | null = null;
   let articleActionBusy = false;
+  const previewAssets = new PreviewAssetRegistry();
+  let previewMode: PreviewMode = "quick";
+  let plugins: PluginView[] = [];
 
   const unsubscribe = store.subscribe((state) => {
     editorState = state;
@@ -145,6 +154,7 @@
       }).then((unlisten) => (unlistenFileDrop = unlisten));
     }
     if (!session) return;
+    void platform.listPlugins().then((items) => (plugins = items)).catch(() => (plugins = []));
     void refreshSyncStatus();
     if (!store.getState().snapshot && articles.length) void openArticle(articles[0]);
   });
@@ -153,6 +163,7 @@
     componentAlive = false;
     unlistenFileDrop?.();
     unsubscribe();
+    previewAssets.clear();
     clearTimeout(autoSaveTimer);
     window.removeEventListener("focus", handleWindowFocus);
     window.removeEventListener("pointerdown", closeFilterMenu);
@@ -421,6 +432,22 @@
     return [...new Set(value.split(/[,，\n]+/).map((item) => item.trim()).filter(Boolean))];
   }
 
+  async function insertPluginImages(plugin: PluginView, files: Array<{ name: string; mime: string; bytes: number[] }>) {
+    const results = await Promise.all(files.map(async (file) => {
+      try {
+        const uploaded = await uploadWithPlugin(plugin, file);
+        return { fileName: file.name, url: uploaded.url, markdown: uploaded.markdown ?? `![${file.name}](${uploaded.url})` };
+      } catch (error) {
+        return { fileName: file.name, error: normalizeError(error) };
+      }
+    }));
+    const successes = results.filter((result) => result.markdown);
+    for (const result of successes) store.insertMarkdown(result.markdown!);
+    const failed = results.filter((result) => result.error);
+    onNotice(failed.length ? `${successes.length} 张图片已处理，${failed.length} 张失败：${failed[0].error?.message}` : `${successes.length} 张图片已由 ${plugin.manifest.name} 上传并插入文章。`);
+    setTimeout(() => void refreshPreviewImages(true), 0);
+  }
+
   async function handleImageFiles(files: File[]) {
     if (!session || !files.length) return;
     const ordered = [];
@@ -432,6 +459,11 @@
       });
     }
     try {
+      const plugin = pluginForProvider(plugins, config.imageBed.defaultProvider);
+      if (plugin) {
+        await insertPluginImages(plugin, ordered);
+        return;
+      }
       const results = await platform.importEditorImages(
         session.projectId,
         session.generation,
@@ -546,6 +578,12 @@
     const imagePaths = paths.filter((path) => /\.(?:png|jpe?g|gif|webp)$/i.test(path));
     if (!session || !imagePaths.length) return;
     try {
+      const plugin = pluginForProvider(plugins, config.imageBed.defaultProvider);
+      if (plugin) {
+        const files = await platform.readPluginEditorImagePaths(session.projectId, session.generation, imagePaths);
+        await insertPluginImages(plugin, files);
+        return;
+      }
       const results = await platform.importEditorImagePaths(
         session.projectId,
         session.generation,
@@ -577,11 +615,15 @@
     const projectId = session.projectId;
     const generation = session.generation;
     activeImageUploads.add(uploadId);
+    previewAssets.register({ uploadId, localPreviewUrl: localUrl, status: "uploading" });
     pendingImageUploads += 1;
     onPendingImageUploadsChange(pendingImageUploads);
     try {
-      const result = await platform.uploadCachedEditorImage(projectId, generation, uploadId);
+      const result = await platform.uploadCachedEditorImage(projectId, generation, articleId, uploadId);
       if (result.url) {
+        if (store.getState().snapshot?.articleId !== articleId) return;
+        if (markdownPreview) replacePreviewAssetInPlace(markdownPreview, uploadId, result.url);
+        previewAssets.resolveRemote(uploadId, result.url);
         const replaced = store.replaceMarkdownImageUrl(localUrl, result.url, articleId);
         if (!replaced) {
           throw new Error("文章中的本地图片地址已变化，已保留缓存，请重新打开文章后重试。");
@@ -593,6 +635,7 @@
         setTimeout(() => void refreshPreviewImages(true), 0);
       }
     } catch (error) {
+      previewAssets.markFailed(uploadId);
       onNotice(`图片上传失败，本地图片已保留：${normalizeError(error).message}`);
     } finally {
       activeImageUploads.delete(uploadId);
@@ -613,6 +656,14 @@
       layout: { ...config.layout, previewVisible: !config.layout.previewVisible }
     };
     onConfigChange(next);
+  }
+
+  async function openThemePreview() {
+    if (!session || !activeArticleId) return;
+    try {
+      const url = await platform.resolveArticlePreviewUrl(session.projectId, session.generation, activeArticleId);
+      await platform.openHexoPreviewWebview(url);
+    } catch (error) { onNotice(normalizeError(error).message); }
   }
 
   async function runAdvanced(kind: TaskType) {
@@ -1054,8 +1105,8 @@
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <section class="preview-pane" aria-label="文章预览">
             <div class="preview-mode-bar">
-              <strong>即时预览</strong>
-              <span>{previewImagesPending ? "正在读取图片" : "HTML 已安全渲染"}</span>
+              <PreviewModeSwitcher mode={previewMode} onChange={(mode) => (previewMode = mode)} />
+              <span>{previewMode === "quick" ? (previewImagesPending ? "正在读取图片" : "HTML 已安全渲染") : "当前 Hexo 项目"}</span>
               <button
                 class:active={previewScrollSync}
                 class="icon-button small"
@@ -1069,6 +1120,8 @@
             </div>
             {#if !editorState.snapshot}
               <EmptyState title="暂无预览" description="打开文章后显示渲染结果。" />
+            {:else if previewMode === "theme"}
+              <HexoThemePreview running={previewServer?.state === "running"} busy={previewBusy} onOpen={() => void openThemePreview()} onReload={() => void platform.reloadHexoPreviewWebview()} />
             {:else}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
               <article class="markdown-preview" bind:this={markdownPreview} on:scroll={recordPreviewScroll} on:click={handlePreviewInteraction} on:keydown={handlePreviewInteraction} on:error|capture={handlePreviewImageError}>{@html previewHtml}</article>

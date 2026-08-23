@@ -1,6 +1,6 @@
 [package]
 name = "hexo-lite-editor"
-version = "1.0.5"
+version = "1.0.6"
 description = "A quiet, native desktop workspace for Hexo publishing"
 authors = ["Bai-YB"]
 edition = "2021"
@@ -45,6 +45,8 @@ tokio = { version = "1", features = ["process", "rt-multi-thread", "sync", "time
 trash = "5"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 keyring-core = "1"

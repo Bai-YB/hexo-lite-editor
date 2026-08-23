@@ -5,11 +5,12 @@
   import SettingsHeader from "./SettingsHeader.svelte";
   import SettingsNavigation from "./SettingsNavigation.svelte";
   import CloudflareImageBedSettings from "./CloudflareImageBedSettings.svelte";
-  import LocalImageBedSettings from "./LocalImageBedSettings.svelte";
+  import PluginManagerPage from "$features/plugins/PluginManagerPage.svelte";
   import { defaultConfig } from "$shared/types/app";
   import { normalizeError, platform } from "$platform/tauri";
   import { shortcutLabel } from "$platform/os";
   import type { SettingsController } from "./controller";
+  import { setLanguage, translate } from "$shared/i18n";
   import type {
     AppConfigV3,
     ContentSyncConflict,
@@ -346,8 +347,10 @@
   }
 
   function change(next: AppConfigV3) {
+    const previousLanguage = draft.general.language;
     draft = next;
     if (next.appearance.themeMode !== saved.appearance.themeMode) onThemePreview(next.appearance.themeMode);
+    if (next.general.language !== previousLanguage) setLanguage(next.general.language);
   }
 
   async function persistConfig(nextConfig: AppConfigV3, message = "设置已保存。") {
@@ -369,11 +372,13 @@
   function discard() {
     draft = structuredClone(saved);
     onThemePreview(saved.appearance.themeMode);
+    setLanguage(saved.general.language);
   }
 
   function restoreDefaults() {
     draft = structuredClone(defaultConfig);
     onThemePreview(draft.appearance.themeMode);
+    setLanguage(draft.general.language);
     showReset = false;
   }
 
@@ -416,7 +421,6 @@
   }
 
   async function prepareAcquireToken() {
-    if (!draft.imageBed.cloudflareName.trim()) return onNotice("请先填写图床名称。");
     if (!draft.imageBed.cloudflareApiUrl.trim()) return onNotice("请先填写 Cloudflare-ImgBed 服务地址。");
     try {
       if (dirty) await persistConfig(draft, "图床基础配置已保存。");
@@ -443,7 +447,7 @@
         baseUrl: draft.imageBed.cloudflareApiUrl,
         adminUsername: adminUsername.trim() || undefined,
         adminPassword: adminPassword || undefined,
-        tokenName: draft.imageBed.cloudflareName,
+        tokenName: draft.imageBed.cloudflareName.trim() || "Hexo Lite Editor",
         owner: "Hexo Lite Editor",
         permissions: ["upload", "list", "delete"],
         expiresAt: null,
@@ -511,6 +515,10 @@
 
       {#if activeSection === "general"}
         <div class="settings-block">
+          <div class="settings-block-heading"><h3>{$translate("settings.languageTitle")}</h3><p>{$translate("settings.languageDescription")}</p></div>
+          <div class="setting-row"><div class="setting-copy"><strong>{$translate("settings.languageTitle")}</strong><span>{$translate("settings.languageDescription")}</span></div><select class="select compact-control" aria-label={$translate("settings.languageTitle")} value={draft.general.language} on:change={(event) => change({ ...draft, general: { ...draft.general, language: event.currentTarget.value as AppConfigV3["general"]["language"] } })}><option value="system">{$translate("settings.languageSystem")}</option><option value="zh-CN">{$translate("settings.languageChinese")}</option><option value="en-US">{$translate("settings.languageEnglish")}</option></select></div>
+        </div>
+        <div class="settings-block">
           <div class="settings-block-heading"><h3>启动</h3><p>控制应用进入工作区时的恢复行为。</p></div>
           <div class="setting-row"><div class="setting-copy"><strong>启动时打开最近项目</strong><span>只恢复上次经过验证的 Hexo 项目。</span></div><label class="switch"><input type="checkbox" checked={draft.general.openRecentProjectOnStart} on:change={(event) => change({ ...draft, general: { ...draft.general, openRecentProjectOnStart: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
@@ -543,19 +551,22 @@
           <div class="setting-row"><div class="setting-copy"><strong>文章列表封面</strong><span>在文章标题左侧显示缩略图。</span></div><label class="switch"><input type="checkbox" checked={draft.articleList.showCover} on:change={(event) => change({ ...draft, articleList: { showCover: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
       {:else if activeSection === "images"}
+        <PluginManagerPage {onNotice} selectedProvider={draft.imageBed.defaultProvider} onProviderChange={(provider) => change({ ...draft, imageBed: { ...draft.imageBed, defaultProvider: provider as AppConfigV3["imageBed"]["defaultProvider"] } })} />
         <div class="settings-block">
           <div class="settings-block-heading"><h3>图片工作流</h3><p>决定导入、粘贴和拖入图片时的目标。</p></div>
-          <div class="setting-row"><div class="setting-copy"><strong>默认来源</strong><span>本地项目目录或 Cloudflare-ImgBed。</span></div><select class="select compact-control" value={draft.imageBed.defaultProvider} on:change={(event) => change({ ...draft, imageBed: { ...draft.imageBed, defaultProvider: event.currentTarget.value as AppConfigV3["imageBed"]["defaultProvider"] } })}><option value="local">本地图片</option><option value="cloudflare-imgbed">Cloudflare-ImgBed</option></select></div>
+          <div class="setting-row"><div class="setting-copy"><strong>默认来源</strong><span>本地项目目录、Cloudflare-ImgBed 或已启用的插件图床。</span></div><select class="select compact-control" value={draft.imageBed.defaultProvider} on:change={(event) => change({ ...draft, imageBed: { ...draft.imageBed, defaultProvider: event.currentTarget.value as AppConfigV3["imageBed"]["defaultProvider"] } })}><option value="local">本地图片</option><option value="cloudflare-imgbed">Cloudflare-ImgBed</option>{#if draft.imageBed.defaultProvider.startsWith("plugin:")}<option value={draft.imageBed.defaultProvider}>插件图床</option>{/if}</select></div>
           <div class="setting-row"><div class="setting-copy"><strong>图片插入方式</strong><span>粘贴或拖入后立即插入本地图片，图床上传成功后自动更新地址。</span></div><span class="muted-line">自动</span></div>
         </div>
-        <div class="settings-block provider-block">
-          <div class="settings-block-heading"><h3>{draft.imageBed.defaultProvider === "local" ? "本地图片目录" : "Cloudflare 连接"}</h3><p>{draft.imageBed.defaultProvider === "local" ? "路径由后端验证，不能离开项目的 source 目录。" : "连接信息、凭据状态和操作集中管理。"}</p></div>
-          {#if draft.imageBed.defaultProvider === "local"}
-            <LocalImageBedSettings settings={draft.imageBed} onChange={(imageBed) => change({ ...draft, imageBed })} />
-          {:else}
+        {#if draft.imageBed.defaultProvider !== "local"}
+          <div class="settings-block provider-block">
+            <div class="settings-block-heading"><h3>{draft.imageBed.defaultProvider === "cloudflare-imgbed" ? "Cloudflare 连接" : "插件图床"}</h3><p>{draft.imageBed.defaultProvider === "cloudflare-imgbed" ? "连接信息、凭据状态和操作集中管理。" : "插件设置和连接测试由插件管理器提供。"}</p></div>
+            {#if draft.imageBed.defaultProvider === "cloudflare-imgbed"}
             <CloudflareImageBedSettings settings={draft.imageBed} {credential} {legacyCredentialAvailable} busy={credentialBusy} statusMessage={tokenStatusMessage} onChange={updateImageBed} onAcquireToken={prepareAcquireToken} onMigrateLegacyToken={migrateLegacyCredential} onTestConnection={testCredential} onDeleteToken={deleteCredential} />
-          {/if}
-        </div>
+            {:else}
+              <p class="muted-line">当前插件已接入编辑器的粘贴、文件选择上传链路。</p>
+            {/if}
+          </div>
+        {/if}
       {:else if activeSection === "hexoPublish"}
         <div class="settings-block">
           <div class="settings-block-heading"><h3>浏览器预览</h3><p>软件内不嵌入主题页面；真实 Hexo 页面在系统浏览器打开。</p></div>

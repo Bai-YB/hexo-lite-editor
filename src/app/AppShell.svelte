@@ -23,6 +23,8 @@
   } from "$shared/types/app";
   import { EditorSessionStore } from "$features/editor/EditorSessionStore";
   import type { SettingsController } from "$features/settings/controller";
+  import { initI18n, language, t } from "$shared/i18n";
+  import { startLegacyDomTranslation, stopLegacyDomTranslation } from "$shared/i18n/legacyDom";
 
   const pageLoaders: Record<AppPage, () => Promise<{ default: any }>> = {
     editor: () => import("$features/editor/EditorPage.svelte"),
@@ -68,6 +70,11 @@
   let pendingImageUploads = 0;
   let settingsInitialSection: SettingsSectionId | null = null;
   let configRevision = 0;
+  $: $language;
+  $: if (configLoaded && typeof document !== "undefined") {
+    if ($language === "en-US") setTimeout(startLegacyDomTranslation, 0);
+    else stopLegacyDomTranslation();
+  }
 
   const unsubscribeEditor = editorStore.subscribe((state) => {
     dirty = state.dirty;
@@ -86,16 +93,24 @@
     try {
       const loaded = await platform.loadConfig();
       config = loaded.config;
+      initI18n(config.general.language);
       applyTheme(config.appearance.themeMode);
       configLoaded = true;
       if (loaded.warnings.length) showNotice(loaded.warnings[0]);
       if (config.update.checkOnStart) {
-        void platform
-          .checkUpdate()
-          .then((update) => {
-            if (update.hasUpdate) showNotice(`发现新版本 ${update.latestVersion}，可在“关于”中查看。`);
-          })
-          .catch((error) => console.info("启动更新检查未完成", normalizeError(error).message));
+        const lastCheckKey = "hexo-lite-editor:update-last-auto-check";
+        const lastCheck = Number(localStorage.getItem(lastCheckKey) ?? "0");
+        if (!Number.isFinite(lastCheck) || Date.now() - lastCheck >= 86_400_000) {
+          setTimeout(() => {
+            localStorage.setItem(lastCheckKey, String(Date.now()));
+            void platform
+              .checkUpdate()
+              .then((update) => {
+                if (update.status === "available") showNotice(t("update.availableNotice", { version: update.latestVersion ?? "" }));
+              })
+              .catch((error) => console.info("启动更新检查未完成", normalizeError(error).message));
+          }, 3000);
+        }
       }
       recentProjects = await platform.listRecentProjects();
       if (config.general.openRecentProjectOnStart) {
@@ -173,6 +188,7 @@
     clearTimeout(configTimer);
     clearTimeout(noticeTimer);
     unsubscribeEditor();
+    stopLegacyDomTranslation();
   });
 
   function applyTheme(mode: AppConfigV3["appearance"]["themeMode"]) {
@@ -445,6 +461,17 @@
     }
   }
 
+  function installUpdate() {
+    if (pendingImageUploads > 0 || activeTask || publishing || previewServer?.state === "starting" || previewServer?.state === "stopping") {
+      showNotice("请等待图片上传、Hexo 或发布任务完成后再安装更新。", "error");
+      return;
+    }
+    requestGuard("安装更新前需要保存或放弃未完成的文章和设置修改。", async () => {
+      try { await platform.installUpdate(); }
+      catch (error) { showNotice(normalizeError(error).message, "error"); }
+    }, "both");
+  }
+
   async function ensurePreviewRunning() {
     if (!session) throw new Error("请先打开博客项目。");
     let view = await platform.getPreviewStatus(session.projectId, session.generation);
@@ -610,12 +637,12 @@
     <NavRail {page} onNavigate={navigate} />
     <main class="workspace">
       {#if !configLoaded}
-        <LoadingState label="正在初始化桌面工作区" />
+        <LoadingState label={t("loading.workspace")} />
       {:else}
         {#key page}
           <PageTransition pageKey={page}>
             {#await pagePromise}
-              <LoadingState label="正在加载页面" />
+              <LoadingState label={t("loading.page")} />
             {:then module}
               {@const Page = module.default}
               <Page
@@ -645,6 +672,7 @@
             onOpenPreviewHome={openPreviewHome}
             onNotice={showNotice}
             onPendingImageUploadsChange={(count: number) => (pendingImageUploads = count)}
+            onInstallUpdate={installUpdate}
             onOpenSettings={(section?: SettingsSectionId) => navigate("settings", section ?? "maintenance")}
               />
             {/await}

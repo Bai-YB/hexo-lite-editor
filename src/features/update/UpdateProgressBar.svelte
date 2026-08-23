@@ -1,0 +1,2 @@
+<script lang="ts">export let percent: number | null; export let label: string; export let valueText: string | null; export let indeterminate = false;</script>
+<div class="update-progress" aria-label={label}><div class:indeterminate class="update-progress-track"><i style={percent === null ? "" : `width:${percent}%`}></i></div><span>{valueText}{percent !== null ? ` · ${Math.round(percent)}%` : ""}</span></div>

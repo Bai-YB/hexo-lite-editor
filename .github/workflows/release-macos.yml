@@ -4,12 +4,14 @@ on:
   push:
     branches:
       - "codex/macos-build"
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       version:
         description: "Version without the v prefix"
         required: true
-        default: "1.0.5"
+        default: "1.0.6"
 
 permissions:
   contents: write
@@ -20,6 +22,8 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v7
@@ -44,6 +48,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Resolve version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version || '1.0.6' }}"
+          fi
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Frontend checks
         run: |
@@ -70,7 +83,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          pnpm release:macos -- "${{ inputs.version || '1.0.5' }}" 2>&1 | tee macos-package.log
+          pnpm release:macos -- "$RELEASE_VERSION" 2>&1 | tee macos-package.log
           status=${PIPESTATUS[0]}
           set -e
           if [[ $status -ne 0 ]]; then
@@ -94,8 +107,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: Hexo-Lite-Editor-${{ inputs.version || '1.0.5' }}-macos-universal
-          path: release-artifacts/${{ inputs.version || '1.0.5' }}/Hexo-Lite-Editor_${{ inputs.version || '1.0.5' }}_macos-universal.dmg
+          name: Hexo-Lite-Editor-${{ env.RELEASE_VERSION }}-macos-universal
+          path: release-artifacts/${{ env.RELEASE_VERSION }}/*
           if-no-files-found: error
 
       - name: Publish macOS assets to existing release
@@ -103,12 +116,45 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${{ inputs.version || '1.0.5' }}"
+          version="$RELEASE_VERSION"
           tag="v$version"
-          if ! gh release view "$tag" >/dev/null; then
-            echo "::error title=Missing GitHub Release::Release $tag must exist before publishing macOS assets."
-            exit 1
-          fi
+          notes=".github/release-notes/v$version.md"
+          gh release view "$tag" >/dev/null || gh release create "$tag" --title "Hexo Lite Editor $version" --notes-file "$notes"
           gh release upload "$tag" \
             "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.dmg" \
+            "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.zip" \
+            "release-artifacts/$version/Hexo Lite Editor.app.tar.gz" \
+            "release-artifacts/$version/Hexo Lite Editor.app.tar.gz.sig" \
+            "release-artifacts/$version/release-manifest-macos.json" \
+            "release-artifacts/$version/SHA256SUMS-macos.txt" \
+            --clobber
+
+          mkdir -p "release-artifacts/$version/windows-updater"
+          for attempt in {1..30}; do
+            rm -f "release-artifacts/$version/windows-updater/"*
+            gh release download "$tag" --pattern "*.nsis.zip" --pattern "*.nsis.zip.sig" --dir "release-artifacts/$version/windows-updater" --clobber 2>/dev/null || true
+            windows_asset=$(find "release-artifacts/$version/windows-updater" -name '*.nsis.zip' -type f -print -quit)
+            if [[ -n "$windows_asset" && -f "$windows_asset.sig" ]]; then
+              break
+            fi
+            if [[ "$attempt" == 30 ]]; then
+              echo "::error title=Windows updater missing::Timed out waiting for the Windows signed updater assets."
+              exit 1
+            fi
+            sleep 20
+          done
+          windows_signature="$windows_asset.sig"
+          node scripts/generate-latest-json.mjs \
+            --version "$version" \
+            --repository "$GITHUB_REPOSITORY" \
+            --notes "$notes" \
+            --windows-asset "$windows_asset" \
+            --windows-signature "$windows_signature" \
+            --macos-asset "release-artifacts/$version/Hexo Lite Editor.app.tar.gz" \
+            --macos-signature "release-artifacts/$version/Hexo Lite Editor.app.tar.gz.sig" \
+            --output "release-artifacts/$version/latest.json"
+          shasum -a 256 "release-artifacts/$version/latest.json" >> "release-artifacts/$version/SHA256SUMS-macos.txt"
+          gh release upload "$tag" \
+            "release-artifacts/$version/latest.json" \
+            "release-artifacts/$version/SHA256SUMS-macos.txt" \
             --clobber

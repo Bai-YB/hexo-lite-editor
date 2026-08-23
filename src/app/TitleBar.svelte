@@ -4,6 +4,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { isTauri } from "$platform/tauri";
   import { isMacOS } from "$platform/os";
+  import { translate } from "$shared/i18n";
 
   export let onRequestClose: () => void;
   export let onMaximizedChange: (value: boolean) => void = () => {};
@@ -49,7 +50,7 @@
     <img src="/favicon.png" alt="" />
     <span>Hexo Lite Editor</span>
     {#if documentTitle}<span class="titlebar-document">· {documentTitle}</span>{/if}
-    {#if dirty}<span class="titlebar-dirty" aria-label="有未保存更改" title="有未保存更改"></span>{/if}
+    {#if dirty}<span class="titlebar-dirty" aria-label={$translate("window.unsaved")} title={$translate("window.unsaved")}></span>{/if}
   </div>
   <div
     class="titlebar-drag"
@@ -58,19 +59,19 @@
     on:dblclick={toggleMaximize}
   ></div>
   <div class="window-controls" aria-hidden={isMacOS}>
-    <button class="window-control" type="button" aria-label="最小化" title="最小化" on:click={minimize}>
+    <button class="window-control" type="button" aria-label={$translate("window.minimize")} title={$translate("window.minimize")} on:click={minimize}>
       <Minus size={16} />
     </button>
     <button
       class="window-control"
       type="button"
-      aria-label={maximized ? "还原" : "最大化"}
-      title={maximized ? "还原" : "最大化"}
+      aria-label={maximized ? $translate("window.restore") : $translate("window.maximize")}
+      title={maximized ? $translate("window.restore") : $translate("window.maximize")}
       on:click={toggleMaximize}
     >
       {#if maximized}<span class="restore-window-icon" aria-hidden="true"></span>{:else}<Square size={13} />{/if}
     </button>
-    <button class="window-control close" type="button" aria-label="关闭" title="关闭" on:click={onRequestClose}>
+    <button class="window-control close" type="button" aria-label={$translate("window.close")} title={$translate("window.close")} on:click={onRequestClose}>
       <X size={16} />
     </button>
   </div>

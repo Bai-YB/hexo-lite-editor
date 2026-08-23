@@ -1,3 +1,4 @@
+pub mod cloudflare_imgbed;
 mod credentials;
 mod environment;
 mod filesystem;

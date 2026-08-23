@@ -1,6 +1,7 @@
 export type AppPage = "editor" | "imageBed" | "settings" | "about";
-export type ImageBedProvider = "local" | "cloudflare-imgbed";
+export type ImageBedProvider = "local" | "cloudflare-imgbed" | `plugin:${string}`;
 export type ThemeMode = "light" | "dark" | "system";
+export type AppLanguage = "system" | "zh-CN" | "en-US";
 export type PreviewServerState = "starting" | "running" | "stopping" | "stopped" | "error";
 export type SettingsSectionId = "general" | "editing" | "images" | "hexoPublish" | "sync" | "maintenance";
 export type ArticleKind = "post" | "draft";
@@ -40,6 +41,7 @@ export interface ArticleSummary {
   categories: string[];
   cover: ArticleCover;
   parseError?: string;
+  assetFolder: string;
 }
 
 export interface ArticleCover {
@@ -160,6 +162,7 @@ export interface CloseWindowState {
 export interface AppConfigV3 {
   schemaVersion: 3;
   general: {
+    language: AppLanguage;
     openRecentProjectOnStart: boolean;
     autoSave: boolean;
     autoSaveDelayMs: number;
@@ -295,6 +298,7 @@ export interface RemoteAssetItem {
   name: string;
   fileName: string;
   directory: string;
+  path: string;
   extension?: string;
   url?: string;
   previewUrl?: string;
@@ -302,6 +306,49 @@ export interface RemoteAssetItem {
   size?: number;
   createdAt?: string;
   canPreview: boolean;
+  capabilities: RemoteAssetCapabilities;
+}
+
+export interface RemoteAssetCapabilities {
+  open: boolean;
+  preview: boolean;
+  copyUrl: boolean;
+  copyMarkdown: boolean;
+  download: boolean;
+  rename: boolean;
+  move: boolean;
+  delete: boolean;
+  createChildFolder: boolean;
+  extract: boolean;
+}
+
+export interface CreateRemoteFolderRequest {
+  projectId: string;
+  sessionGeneration: number;
+  parentDirectory: string;
+  name: string;
+}
+
+export interface RenameRemoteAssetRequest {
+  projectId: string;
+  sessionGeneration: number;
+  assetId: string;
+  newName: string;
+}
+
+export interface MoveRemoteAssetRequest {
+  projectId: string;
+  sessionGeneration: number;
+  assetId: string;
+  targetDirectory: string;
+}
+
+export interface RenameArticleRequest {
+  projectId: string;
+  sessionGeneration: number;
+  articleId: string;
+  newTitle: string;
+  newFileName?: string;
 }
 
 export interface RemoteAssetBreadcrumb {
@@ -444,17 +491,18 @@ export interface RuntimeInfo {
   webview: string;
 }
 
-export interface UpdateCheckResult {
-  currentVersion: string;
-  latestVersion: string;
-  hasUpdate: boolean;
-  releaseNotes?: string;
-  releasePageUrl: string;
+export type UpdateStatus = "idle" | "checking" | "upToDate" | "available" | "downloading" | "downloaded" | "installing" | "error";
+export type UpdateErrorStage = "check" | "download" | "install";
+export interface UpdateSnapshot {
+  currentVersion: string; status: UpdateStatus; latestVersion?: string; releaseNotes?: string;
+  releaseDate?: string; downloadedBytes?: number; totalBytes?: number; errorStage?: UpdateErrorStage;
+  errorMessage?: string; releasePageUrl?: string; assetDownloadUrl?: string;
 }
 
 export const defaultConfig: AppConfigV3 = {
   schemaVersion: 3,
   general: {
+    language: "system",
     openRecentProjectOnStart: true,
     autoSave: true,
     autoSaveDelayMs: 2000,

@@ -1,0 +1,8 @@
+{
+  "plugins": {
+    "updater": {
+      "endpoints": ["http://127.0.0.1:4876/latest-newer.json"],
+      "dangerousInsecureTransportProtocol": true
+    }
+  }
+}

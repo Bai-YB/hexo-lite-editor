@@ -4,10 +4,12 @@ mod data;
 mod domain;
 mod engine;
 mod platform;
+mod plugins;
 
 use app::{AppState, AssetSource};
 use std::{fs, sync::atomic::Ordering, time::SystemTime};
 use tauri::{http, image::Image, Manager};
+use url::Url;
 
 pub use platform::ensure_webview2_runtime;
 
@@ -58,6 +60,7 @@ fn application_remaining_invoke_handler(
         commands::parse_document_front_matter,
         commands::save_document,
         commands::create_article,
+        commands::rename_article,
         commands::delete_article,
         commands::move_article,
         commands::reveal_article,
@@ -80,15 +83,33 @@ fn application_remaining_invoke_handler(
         commands::upload_cloudflare_image,
         commands::import_editor_images,
         commands::import_editor_image_paths,
+        commands::read_plugin_editor_image_paths,
         commands::upload_cached_editor_image,
         commands::finalize_cached_editor_image,
         commands::list_cloudflare_assets,
         commands::delete_cloudflare_asset,
+        commands::rename_cloudflare_asset,
+        commands::move_cloudflare_asset,
+        commands::download_cloudflare_asset,
+        plugins::list_plugins,
+        plugins::install_plugin,
+        plugins::choose_and_install_plugin,
+        plugins::uninstall_plugin,
+        plugins::enable_plugin,
+        plugins::disable_plugin,
+        plugins::get_plugin_settings,
+        plugins::get_plugin_settings_schema,
+        plugins::save_plugin_settings,
+        plugins::plugin_http_request,
         commands::reveal_local_image,
         commands::get_preview_status,
         commands::start_preview_server,
         commands::stop_preview_server,
         commands::resolve_article_preview_url,
+        commands::open_hexo_preview_webview,
+        commands::navigate_hexo_preview_webview,
+        commands::reload_hexo_preview_webview,
+        commands::close_hexo_preview_webview,
         commands::resolve_article_preview_images,
         data::list_task_logs,
         data::read_task_log,
@@ -98,6 +119,10 @@ fn application_remaining_invoke_handler(
         commands::open_external_target,
         commands::open_markdown_link,
         commands::check_update,
+        commands::get_update_snapshot,
+        commands::download_update,
+        commands::install_update,
+        commands::download_and_install_update,
         commands::detect_content_sync,
         commands::preflight_content_sync,
         commands::preflight_webdav_content_sync,
@@ -119,6 +144,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .register_uri_scheme_protocol("hlex-asset", |context, request| {
             let token = request.uri().path().trim_matches('/');
             let asset = context
@@ -160,6 +187,9 @@ pub fn run() {
                 Err(_) => protocol_error(http::StatusCode::NOT_FOUND, "asset is unavailable"),
             }
         })
+        .register_uri_scheme_protocol("hlex-plugin", |context, request| {
+            serve_plugin_resource(context.app_handle(), request.uri())
+        })
         .invoke_handler(application_invoke_handler())
         .setup(|app| {
             let config_dir = app
@@ -169,6 +199,12 @@ pub fn run() {
             platform::migrate_legacy_app_data(&config_dir)?;
             fs::create_dir_all(&config_dir)?;
             let state = AppState::new(&config_dir);
+            fs::create_dir_all(&state.plugins_dir)?;
+            if let Ok(registry) = plugins::PluginRegistry::load(&state.plugins_dir) {
+                if let Ok(mut target) = state.plugin_registry.write() {
+                    *target = registry;
+                }
+            }
             let _ = data::cleanup_task_logs(&state);
             app.manage(state);
             if let Some(window) = app.get_webview_window("main") {
@@ -196,4 +232,54 @@ fn protocol_error(status: http::StatusCode, message: &str) -> http::Response<Vec
         .header(http::header::CACHE_CONTROL, "no-store")
         .body(message.as_bytes().to_vec())
         .expect("valid protocol error response")
+}
+
+fn serve_plugin_resource(app: &tauri::AppHandle, uri: &http::Uri) -> http::Response<Vec<u8>> {
+    let Ok(url) = Url::parse(&uri.to_string()) else {
+        return protocol_error(http::StatusCode::BAD_REQUEST, "invalid plugin URL");
+    };
+    let mut segments = url.path().trim_start_matches('/').split('/');
+    let (plugin_id, relative) = if url.host_str() == Some("hlex-plugin.localhost") {
+        let Some(plugin_id) = segments.next() else {
+            return protocol_error(http::StatusCode::BAD_REQUEST, "missing plugin id");
+        };
+        (plugin_id, segments.collect::<Vec<_>>().join("/"))
+    } else {
+        let Some(plugin_id) = url.host_str() else {
+            return protocol_error(http::StatusCode::BAD_REQUEST, "missing plugin id");
+        };
+        (plugin_id, url.path().trim_start_matches('/').to_string())
+    };
+    if relative.is_empty()
+        || relative
+            .split('/')
+            .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
+        || relative.contains('\\')
+    {
+        return protocol_error(
+            http::StatusCode::BAD_REQUEST,
+            "invalid plugin resource path",
+        );
+    }
+    let state = app.state::<AppState>();
+    let path = state
+        .plugin_registry
+        .read()
+        .ok()
+        .and_then(|registry| registry.plugins.get(plugin_id).cloned())
+        .filter(|(_, enabled, _)| *enabled)
+        .and_then(|(manifest, _, root)| (manifest.entry == relative).then(|| root.join(relative)));
+    let Some(path) = path else {
+        return protocol_error(http::StatusCode::NOT_FOUND, "plugin resource not found");
+    };
+    let Ok(bytes) = fs::read(path) else {
+        return protocol_error(http::StatusCode::NOT_FOUND, "plugin resource unavailable");
+    };
+    http::Response::builder()
+        .status(http::StatusCode::OK)
+        .header(http::header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+        .header("X-Content-Type-Options", "nosniff")
+        .header(http::header::CACHE_CONTROL, "no-store")
+        .body(bytes)
+        .expect("valid plugin response")
 }

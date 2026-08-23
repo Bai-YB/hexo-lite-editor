@@ -123,6 +123,11 @@ export function renderSafeMarkdown(
   renderedDocument.querySelectorAll("img").forEach((image) => {
     const original = image.getAttribute("src") ?? "";
     image.dataset.imageSource = original;
+    const uploadId = editorUploadId(original);
+    if (uploadId) {
+      image.dataset.uploadId = uploadId;
+      image.dataset.imageState = "uploading";
+    }
     if (isEmbeddedImageSource(original)) return;
     if (isRemoteImageSource(original)) {
       image.setAttribute("src", original);
@@ -137,9 +142,9 @@ export function renderSafeMarkdown(
     ALLOWED_ATTR: [
       "abbr", "alt", "aria-label", "cite", "class", "colspan", "datetime", "dir", "height",
       "high", "href", "lang", "low", "max", "min", "open", "optimum", "reversed", "role",
-      "data-image-source", "data-preview-image-retry", "rowspan", "scope", "src", "start", "style", "tabindex", "title", "value", "width"
+      "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry", "rowspan", "scope", "src", "start", "style", "tabindex", "title", "value", "width"
     ],
-    ADD_ATTR: [...safeSemanticAttributes, "data-image-source", "data-preview-image-retry"],
+    ADD_ATTR: [...safeSemanticAttributes, "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry"],
     ALLOW_DATA_ATTR: false,
     FORBID_TAGS: ["form", "iframe", "object", "script", "style", "svg", "math"],
     ALLOWED_URI_REGEXP: /^(?:(?:https?|hlex-asset):|blob:|data:image\/(?:png|jpeg|gif|webp);base64,|(?:\.{0,2}\/|\/)?[^:/?#][^:]*)/i
@@ -159,6 +164,11 @@ export function renderSafeMarkdown(
     if (isSafeImageSource(src)) image.setAttribute("loading", "lazy");
   });
   return document.body.innerHTML;
+}
+
+function editorUploadId(value: string): string | undefined {
+  const match = value.match(/^(?:hlex-asset:\/\/(?:[^/]+\/)?|http:\/\/hlex-asset\.localhost\/)([0-9a-f-]{8,})/i);
+  return match?.[1];
 }
 
 export function extractPreviewImageSources(source: string): string[] {

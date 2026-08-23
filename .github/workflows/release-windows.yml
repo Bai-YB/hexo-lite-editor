@@ -9,7 +9,7 @@ on:
       version:
         description: "Version without the v prefix"
         required: true
-        default: "1.0.5"
+        default: "1.0.6"
 
 permissions:
   contents: write
@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TERM_COLOR: always
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v7
@@ -73,6 +75,20 @@ jobs:
         shell: pwsh
         run: ./scripts/package-release.ps1 -Version $env:RELEASE_VERSION
 
+      - name: Generate Windows updater manifest
+        shell: pwsh
+        run: |
+          $releaseDirectory = "release-artifacts/$env:RELEASE_VERSION"
+          node scripts/generate-latest-json.mjs `
+            --version $env:RELEASE_VERSION `
+            --repository $env:GITHUB_REPOSITORY `
+            --notes ".github/release-notes/v$env:RELEASE_VERSION.md" `
+            --windows-asset "$releaseDirectory/Hexo Lite Editor_$($env:RELEASE_VERSION)_x64-setup.nsis.zip" `
+            --windows-signature "$releaseDirectory/Hexo Lite Editor_$($env:RELEASE_VERSION)_x64-setup.nsis.zip.sig" `
+            --output "$releaseDirectory/latest.json"
+          $latestHash = Get-FileHash -LiteralPath "$releaseDirectory/latest.json" -Algorithm SHA256
+          "$($latestHash.Hash.ToLowerInvariant())  latest.json" | Add-Content -LiteralPath "$releaseDirectory/SHA256SUMS.txt" -Encoding ascii
+
       - name: Smoke test portable archive
         shell: pwsh
         run: ./scripts/smoke-portable.ps1 -ArchivePath "release-artifacts/$env:RELEASE_VERSION/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-portable.zip"
@@ -87,14 +103,21 @@ jobs:
           path: |
             release-artifacts/${{ env.RELEASE_VERSION }}/Hexo-Lite-Editor_${{ env.RELEASE_VERSION }}_windows-x64-portable.zip
             release-artifacts/${{ env.RELEASE_VERSION }}/Hexo-Lite-Editor_${{ env.RELEASE_VERSION }}_windows-x64-setup.exe
+            release-artifacts/${{ env.RELEASE_VERSION }}/Hexo-Lite-Editor_${{ env.RELEASE_VERSION }}_windows-x64.msi
+            release-artifacts/${{ env.RELEASE_VERSION }}/*.nsis.zip
+            release-artifacts/${{ env.RELEASE_VERSION }}/*.sig
+            release-artifacts/${{ env.RELEASE_VERSION }}/latest.json
+            release-artifacts/${{ env.RELEASE_VERSION }}/release-manifest.json
+            release-artifacts/${{ env.RELEASE_VERSION }}/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $tag = if ($env:GITHUB_REF -like "refs/tags/v*") { $env:GITHUB_REF_NAME } else { "v$env:RELEASE_VERSION" }
           $notes = ".github/release-notes/v$env:RELEASE_VERSION.md"
           if (-not (Test-Path -LiteralPath $notes)) {
             throw "Missing release notes: $notes"
@@ -103,10 +126,17 @@ jobs:
           $assets = @(
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-portable.zip"
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-setup.exe"
+            "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64.msi"
+            "$releaseDirectory/Hexo Lite Editor_$($env:RELEASE_VERSION)_x64-setup.nsis.zip"
+            "$releaseDirectory/Hexo Lite Editor_$($env:RELEASE_VERSION)_x64-setup.nsis.zip.sig"
+            "$releaseDirectory/latest.json"
+            "$releaseDirectory/release-manifest.json"
+            "$releaseDirectory/SHA256SUMS.txt"
           )
-          if (gh release view $env:GITHUB_REF_NAME 2>$null) {
-            gh release upload $env:GITHUB_REF_NAME @assets --clobber
-            gh release edit $env:GITHUB_REF_NAME --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes --latest
+          if (gh release view $tag 2>$null) {
+            gh release upload $tag @assets --clobber
+            gh release edit $tag --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes --latest
           } else {
-            gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes --latest
+            $tagArgument = if ($env:GITHUB_REF -like "refs/tags/v*") { @("--verify-tag") } else { @("--target", $env:GITHUB_SHA) }
+            gh release create $tag @assets @tagArgument --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes --latest
           }
