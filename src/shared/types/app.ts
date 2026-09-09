@@ -401,6 +401,7 @@ export interface ContentSyncView {
   message?: string;
   conflicts: string[];
   lastSyncedAt?: string;
+  requiresScopeConfirmation?: boolean;
 }
 
 export interface ContentSyncEvent {
@@ -531,7 +532,7 @@ export const defaultConfig: AppConfigV3 = {
     cloudflareName: "",
     cloudflareApiUrl: "",
     cloudflareConnectionId: "primary",
-    uploadFolder: "blog",
+    uploadFolder: "/",
     autoInsertMarkdown: true
   },
   publish: {

@@ -10,10 +10,10 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64-setup.exe"><strong>下载安装版</strong></a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64-portable.zip">便携版</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64.msi">MSI</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.5">v1.0.5 Release</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe"><strong>下载安装版</strong></a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip">便携版</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_macos-universal.dmg">macOS</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6">v1.0.6 Release</a>
   </p>
 </div>
 
@@ -27,7 +27,8 @@
 - 隐藏预览后，编辑器自动使用文章列表之外的全部空间。
 - 管理 `source/` 下的图片，也可连接 Cloudflare-ImgBed；粘贴和拖放会先本地显示，再在后台完成上传。
 - 发布固定执行保存、clean、generate 和 deploy，避免部署旧缓存；浏览器预览可随时关闭后台服务。
-- 通过独立 GitHub 内容分支或标准 WebDAV 服务同步文章和图片。
+- 通过独立 GitHub 内容分支或标准 WebDAV 服务同步 Hexo 项目源文件、主题和配置；远端前进时可明确选择云端或本机版本。
+- 每日自动检查并在后台下载经过签名验证的新版本，由用户确认后重启安装。
 - 支持浅色、深色和跟随系统主题。
 
 ## 界面
@@ -50,15 +51,16 @@ WebDAV 地址、目录和用户名在启用后仍可修改。新凭据通过目�
 
 ## 安装
 
-`v1.0.5` 提供 Windows 10/11 x64 版本。
+`v1.0.6` 提供 Windows 10/11 x64 和 macOS 通用版本。
 
 | 安装包 | 用途 |
 | --- | --- |
-| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64-setup.exe) | 推荐；按向导安装 |
-| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64-portable.zip) | 解压后直接运行 |
-| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/Hexo-Lite-Editor_1.0.5_windows-x64.msi) | 企业或批量部署 |
+| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe) | 推荐；按向导安装 |
+| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip) | 解压后直接运行 |
+| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64.msi) | 企业或批量部署 |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_macos-universal.dmg) | Intel 与 Apple Silicon 通用 |
 
-安装包尚未使用商业代码签名证书，SmartScreen 可能显示“未知发布者”。校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.5/SHA256SUMS.txt)。当前 Release 没有 macOS 安装包，Mac 用户可使用仓库中的 [macOS 构建工作流](.github/workflows/release-macos.yml)。
+Windows 安装包尚未使用商业代码签名证书，SmartScreen 可能显示“未知发布者”。校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/SHA256SUMS.txt) 和 [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/SHA256SUMS-macos.txt)。从 v1.0.6 起，应用会自动下载经过 Tauri 签名验证的后续更新，并在安装前请求确认。
 
 ## 使用
 
@@ -72,7 +74,7 @@ WebDAV 地址、目录和用户名在启用后仍可修改。新凭据通过目�
 - 应用不捆绑 Node.js、Hexo 或博客依赖。本地编辑不需要 Node.js，预览和发布使用项目已有环境。
 - 即时预览会清理脚本、iframe、表单等不安全 HTML；代码块中的 HTML 保持源码显示。
 - Token 和 WebDAV 密码保存在操作系统凭据库，不写入项目配置、日志或同步清单。
-- 内容同步默认关闭，只处理文章、文章资源目录和指定图片目录；拉取覆盖前会创建本地备份。
+- 项目同步默认关闭，包含文章、草稿、`source/`、主题、脚手架与 Hexo/主题配置；排除 `.git`、`public`、`node_modules`、缓存、环境文件和常见凭据。云端覆盖本地前会创建备份。
 - 远程图片直接由 WebView 加载。空响应或无法显示时保留错误提示，不替换成默认封面，也不会在切换文章时闪回原图。
 
 <details>

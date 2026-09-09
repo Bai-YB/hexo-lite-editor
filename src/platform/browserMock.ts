@@ -169,6 +169,8 @@ let mockPlugins: import("$shared/plugins/types").PluginView[] = demoFlag("plugin
 let preview: PreviewServerView = { projectId: session.projectId, sessionGeneration: 1, state: "stopped", port: 4000, draftsEnabled: true };
 let contentSync: ContentSyncView = demoFlag("syncConflict")
   ? { enabled: true, status: "conflict", provider: "github", repository: "https://github.com/example/quiet-notes.git", branch: "hexo-lite-content", visibility: "public", conflicts: ["source/_posts/welcome.md", "source/images/cover.png"], message: "本地和远端同时修改了文件。" }
+  : demoFlag("syncRemoteAhead")
+    ? { enabled: true, status: "remoteAhead", provider: "github", repository: "https://github.com/example/quiet-notes.git", branch: "hexo-lite-content", visibility: "private", conflicts: [], message: "云端项目有更新，请选择同步方向。" }
   : { enabled: false, status: "off", provider: "github", conflicts: [] };
 let webDavCredentialConfigured = demoFlag("webdavConfigured");
 let webDavCredentialUsername = webDavCredentialConfigured ? "blogger" : "";
@@ -297,7 +299,7 @@ export const browserMock = {
   enableWebDavContentSync: async (request: { endpoint: string; remoteDir: string }): Promise<ContentSyncView> => (contentSync = { enabled: true, status: "localPending", provider: "webdav", endpoint: request.endpoint.replace(/\/$/, ""), remoteDir: request.remoteDir, conflicts: [], message: "WebDAV 同步已启用，等待首次选择同步方向。" }),
   updateWebDavContentSync: async (request: { endpoint: string; remoteDir: string }): Promise<ContentSyncView> => (contentSync = { ...contentSync, enabled: true, status: "localPending", provider: "webdav", endpoint: request.endpoint.replace(/\/$/, ""), remoteDir: request.remoteDir, conflicts: [], message: "WebDAV 连接设置已应用，请选择首次同步方向。" }),
   disableContentSync: async (): Promise<ContentSyncView> => (contentSync = { enabled: false, status: "off", provider: "github", conflicts: [] }),
-  runContentSync: async (): Promise<ContentSyncView> => (contentSync = { ...contentSync, status: "synced", message: "演示项目内容已同步。" }),
+  runContentSync: async (_direction = "auto"): Promise<ContentSyncView> => (contentSync = { ...contentSync, status: "synced", conflicts: [], message: "演示项目已同步。", lastSyncedAt: new Date().toISOString() }),
   getContentSyncConflicts: async (): Promise<ContentSyncConflict[]> => demoFlag("syncConflict") ? [
     { path: "source/_posts/welcome.md", kind: "markdown", localHash: "local-md", remoteHash: "remote-md", localSize: 120, remoteSize: 132, localText: "# 本地标题", remoteText: "# 远端标题" },
     { path: "source/images/cover.png", kind: "binary", localHash: "local-bin", remoteHash: "remote-bin", localSize: 2048, remoteSize: 4096 }
@@ -305,7 +307,7 @@ export const browserMock = {
   resolveContentSyncConflicts: async (): Promise<ContentSyncView> => (contentSync = { ...contentSync, status: "synced", conflicts: [], message: "冲突已解决。" }),
   webDavCredentialStatus: async (_endpoint?: string): Promise<CredentialStatus> => ({ configured: webDavCredentialConfigured, username: webDavCredentialUsername || undefined }),
   webDavCredentialDelete: async (_endpoint?: string): Promise<CredentialStatus> => (webDavCredentialConfigured = false, webDavCredentialUsername = "", { configured: false }),
-  uploadCloudflareImage: async () => ({ url: remoteAssets[3].url!, markdown: `![${remoteAssets[3].name}](${remoteAssets[3].url})`, fileName: remoteAssets[3].fileName }),
+  uploadCloudflareImage: async (_directory = "/") => ({ url: remoteAssets[3].url!, markdown: `![${remoteAssets[3].name}](${remoteAssets[3].url})`, fileName: remoteAssets[3].fileName }),
   listCloudflareAssets: async (_offset: number, _count: number, search: string, directory: string): Promise<RemoteAssetPage> => {
     const normalized = directory.replace(/^\/+|\/+$/g, "");
     const items = remoteAssets.filter((item) => {
@@ -332,7 +334,9 @@ export const browserMock = {
   },
   downloadCloudflareAsset: async (_assetId: string) => [],
   getUpdateSnapshot: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: "1.0.6", status: "idle" }),
-  checkUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: "1.0.6", status: "upToDate" }),
+  checkUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => demoFlag("updateAvailable")
+    ? ({ currentVersion: "1.0.6", latestVersion: "1.0.7", status: "available", releaseNotes: "Update available" })
+    : ({ currentVersion: "1.0.6", status: "upToDate" }),
   downloadUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: "1.0.6", latestVersion: "1.0.7", status: "downloaded", downloadedBytes: 1024, totalBytes: 1024 }),
   installUpdate: async () => undefined,
   listPlugins: async () => structuredClone(mockPlugins),

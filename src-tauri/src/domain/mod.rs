@@ -376,7 +376,7 @@ fn default_local_markdown_prefix() -> String {
 }
 
 fn default_upload_folder() -> String {
-    "blog".to_string()
+    "/".to_string()
 }
 
 fn default_cloudflare_connection_id() -> String {

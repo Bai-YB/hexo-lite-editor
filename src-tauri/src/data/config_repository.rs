@@ -355,7 +355,7 @@ mod tests {
         assert!(loaded.warnings.is_empty());
         assert_eq!(loaded.config.image_bed.local_image_dir, "source/images");
         assert_eq!(loaded.config.image_bed.local_markdown_prefix, "/images");
-        assert_eq!(loaded.config.image_bed.upload_folder, "blog");
+        assert_eq!(loaded.config.image_bed.upload_folder, "/");
         assert_eq!(loaded.config.image_bed.cloudflare_connection_id, "primary");
         assert!(!fs::read_dir(temp.path()).unwrap().any(|entry| {
             entry

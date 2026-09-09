@@ -58,6 +58,7 @@
   let adminPassword = "";
   let showReset = false;
   let showClearRecent = false;
+  let pendingSyncOverwrite: "overwriteLocal" | "overwriteRemote" | null = null;
   let syncCandidate: import("$shared/types/app").ContentSyncCandidate | null = null;
   let syncCandidates: import("$shared/types/app").ContentSyncCandidate[] = [];
   let syncPreflight: ContentSyncPreflight | null = null;
@@ -294,7 +295,7 @@
     }
   }
 
-  async function runSync(direction: "auto" | "local" | "remote" = "auto") {
+  async function runSync(direction: "auto" | "local" | "remote" | "overwriteLocal" | "overwriteRemote" = "auto") {
     if (!session || syncBusy) return;
     syncBusy = true;
     try {
@@ -306,6 +307,16 @@
     } finally {
       syncBusy = false;
     }
+  }
+
+  function chooseAllConflicts(choice: "local" | "remote") {
+    conflictChoices = Object.fromEntries(syncConflicts.map((item) => [item.path, choice]));
+  }
+
+  async function confirmSyncOverwrite() {
+    const direction = pendingSyncOverwrite;
+    pendingSyncOverwrite = null;
+    if (direction) await runSync(direction);
   }
 
   async function disableSync() {
@@ -582,7 +593,7 @@
         </div>
       {:else if activeSection === "sync"}
         <div class="settings-block">
-          <div class="settings-block-heading"><h3>内容同步</h3><p>可将文章和资源同步到 GitHub 独立分支，或你自己的 WebDAV 服务器。</p></div>
+          <div class="settings-block-heading"><h3>项目同步</h3><p>将 Hexo 项目源文件、文章、草稿、主题和配置同步到 GitHub 独立分支，或你自己的 WebDAV 服务器。</p></div>
           {#if !session}
             <p class="muted-line">请先打开一个 Hexo 项目。</p>
           {:else}
@@ -600,15 +611,15 @@
                   <p class="muted-line">选择目标仓库后才能预检和启用内容同步。</p>
                 {:else}
                   <div class="sync-summary"><strong>{syncCandidate.repository}</strong><span>{syncCandidate.source} · 仓库可见性：{syncCandidate.visibility === "public" ? "公开" : "未确认"}</span></div>
-                  <div class="setting-row"><div class="setting-copy"><strong>内容分支</strong><span>与 Pages 发布分支隔离，默认 hexo-lite-content。</span></div><input aria-label="内容分支" class="input compact-control" value={syncBranch} disabled={syncBusy} on:input={(event) => { syncBranch = event.currentTarget.value; syncPreflight = null; }} /></div>
-                  {#if syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown"}<label class="sync-warning"><input type="checkbox" bind:checked={publicAcknowledged} /><span>我确认这个仓库的内容分支会继承仓库可见性，不放入草稿或凭据。</span></label>{/if}
+                  <div class="setting-row"><div class="setting-copy"><strong>项目同步分支</strong><span>与 Pages 发布分支隔离，默认 hexo-lite-content。</span></div><input aria-label="内容分支" class="input compact-control" value={syncBranch} disabled={syncBusy} on:input={(event) => { syncBranch = event.currentTarget.value; syncPreflight = null; }} /></div>
+                  {#if syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown"}<label class="sync-warning"><input type="checkbox" bind:checked={publicAcknowledged} /><span>我确认项目同步分支会继承仓库可见性，文章草稿、主题和 Hexo 配置也会公开；凭据、私钥、依赖及生成目录会被排除。</span></label>{/if}
                   {#if syncPreflight}<div class="sync-summary"><strong>启用预检</strong><span>本地 {syncPreflight.fileCount} 个文件 · {(syncPreflight.totalBytes / 1024 / 1024).toFixed(2)} MB</span>{#if syncPreflight.remoteBranchExists && syncPreflight.remoteManifestValid}<span>远端 {syncPreflight.remoteFileCount} 个文件 · {(syncPreflight.remoteTotalBytes / 1024 / 1024).toFixed(2)} MB</span><span>仅本地 {syncPreflight.localOnlyCount} · 仅远端 {syncPreflight.remoteOnlyCount} · 内容不同 {syncPreflight.differentCount}</span>{:else}<span>{syncPreflight.remoteBranchExists ? "远端分支没有合法清单，不能接管" : "将创建新的孤立分支"}</span>{/if}</div>{/if}
                   <div class="button-row"><button class="button" type="button" disabled={syncBusy} on:click={preflightSync}>预检</button><button class="button primary" type="button" disabled={syncBusy || !syncPreflight || (syncPreflight.remoteBranchExists && !syncPreflight.remoteManifestValid) || ((syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown") && !publicAcknowledged)} on:click={() => configureSync()}>确认启用</button></div>
                 {/if}
               {/if}
             {:else if syncProvider === "webdav"}
               <div class="setting-row"><div class="setting-copy"><strong>服务器地址</strong><span>启用后仍可修改；更换地址必须重新测试并明确应用。</span></div><input aria-label="WebDAV 服务器地址" class="input compact-control" type="url" placeholder="https://dav.example.com/dav" value={webDavEndpoint} disabled={syncBusy} on:input={(event) => { webDavEndpoint = event.currentTarget.value; webDavCredential = { configured: false }; webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} on:blur={refreshWebDavCredential} /></div>
-              <div class="setting-row"><div class="setting-copy"><strong>远端目录</strong><span>仅在该目录中保存同步清单、文章和图片；修改后不会自动生效。</span></div><input aria-label="WebDAV 远端目录" class="input compact-control" value={webDavRemoteDir} disabled={syncBusy} on:input={(event) => { webDavRemoteDir = event.currentTarget.value; webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
+              <div class="setting-row"><div class="setting-copy"><strong>远端目录</strong><span>在该目录中保存完整项目源文件；依赖、生成目录、凭据和私钥不会上传。</span></div><input aria-label="WebDAV 远端目录" class="input compact-control" value={webDavRemoteDir} disabled={syncBusy} on:input={(event) => { webDavRemoteDir = event.currentTarget.value; webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
               <div class="setting-row"><div class="setting-copy"><strong>用户名</strong><span>可回显已保存用户名，完整密码永远不会返回前端。</span></div><input aria-label="WebDAV 用户名" class="input compact-control" autocomplete="username" bind:value={webDavUsername} disabled={syncBusy} on:input={() => { webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
               <div class="setting-row"><div class="setting-copy"><strong>密码</strong><span>{webDavCredential.configured ? "留空沿用系统凭据库中的密码；填写内容用于测试成功后才会覆盖旧密码。" : "请输入密码；只有真实连接和读写测试通过后才会保存。"}</span></div><input aria-label="WebDAV 密码" class="input compact-control" type="password" autocomplete="current-password" bind:value={webDavPassword} disabled={syncBusy} on:input={() => { webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
               {#if syncStatus.enabled && syncStatus.provider === "webdav"}<div class="sync-summary"><strong>当前已应用连接</strong><span>{syncStatus.endpoint}/{syncStatus.remoteDir}</span><span>同步状态：{syncStatus.status} · {syncStatus.message || ""}</span></div>{/if}
@@ -624,12 +635,19 @@
                 <div class="button-row"><button class="button primary" type="button" disabled={syncBusy || !webDavTestMatches || !webDavPreflight || (webDavPreflight.remoteExists && !webDavPreflight.remoteManifestValid)} on:click={() => configureSync()}>确认启用 WebDAV</button></div>
               {/if}
             {:else}
-              <div class="sync-summary"><strong>{syncStatus.provider === "webdav" ? "WebDAV 内容同步" : "GitHub 内容同步"}</strong><span>{syncStatus.provider === "webdav" ? `${syncStatus.endpoint}/${syncStatus.remoteDir}` : `${syncStatus.repository} · ${syncStatus.branch}`}</span></div>
+              <div class="sync-summary"><strong>{syncStatus.provider === "webdav" ? "WebDAV 项目同步" : "GitHub 项目同步"}</strong><span>{syncStatus.provider === "webdav" ? `${syncStatus.endpoint}/${syncStatus.remoteDir}` : `${syncStatus.repository} · ${syncStatus.branch}`}</span></div>
               <div class="sync-status-row"><span class={`sync-status ${syncStatus.status}`}>{syncStatus.status}</span><span>{syncStatus.message || ""}</span></div>
-              {#if syncStatus.status === "localPending" && !syncStatus.lastSyncedAt}
+              {#if syncStatus.requiresScopeConfirmation}
+                <p class="sync-warning" role="alert">同步范围已升级为完整项目。确认后，草稿、主题和 Hexo 配置也会上传到当前 GitHub 分支。</p>
+                <div class="button-row"><button class="button danger" type="button" disabled={syncBusy} on:click={() => (pendingSyncOverwrite = "overwriteRemote")}>确认同步完整项目</button><button class="button danger" type="button" disabled={syncBusy} on:click={disableSync}>关闭同步</button></div>
+              {:else if syncStatus.status === "localPending" && !syncStatus.lastSyncedAt}
                 <div class="button-row"><button class="button primary" type="button" disabled={syncBusy} on:click={() => configureSync("local")}>上传本地内容</button><button class="button" type="button" disabled={syncBusy} on:click={() => configureSync("remote")}>使用远端内容</button></div>
+              {:else if syncStatus.status === "remoteAhead"}
+                <p class="sync-warning" role="alert">云端存在较新的项目版本。选择任一方向前都会再次读取最新云端状态；覆盖本地时会先创建备份。</p>
+                <div class="button-row"><button class="button primary" type="button" disabled={syncBusy} on:click={() => (pendingSyncOverwrite = "overwriteLocal")}>使用云端最新版本</button><button class="button danger" type="button" disabled={syncBusy} on:click={() => (pendingSyncOverwrite = "overwriteRemote")}>用本机项目覆盖云端</button><button class="button" type="button" on:click={() => session && platform.openContentSyncBackups(session.projectId, session.generation)}>打开备份目录</button></div>
               {:else if syncStatus.status === "conflict"}
                 <p class="muted-line">本地与远端修改了同一文件，请逐项选择。</p>
+                <div class="button-row"><button class="button" type="button" on:click={() => chooseAllConflicts("local")}>全部选择本地</button><button class="button" type="button" on:click={() => chooseAllConflicts("remote")}>全部选择远端</button></div>
                 <div class="sync-conflict-list">
                   {#each syncConflicts as conflict}
                     <article class="sync-conflict-card">
@@ -652,7 +670,7 @@
       {:else}
         <div class="settings-block">
           <div class="settings-block-heading"><h3>更新与恢复</h3><p>更新只从固定的项目 Releases 页面检查。</p></div>
-          <div class="setting-row"><div class="setting-copy"><strong>启动时检查更新</strong><span>只有远程 SemVer 更高时才提示。</span></div><label class="switch"><input type="checkbox" checked={draft.update.checkOnStart} on:change={(event) => change({ ...draft, update: { checkOnStart: event.currentTarget.checked } })} /><span></span></label></div>
+          <div class="setting-row"><div class="setting-copy"><strong>自动检查并下载更新</strong><span>启动后每天最多检查一次；仅下载版本号更高且签名有效的更新，安装前会询问。</span></div><label class="switch"><input type="checkbox" checked={draft.update.checkOnStart} on:change={(event) => change({ ...draft, update: { checkOnStart: event.currentTarget.checked } })} /><span></span></label></div>
           <div class="setting-row"><div class="setting-copy"><strong>恢复默认设置</strong><span>Token 不会被删除；默认值保存前仍可取消。</span></div><button class="button" type="button" on:click={() => (showReset = true)}><RotateCcw size={14} />恢复默认</button></div>
         </div>
       {/if}
@@ -680,5 +698,17 @@
 {#if showClearRecent}
   <ModalDialog title="清空最近项目？" description="只删除最近项目记录，不会删除磁盘上的博客文件。" onClose={() => (showClearRecent = false)}>
     <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (showClearRecent = false)}>取消</button><button class="button danger" type="button" data-autofocus on:click={clearRecent}>清空记录</button></svelte:fragment>
+  </ModalDialog>
+{/if}
+
+{#if pendingSyncOverwrite}
+  <ModalDialog
+    title={pendingSyncOverwrite === "overwriteLocal" ? "使用云端最新项目？" : "用本机项目覆盖云端？"}
+    description={pendingSyncOverwrite === "overwriteLocal"
+      ? "云端项目会覆盖本地同名文件，并删除云端已删除的本地文件。应用会先创建本地备份。"
+      : "将基于刚读取的云端最新提交创建一个新版本，使云端项目内容与本机一致。其他设备尚未上传的改动会被覆盖。"}
+    onClose={() => (pendingSyncOverwrite = null)}
+  >
+    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (pendingSyncOverwrite = null)}>取消</button><button class="button danger" type="button" data-autofocus on:click={confirmSyncOverwrite}>确认覆盖</button></svelte:fragment>
   </ModalDialog>
 {/if}

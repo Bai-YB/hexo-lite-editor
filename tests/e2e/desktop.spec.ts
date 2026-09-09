@@ -241,8 +241,8 @@ test("内容同步向导要求公开仓库确认并展示首次同步预检", as
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByRole("button", { name: /内容同步/ }).click();
   const panel = page.locator(".settings-content-panel");
-  await expect(panel.getByRole("heading", { name: "内容同步", level: 3 })).toBeVisible();
-  await expect(panel.getByText(/内容分支会继承仓库可见性/)).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "项目同步", level: 3 })).toBeVisible();
+  await expect(panel.getByText(/项目同步分支会继承仓库可见性/)).toBeVisible();
   const enable = panel.getByRole("button", { name: "确认启用" });
   await expect(enable).toBeDisabled();
   await panel.getByRole("button", { name: "预检" }).click();
@@ -331,6 +331,30 @@ test("内容同步冲突逐文件展示 Markdown 差异与二进制哈希选择"
   await page.getByRole("button", { name: "提交冲突选择" }).click();
   await expect(cards).toHaveCount(0);
   await expect(page.locator(".sync-status.synced")).toBeVisible();
+});
+
+test("云端前进时可以确认使用最新云端或用本机覆盖", async ({ page }) => {
+  await page.goto("/?demo=1&syncRemoteAhead=1");
+  await page.getByRole("button", { name: "设置" }).click();
+  await page.getByRole("button", { name: /内容同步/ }).click();
+  const panel = page.locator(".settings-content-panel");
+  await expect(panel.getByRole("button", { name: "使用云端最新版本" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "用本机项目覆盖云端" })).toBeVisible();
+  await panel.getByRole("button", { name: "用本机项目覆盖云端" }).click();
+  const dialog = page.getByRole("dialog", { name: "用本机项目覆盖云端？" });
+  await expect(dialog).toContainText("基于刚读取的云端最新提交");
+  await dialog.getByRole("button", { name: "确认覆盖" }).click();
+  await expect(page.locator(".sync-status.synced")).toBeVisible();
+});
+
+test("启动后自动下载签名更新并在应用内提示安装", async ({ page }) => {
+  await page.goto("/?demo=1&updateAvailable=1");
+  const dialog = page.getByRole("dialog", { name: "更新 1.0.7 已准备好" });
+  await expect(dialog).toBeVisible({ timeout: 8_000 });
+  await expect(dialog).toContainText("自动下载并通过签名验证");
+  await expect(dialog.getByRole("button", { name: "重启并安装" })).toBeVisible();
+  await dialog.getByRole("button", { name: "稍后" }).click();
+  await expect(dialog).toHaveCount(0);
 });
 
 test("维护页不向普通用户显示任务日志或终端输出，关于页保持精简", async ({ page }) => {

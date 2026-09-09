@@ -36,7 +36,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
-    "dompurify": "^3.2.6",
+    "dompurify": "^3.4.15",
     "markdown-it": "^14.2.0"
   },
   "devDependencies": {

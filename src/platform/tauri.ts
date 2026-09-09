@@ -193,11 +193,12 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.deleteLocalImage();
     return call<void>("delete_local_image", { projectId, sessionGeneration, imageId });
   },
-  uploadCloudflareImage(projectId: string, sessionGeneration: number) {
-    if (isBrowserDemo()) return browserMock.uploadCloudflareImage();
+  uploadCloudflareImage(projectId: string, sessionGeneration: number, directory = "/") {
+    if (isBrowserDemo()) return browserMock.uploadCloudflareImage(directory);
     return call<UploadResult | null>("upload_cloudflare_image", {
       projectId,
-      sessionGeneration
+      sessionGeneration,
+      directory
     });
   },
   importEditorImages(
@@ -346,8 +347,8 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.disableContentSync();
     return call<ContentSyncView>("disable_content_sync", { projectId, sessionGeneration });
   },
-  runContentSync(projectId: string, sessionGeneration: number, direction: "auto" | "local" | "remote" = "auto") {
-    if (isBrowserDemo()) return browserMock.runContentSync();
+  runContentSync(projectId: string, sessionGeneration: number, direction: "auto" | "local" | "remote" | "overwriteLocal" | "overwriteRemote" = "auto") {
+    if (isBrowserDemo()) return browserMock.runContentSync(direction);
     return call<ContentSyncView>("run_content_sync", { request: { projectId, sessionGeneration, direction } });
   },
   getContentSyncConflicts(projectId: string, sessionGeneration: number) {

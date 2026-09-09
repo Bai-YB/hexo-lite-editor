@@ -257,7 +257,7 @@
         localImages = await platform.importLocalImages(session.projectId, session.generation);
         onNotice(`图片已导入 ${config.imageBed.localImageDir}。`);
       } else {
-        const result = await platform.uploadCloudflareImage(session.projectId, session.generation);
+        const result = await platform.uploadCloudflareImage(session.projectId, session.generation, directory || "/");
         if (result) {
           onNotice("图片已上传到 Cloudflare-ImgBed。");
           loadedKey = "";

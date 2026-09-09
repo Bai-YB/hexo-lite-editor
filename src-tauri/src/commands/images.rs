@@ -105,13 +105,14 @@ pub async fn upload_cloudflare_image(
     app: AppHandle,
     project_id: String,
     session_generation: u64,
+    directory: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<Option<UploadResult>> {
     state.with_project(&project_id, Some(session_generation), |_| Ok(()))?;
     let config = load_config(&state)?.config;
     let endpoint = cloudflare_upload_endpoint(
         &config.image_bed.cloudflare_api_url,
-        &config.image_bed.upload_folder,
+        directory.as_deref().unwrap_or("/"),
     )?;
     let token = cloudflare_token(
         &config.image_bed.cloudflare_connection_id,
@@ -1432,9 +1433,16 @@ mod tests {
         let delete = cloudflare_delete_endpoint(&base, "posts/中文 图片.jpg").unwrap();
         assert!(delete.as_str().contains("/api/manage/delete/posts/"));
         assert!(!delete.as_str().contains("%2F"));
-        let upload = cloudflare_upload_endpoint(base.as_str(), "blog/2026").unwrap();
-        assert!(upload.query().unwrap().contains("returnFormat=full"));
-        assert!(upload.query().unwrap().contains("uploadFolder=blog%2F2026"));
+        let root_upload = cloudflare_upload_endpoint(base.as_str(), "/").unwrap();
+        assert!(root_upload.query().unwrap().contains("returnFormat=full"));
+        assert!(!root_upload.query().unwrap().contains("uploadFolder="));
+        let blog_upload = cloudflare_upload_endpoint(base.as_str(), "/blog").unwrap();
+        assert!(blog_upload.query().unwrap().contains("uploadFolder=blog"));
+        let article_upload = cloudflare_upload_endpoint(base.as_str(), "/blog/中文博文").unwrap();
+        assert!(article_upload
+            .query()
+            .unwrap()
+            .contains("uploadFolder=blog%2F%E4%B8%AD%E6%96%87%E5%8D%9A%E6%96%87"));
         assert_eq!(
             find_url(&json!({ "data": { "src": "/file/a.jpg" } })).as_deref(),
             Some("/file/a.jpg")

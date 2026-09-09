@@ -36,13 +36,16 @@ use std::process::Command;
 const MANIFEST: &str = ".hexo-lite-sync.json";
 const WEBDAV_OBJECTS: &str = ".hexo-lite-objects";
 const DEFAULT_BRANCH: &str = "hexo-lite-content";
+const LEGACY_MANIFEST_SCHEMA: u8 = 1;
+const PROJECT_MANIFEST_SCHEMA: u8 = 2;
 const MAX_SYNC_FILE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_BACKUPS: usize = 10;
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 const STARTUP_GIT_TIMEOUT: Duration = Duration::from_secs(3);
 const WEBDAV_TIMEOUT: Duration = Duration::from_secs(30);
 const STARTUP_WEBDAV_TIMEOUT: Duration = Duration::from_secs(3);
-const REMOTE_AHEAD_MESSAGE: &str = "远端内容已前进；不会覆盖远端，请先处理远端更新。";
+const REMOTE_AHEAD_MESSAGE: &str =
+    "云端项目在同步期间再次更新，请重新选择使用云端或用本机覆盖云端。";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
@@ -80,6 +83,7 @@ pub struct ContentSyncView {
     pub message: Option<String>,
     pub conflicts: Vec<String>,
     pub last_synced_at: Option<String>,
+    pub requires_scope_confirmation: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -286,6 +290,8 @@ struct SyncRecord {
     message: Option<String>,
     #[serde(default)]
     last_synced_at: Option<String>,
+    #[serde(default)]
+    full_project_sync_confirmed: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -375,7 +381,7 @@ pub fn preflight_content_sync(
     let remote_manifest_valid = if remote_branch_exists {
         checkout_fetched_branch(&cache).map_err(git_failure_error)?;
         read_manifest(&cache).is_some_and(|manifest| {
-            if manifest.schema_version != 1
+            if !manifest_schema_supported(manifest.schema_version)
                 || manifest.image_dir != config.image_bed.local_image_dir
             {
                 return false;
@@ -577,7 +583,7 @@ fn update_webdav_content_sync_inner(
                 true,
             )
         })?;
-        if manifest.schema_version != 1
+        if !manifest_schema_supported(manifest.schema_version)
             || manifest.image_dir != config.image_bed.local_image_dir
             || snapshot_from_manifest(&cache, &manifest).is_err()
         {
@@ -656,7 +662,7 @@ fn webdav_preflight_for_credentials(
     let mut remote_snapshot = None;
     let remote_manifest_valid = if fetched.exists {
         read_manifest(&cache).is_some_and(|manifest| {
-            if manifest.schema_version != 1
+            if !manifest_schema_supported(manifest.schema_version)
                 || manifest.image_dir != config.image_bed.local_image_dir
             {
                 return false;
@@ -767,7 +773,7 @@ pub fn enable_content_sync(
                 true,
             )
         })?;
-        if manifest.schema_version != 1
+        if !manifest_schema_supported(manifest.schema_version)
             || manifest.image_dir != config.image_bed.local_image_dir
             || snapshot_from_manifest(&cache, &manifest).is_err()
         {
@@ -796,6 +802,7 @@ pub fn enable_content_sync(
         remote_manifest_exists: false,
         message: Some("同步已启用，等待首次选择同步方向。".to_string()),
         last_synced_at: None,
+        full_project_sync_confirmed: true,
     };
     registry.records.retain(|item| item.project_path != key);
     registry.records.push(record);
@@ -860,7 +867,7 @@ pub fn enable_webdav_content_sync(
                 true,
             )
         })?;
-        if manifest.schema_version != 1
+        if !manifest_schema_supported(manifest.schema_version)
             || manifest.image_dir != config.image_bed.local_image_dir
             || snapshot_from_manifest(&cache, &manifest).is_err()
         {
@@ -889,6 +896,7 @@ pub fn enable_webdav_content_sync(
         remote_manifest_exists: remote.exists,
         message: Some("WebDAV 同步已启用，等待首次选择同步方向。".to_string()),
         last_synced_at: None,
+        full_project_sync_confirmed: true,
     };
     registry.records.retain(|item| item.project_path != key);
     registry.records.push(record);
@@ -944,6 +952,16 @@ pub fn run_content_sync(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> AppResult<ContentSyncView> {
+    if !matches!(
+        request.direction.as_str(),
+        "auto" | "local" | "remote" | "overwriteLocal" | "overwriteRemote"
+    ) {
+        return Err(AppError::new(
+            "invalid_sync_direction",
+            "同步方向无效。",
+            true,
+        ));
+    }
     let root = project_root(&state, &request.project_id, request.session_generation)?;
     emit_sync_phase(&app, "checking", ContentSyncStatus::Checking, None);
     let config = load_config(&state)?.config;
@@ -1287,6 +1305,7 @@ fn run_sync_for_root(state: &AppState, root: &Path, direction: &str) -> ContentS
             message: Some("此项目已有同步任务正在运行。".to_string()),
             conflicts: Vec::new(),
             last_synced_at: None,
+            requires_scope_confirmation: false,
         });
     };
     run_sync_for_root_locked(state, root, direction)
@@ -1313,6 +1332,20 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
         ContentSyncProvider::Github => "正在检查 GitHub 内容分支。".to_string(),
         ContentSyncProvider::Webdav => "正在检查 WebDAV 远端目录。".to_string(),
     });
+    let requires_scope_confirmation = record.provider == ContentSyncProvider::Github
+        && record.visibility != "private"
+        && !record.full_project_sync_confirmed;
+    if requires_scope_confirmation && !matches!(direction, "overwriteLocal" | "overwriteRemote") {
+        record.status = ContentSyncStatus::LocalPending;
+        record.message =
+            Some("项目同步范围已扩展到草稿、主题和配置；请确认后再首次上传完整项目。".to_string());
+        let view = view_from_record(record);
+        let _ = save_registry(state, &registry);
+        return view;
+    }
+    if direction == "overwriteRemote" {
+        record.full_project_sync_confirmed = true;
+    }
     let snapshot = match local_snapshot(root, &record.image_dir) {
         Ok(value) => value,
         Err(error) => return update_error(&mut registry, state, &key, error.message),
@@ -1343,14 +1376,14 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
     record.remote_etag = remote_fetch.etag.clone();
     record.remote_manifest_exists = remote_fetch.exists;
     if !remote_fetch.exists {
-        if direction != "local" {
+        if !matches!(direction, "local" | "overwriteRemote") {
             record.status = ContentSyncStatus::LocalPending;
             record.message = Some(match record.provider {
                 ContentSyncProvider::Github => {
-                    "远端内容分支不存在，请确认创建并上传本地文章。".to_string()
+                    "远端项目同步分支不存在，请确认创建并上传本地项目。".to_string()
                 }
                 ContentSyncProvider::Webdav => {
-                    "WebDAV 远端目录尚未初始化，请确认创建并上传本地文章。".to_string()
+                    "WebDAV 远端目录尚未初始化，请确认创建并上传本地项目。".to_string()
                 }
             });
             let view = view_from_record(record);
@@ -1372,7 +1405,7 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
         let _ = save_registry(state, &registry);
         return view;
     };
-    if manifest.schema_version != 1 {
+    if !manifest_schema_supported(manifest.schema_version) {
         record.status = ContentSyncStatus::Error;
         record.message = Some("远端同步清单版本不受支持。".to_string());
         let view = view_from_record(record);
@@ -1390,6 +1423,39 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
         Ok(value) => value,
         Err(error) => return update_error(&mut registry, state, &key, error.message),
     };
+
+    if direction == "overwriteRemote" {
+        return finish_local_push(state, root, &cache, record.clone(), snapshot, &mut registry);
+    }
+    if direction == "overwriteLocal" {
+        let overwrite_base = if manifest.schema_version == PROJECT_MANIFEST_SCHEMA {
+            hash_map(&snapshot)
+        } else {
+            snapshot
+                .iter()
+                .filter(|(path, _)| {
+                    remote.contains_key(*path) || record.base_files.contains_key(*path)
+                })
+                .map(|(path, item)| (path.clone(), item.hash.clone()))
+                .collect()
+        };
+        if let Err(error) = apply_remote(state, root, &cache, &snapshot, &remote, &overwrite_base) {
+            return update_error(&mut registry, state, &key, error.message);
+        }
+        record.base_files = hash_map(&remote);
+        record.conflicts.clear();
+        record.conflict_remote_head = None;
+        record.status = ContentSyncStatus::Synced;
+        record.message = Some(if manifest.schema_version == LEGACY_MANIFEST_SCHEMA {
+            "已使用云端最新内容覆盖对应本地文件；旧版云端未包含的项目配置已保留。".to_string()
+        } else {
+            "已使用云端最新项目覆盖本地项目，并已创建覆盖前备份。".to_string()
+        });
+        record.last_synced_at = Some(Local::now().to_rfc3339());
+        let view = view_from_record(record);
+        let _ = save_registry(state, &registry);
+        return view;
+    }
 
     if record.base_files.is_empty() {
         if direction == "remote" {
@@ -1449,7 +1515,7 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
     if !matches!(direction, "startup" | "remote") && !remote_only.is_empty() {
         record.status = ContentSyncStatus::RemoteAhead;
         record.message =
-            Some("远端内容已前进；写作期间不会自动拉取，请手动处理远端更新。".to_string());
+            Some("云端项目有更新，请选择使用云端最新版本，或确认用本机项目覆盖云端。".to_string());
         let view = view_from_record(record);
         let _ = save_registry(state, &registry);
         return view;
@@ -1539,7 +1605,7 @@ fn finish_local_push(
         return update_error(registry, state, &record.project_path, error.message);
     }
     let manifest = SyncManifest {
-        schema_version: 1,
+        schema_version: PROJECT_MANIFEST_SCHEMA,
         image_dir: record.image_dir.clone(),
         files: hash_map(&snapshot),
     };
@@ -1563,8 +1629,8 @@ fn finish_local_push(
     record.conflict_remote_head = None;
     record.status = ContentSyncStatus::Synced;
     record.message = Some(match record.provider {
-        ContentSyncProvider::Github => "本地文章已推送到内容分支。".to_string(),
-        ContentSyncProvider::Webdav => "本地文章已上传到 WebDAV 远端目录。".to_string(),
+        ContentSyncProvider::Github => "本地项目已推送到项目同步分支。".to_string(),
+        ContentSyncProvider::Webdav => "本地项目已上传到 WebDAV 远端目录。".to_string(),
     });
     record.last_synced_at = Some(Local::now().to_rfc3339());
     let view = view_from_record(&record);
@@ -1913,44 +1979,7 @@ fn apply_conflict_choices(
 fn local_snapshot(root: &Path, image_dir: &str) -> AppResult<Snapshot> {
     validate_sync_image_dir(image_dir)?;
     let mut paths = BTreeSet::new();
-    let posts_root = root.join("source/_posts");
-    if posts_root.exists() {
-        for entry in WalkDir::new(&posts_root)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            if entry.file_type().is_symlink()
-                || !entry.file_type().is_file()
-                || !entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-            {
-                continue;
-            }
-            let relative = entry
-                .path()
-                .strip_prefix(root)
-                .map_err(|_| AppError::new("sync_path_escape", "文章不属于当前项目。", false))?
-                .to_string_lossy()
-                .replace('\\', "/");
-            paths.insert(relative);
-        }
-    }
-    collect_scope(
-        root,
-        &root.join(image_dir.replace('/', std::path::MAIN_SEPARATOR_STR)),
-        &mut paths,
-    )?;
-    for post in paths
-        .clone()
-        .into_iter()
-        .filter(|path| path.starts_with("source/_posts/") && path.ends_with(".md"))
-    {
-        let stem = Path::new(&post).with_extension("");
-        collect_scope(root, &root.join(stem), &mut paths)?;
-    }
+    collect_scope(root, root, &mut paths)?;
     snapshot_paths(root, paths)
 }
 
@@ -1976,6 +2005,21 @@ fn collect_scope(root: &Path, directory: &Path, paths: &mut BTreeSet<String>) ->
     for entry in WalkDir::new(directory)
         .follow_links(false)
         .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            if entry.file_type().is_symlink() {
+                return false;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(root)
+                .unwrap_or(entry.path())
+                .to_string_lossy()
+                .replace('\\', "/");
+            !entry.file_type().is_dir() || !is_excluded_sync_directory(&relative)
+        })
         .filter_map(Result::ok)
     {
         if entry.file_type().is_symlink() || !entry.file_type().is_file() {
@@ -2019,7 +2063,11 @@ fn snapshot_paths(root: &Path, paths: BTreeSet<String>) -> AppResult<Snapshot> {
 }
 
 fn snapshot_from_manifest(cache: &Path, manifest: &SyncManifest) -> AppResult<Snapshot> {
-    validate_manifest_paths(&manifest.files, &manifest.image_dir)?;
+    validate_manifest_paths(
+        &manifest.files,
+        &manifest.image_dir,
+        manifest.schema_version,
+    )?;
     let mut paths = BTreeSet::new();
     for path in manifest.files.keys() {
         let candidate = cache.join(path);
@@ -2072,7 +2120,25 @@ fn snapshot_from_manifest(cache: &Path, manifest: &SyncManifest) -> AppResult<Sn
     Ok(snapshot)
 }
 
-fn validate_manifest_paths(files: &BTreeMap<String, String>, image_dir: &str) -> AppResult<()> {
+fn manifest_schema_supported(schema_version: u8) -> bool {
+    matches!(
+        schema_version,
+        LEGACY_MANIFEST_SCHEMA | PROJECT_MANIFEST_SCHEMA
+    )
+}
+
+fn validate_manifest_paths(
+    files: &BTreeMap<String, String>,
+    image_dir: &str,
+    schema_version: u8,
+) -> AppResult<()> {
+    if !manifest_schema_supported(schema_version) {
+        return Err(AppError::new(
+            "sync_manifest_version",
+            "远端同步清单版本不受支持。",
+            true,
+        ));
+    }
     let article_resource_prefixes = files
         .keys()
         .filter(|path| {
@@ -2096,20 +2162,22 @@ fn validate_manifest_paths(files: &BTreeMap<String, String>, image_dir: &str) ->
                 true,
             ));
         }
-        let image_prefix = image_dir.trim_matches('/');
-        let is_article =
-            path.starts_with("source/_posts/") && path.to_ascii_lowercase().ends_with(".md");
-        let is_article_resource = article_resource_prefixes
-            .iter()
-            .any(|prefix| path.starts_with(prefix));
-        let is_configured_image = !image_prefix.is_empty()
-            && (path == image_prefix || path.starts_with(&format!("{image_prefix}/")));
-        if !is_article && !is_article_resource && !is_configured_image {
-            return Err(AppError::new(
-                "sync_manifest_scope",
-                "远端同步清单包含文章、文章资源或图片目录以外的文件。",
-                true,
-            ));
+        if schema_version == LEGACY_MANIFEST_SCHEMA {
+            let image_prefix = image_dir.trim_matches('/');
+            let is_article =
+                path.starts_with("source/_posts/") && path.to_ascii_lowercase().ends_with(".md");
+            let is_article_resource = article_resource_prefixes
+                .iter()
+                .any(|prefix| path.starts_with(prefix));
+            let is_configured_image = !image_prefix.is_empty()
+                && (path == image_prefix || path.starts_with(&format!("{image_prefix}/")));
+            if !is_article && !is_article_resource && !is_configured_image {
+                return Err(AppError::new(
+                    "sync_manifest_scope",
+                    "旧版远端同步清单包含文章、文章资源或图片目录以外的文件。",
+                    true,
+                ));
+            }
         }
     }
     Ok(())
@@ -2136,22 +2204,40 @@ fn validate_manifest_path_shape(path: &str) -> AppResult<()> {
 fn is_excluded_sync_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     let name = lower.rsplit('/').next().unwrap_or_default();
-    let hidden_component = lower
-        .split('/')
-        .skip(1)
-        .any(|component| component.starts_with('.'));
-    hidden_component
+    let hidden_component = lower.split('/').any(|component| {
+        component.starts_with('.') && !matches!(component, ".gitignore" | ".gitattributes")
+    });
+    is_excluded_sync_directory(&lower)
+        || hidden_component
         || name.starts_with(".env")
         || matches!(
             name,
             "id_rsa" | "id_ed25519" | "credentials" | "credentials.json"
         )
+        || matches!(name, "db.json" | "thumbs.db" | ".ds_store")
         || name.ends_with('~')
+        || name.ends_with(".log")
         || [
             ".bak", ".backup", ".old", ".orig", ".tmp", ".swp", ".key", ".pem", ".p12", ".pfx",
         ]
         .iter()
         .any(|suffix| name.ends_with(suffix))
+}
+
+fn is_excluded_sync_directory(path: &str) -> bool {
+    let normalized = path.trim_matches('/').to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    if normalized == "public" || normalized.starts_with("public/") {
+        return true;
+    }
+    normalized.split('/').any(|component| {
+        matches!(
+            component,
+            ".git" | ".deploy_git" | ".cache" | ".hexo" | "node_modules"
+        )
+    })
 }
 
 fn copy_snapshot_to_cache(
@@ -2340,7 +2426,7 @@ fn webdav_client(timeout: Duration) -> Result<reqwest::blocking::Client, GitFail
     reqwest::blocking::Client::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent("Hexo-Lite-Editor/1.0.5 WebDAV-Sync")
+        .user_agent("Hexo-Lite-Editor/1.0.6 WebDAV-Sync")
         .build()
         .map_err(|error| GitFailure {
             message: format!("无法初始化 WebDAV 客户端：{error}"),
@@ -2391,7 +2477,12 @@ fn fetch_webdav_remote(
             auth: false,
             offline: false,
         })?;
-    validate_manifest_paths(&manifest.files, &manifest.image_dir).map_err(|error| GitFailure {
+    validate_manifest_paths(
+        &manifest.files,
+        &manifest.image_dir,
+        manifest.schema_version,
+    )
+    .map_err(|error| GitFailure {
         message: error.message,
         auth: false,
         offline: false,
@@ -3215,7 +3306,7 @@ fn detect_github_visibility(repository: &str) -> String {
     let endpoint = format!("https://api.github.com/repos/{owner}/{repo}");
     let response = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(8))
-        .user_agent("Hexo-Lite-Editor/1.0.5")
+        .user_agent("Hexo-Lite-Editor/1.0.6")
         .build()
         .and_then(|client| client.get(endpoint).send());
     match response {
@@ -3257,6 +3348,9 @@ fn view_from_record(record: &SyncRecord) -> ContentSyncView {
         message: record.message.clone(),
         conflicts: record.conflicts.clone(),
         last_synced_at: record.last_synced_at.clone(),
+        requires_scope_confirmation: record.provider == ContentSyncProvider::Github
+            && record.visibility != "private"
+            && !record.full_project_sync_confirmed,
     }
 }
 
@@ -3273,6 +3367,7 @@ fn off_view() -> ContentSyncView {
         message: None,
         conflicts: Vec::new(),
         last_synced_at: None,
+        requires_scope_confirmation: false,
     }
 }
 fn error_view(message: String) -> ContentSyncView {
@@ -3288,6 +3383,7 @@ fn error_view(message: String) -> ContentSyncView {
         message: Some(message),
         conflicts: Vec::new(),
         last_synced_at: None,
+        requires_scope_confirmation: false,
     }
 }
 fn path_key(path: &Path) -> String {
@@ -3719,6 +3815,7 @@ mod tests {
                     remote_manifest_exists: false,
                     message: Some("expired credentials".to_string()),
                     last_synced_at: Some("2026-07-25T00:00:00+08:00".to_string()),
+                    full_project_sync_confirmed: true,
                 }],
             },
         )
@@ -3871,6 +3968,7 @@ mod tests {
                     remote_manifest_exists: false,
                     message: Some("expired credentials".to_string()),
                     last_synced_at: Some("2026-07-25T00:00:00+08:00".to_string()),
+                    full_project_sync_confirmed: true,
                 }],
             },
         )
@@ -4076,44 +4174,67 @@ mod tests {
     }
 
     #[test]
-    fn validates_manifest_paths_and_excludes_drafts() {
+    fn validates_legacy_and_full_project_manifest_paths() {
         let hash = "a".repeat(64);
         let valid = BTreeMap::from([
             ("source/_posts/hello.md".to_string(), hash.clone()),
             ("source/_posts/hello/a.png".to_string(), hash.clone()),
             ("source/images/a.png".to_string(), hash.clone()),
         ]);
-        assert!(validate_manifest_paths(&valid, "source/images").is_ok());
+        assert!(validate_manifest_paths(&valid, "source/images", LEGACY_MANIFEST_SCHEMA).is_ok());
         let draft = BTreeMap::from([("source/_drafts/private.md".to_string(), hash.clone())]);
-        assert!(validate_manifest_paths(&draft, "source/images").is_err());
+        assert!(validate_manifest_paths(&draft, "source/images", LEGACY_MANIFEST_SCHEMA).is_err());
+        assert!(validate_manifest_paths(&draft, "source/images", PROJECT_MANIFEST_SCHEMA).is_ok());
         let orphan = BTreeMap::from([("source/_posts/orphan/a.png".to_string(), hash)]);
-        assert!(validate_manifest_paths(&orphan, "source/images").is_err());
+        assert!(validate_manifest_paths(&orphan, "source/images", LEGACY_MANIFEST_SCHEMA).is_err());
         assert!(validate_manifest_path_shape("../secret").is_err());
         assert!(validate_sync_image_dir("source/_drafts").is_err());
     }
 
     #[test]
-    fn local_snapshot_only_contains_posts_resources_and_configured_images() {
+    fn local_snapshot_contains_project_sources_and_excludes_generated_or_sensitive_files() {
         let temp = tempfile::TempDir::new().unwrap();
         let root = temp.path();
         fs::create_dir_all(root.join("source/_posts/hello")).unwrap();
         fs::create_dir_all(root.join("source/_drafts")).unwrap();
         fs::create_dir_all(root.join("source/images")).unwrap();
+        fs::create_dir_all(root.join("themes/quiet/layout")).unwrap();
+        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(root.join("public")).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
         fs::write(root.join("source/_posts/hello.md"), "post").unwrap();
         fs::write(root.join("source/_posts/hello/a.png"), "asset").unwrap();
         fs::write(root.join("source/_drafts/private.md"), "secret").unwrap();
         fs::write(root.join("source/images/site.png"), "image").unwrap();
         fs::write(root.join("source/images/site.png.bak"), "backup").unwrap();
         fs::write(root.join("source/images/id_rsa"), "private key").unwrap();
-        fs::write(root.join("_config.yml"), "token: secret").unwrap();
+        fs::write(root.join("_config.yml"), "title: portable").unwrap();
+        fs::write(root.join("themes/quiet/_config.yml"), "menu: true").unwrap();
+        fs::write(root.join("themes/quiet/layout/index.ejs"), "layout").unwrap();
+        fs::write(root.join("package.json"), "{}").unwrap();
+        fs::write(root.join(".gitignore"), "public/").unwrap();
+        fs::write(root.join(".env.local"), "TOKEN=secret").unwrap();
+        fs::write(root.join("node_modules/pkg/index.js"), "generated").unwrap();
+        fs::write(root.join("public/index.html"), "generated").unwrap();
+        fs::write(root.join(".git/config"), "secret").unwrap();
+        fs::write(root.join("db.json"), "generated").unwrap();
         let snapshot = local_snapshot(root, "source/images").unwrap();
         assert!(snapshot.contains_key("source/_posts/hello.md"));
         assert!(snapshot.contains_key("source/_posts/hello/a.png"));
         assert!(snapshot.contains_key("source/images/site.png"));
+        assert!(snapshot.contains_key("source/_drafts/private.md"));
+        assert!(snapshot.contains_key("_config.yml"));
+        assert!(snapshot.contains_key("themes/quiet/_config.yml"));
+        assert!(snapshot.contains_key("themes/quiet/layout/index.ejs"));
+        assert!(snapshot.contains_key("package.json"));
+        assert!(snapshot.contains_key(".gitignore"));
         assert!(!snapshot.contains_key("source/images/site.png.bak"));
         assert!(!snapshot.contains_key("source/images/id_rsa"));
-        assert!(!snapshot.contains_key("source/_drafts/private.md"));
-        assert!(!snapshot.contains_key("_config.yml"));
+        assert!(!snapshot.contains_key(".env.local"));
+        assert!(!snapshot.contains_key("node_modules/pkg/index.js"));
+        assert!(!snapshot.contains_key("public/index.html"));
+        assert!(!snapshot.contains_key(".git/config"));
+        assert!(!snapshot.contains_key("db.json"));
     }
 
     #[test]
@@ -4240,6 +4361,7 @@ mod tests {
         fs::create_dir_all(project.join("source/_posts")).unwrap();
         fs::create_dir_all(project.join("source/images")).unwrap();
         fs::write(project.join("source/_posts/hello.md"), "first").unwrap();
+        fs::write(project.join("_config.yml"), "title: synced").unwrap();
         assert!(Command::new("git")
             .args(["init", "--bare"])
             .arg(&remote)
@@ -4253,7 +4375,7 @@ mod tests {
         write_manifest(
             &cache,
             &SyncManifest {
-                schema_version: 1,
+                schema_version: PROJECT_MANIFEST_SCHEMA,
                 image_dir: "source/images".to_string(),
                 files: hash_map(&first),
             },
@@ -4268,7 +4390,7 @@ mod tests {
         write_manifest(
             &cache,
             &SyncManifest {
-                schema_version: 1,
+                schema_version: PROJECT_MANIFEST_SCHEMA,
                 image_dir: "source/images".to_string(),
                 files: hash_map(&second),
             },
@@ -4283,7 +4405,7 @@ mod tests {
         assert!(tree.contains(MANIFEST));
         assert!(tree.contains("source/_posts/hello.md"));
         assert!(tree.contains("source/_posts/new.md"));
-        assert!(!tree.contains("_config.yml"));
+        assert!(tree.contains("_config.yml"));
     }
 
     #[test]
@@ -4341,6 +4463,7 @@ mod tests {
             remote_manifest_exists: false,
             message: None,
             last_synced_at: None,
+            full_project_sync_confirmed: true,
         };
         save_registry(
             &state,
@@ -4361,7 +4484,7 @@ mod tests {
         write_manifest(
             &cache,
             &SyncManifest {
-                schema_version: 1,
+                schema_version: PROJECT_MANIFEST_SCHEMA,
                 image_dir: "source/images".to_string(),
                 files: hash_map(&remote_snapshot),
             },
@@ -4387,7 +4510,7 @@ mod tests {
         write_manifest(
             &cache,
             &SyncManifest {
-                schema_version: 1,
+                schema_version: PROJECT_MANIFEST_SCHEMA,
                 image_dir: "source/images".to_string(),
                 files: hash_map(&remote_snapshot),
             },
@@ -4401,6 +4524,42 @@ mod tests {
         assert_eq!(
             fs::read_to_string(project.join("source/_posts/remote.md")).unwrap(),
             "remote changed"
+        );
+        let used_remote = run_sync_for_root(&state, &project, "overwriteLocal");
+        assert!(matches!(used_remote.status, ContentSyncStatus::Synced));
+        assert_eq!(
+            fs::read_to_string(project.join("source/_posts/remote.md")).unwrap(),
+            "remote ahead"
+        );
+
+        fs::write(project.join("source/_posts/local.md"), "local wins").unwrap();
+        fs::write(cache.join("source/_posts/remote.md"), "remote newer again").unwrap();
+        let remote_snapshot = local_snapshot(&cache, "source/images").unwrap();
+        write_manifest(
+            &cache,
+            &SyncManifest {
+                schema_version: PROJECT_MANIFEST_SCHEMA,
+                image_dir: "source/images".to_string(),
+                files: hash_map(&remote_snapshot),
+            },
+        )
+        .unwrap();
+        commit_and_push(&cache, DEFAULT_BRANCH).unwrap();
+        assert!(matches!(
+            run_sync_for_root(&state, &project, "push").status,
+            ContentSyncStatus::RemoteAhead
+        ));
+        let used_local = run_sync_for_root(&state, &project, "overwriteRemote");
+        assert!(matches!(used_local.status, ContentSyncStatus::Synced));
+        fetch_remote_branch(&cache, DEFAULT_BRANCH).unwrap();
+        checkout_fetched_branch(&cache).unwrap();
+        assert_eq!(
+            fs::read_to_string(cache.join("source/_posts/local.md")).unwrap(),
+            "local wins"
+        );
+        assert_eq!(
+            fs::read_to_string(cache.join("source/_posts/remote.md")).unwrap(),
+            "remote ahead"
         );
         let pages_after = git(
             &pages,
@@ -4470,6 +4629,7 @@ mod tests {
             remote_manifest_exists: false,
             message: None,
             last_synced_at: None,
+            full_project_sync_confirmed: true,
         };
         let state = AppState::new(&config);
         fs::create_dir_all(&state.sync_cache_dir).unwrap();

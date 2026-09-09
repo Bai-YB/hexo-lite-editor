@@ -19,7 +19,8 @@
     PreviewServerView,
     RecentProjectView,
     SettingsSectionId,
-    TaskEvent
+    TaskEvent,
+    UpdateSnapshot
   } from "$shared/types/app";
   import { EditorSessionStore } from "$features/editor/EditorSessionStore";
   import type { SettingsController } from "$features/settings/controller";
@@ -69,6 +70,7 @@
   let publishTaskId = "";
   let pendingImageUploads = 0;
   let settingsInitialSection: SettingsSectionId | null = null;
+  let autoUpdateReady: UpdateSnapshot | null = null;
   let configRevision = 0;
   $: $language;
   $: if (configLoaded && typeof document !== "undefined") {
@@ -102,13 +104,27 @@
         const lastCheck = Number(localStorage.getItem(lastCheckKey) ?? "0");
         if (!Number.isFinite(lastCheck) || Date.now() - lastCheck >= 86_400_000) {
           setTimeout(() => {
-            localStorage.setItem(lastCheckKey, String(Date.now()));
-            void platform
-              .checkUpdate()
-              .then((update) => {
-                if (update.status === "available") showNotice(t("update.availableNotice", { version: update.latestVersion ?? "" }));
-              })
-              .catch((error) => console.info("启动更新检查未完成", normalizeError(error).message));
+            void (async () => {
+              let update: UpdateSnapshot;
+              try {
+                update = await platform.checkUpdate();
+                localStorage.setItem(lastCheckKey, String(Date.now()));
+              } catch (error) {
+                console.info("启动更新检查未完成", normalizeError(error).message);
+                return;
+              }
+              if (update.status !== "available") return;
+              showNotice(`发现新版本 ${update.latestVersion ?? ""}，正在后台安全下载。`);
+              try {
+                const downloaded = await platform.downloadUpdate();
+                if (downloaded.status === "downloaded") {
+                  autoUpdateReady = downloaded;
+                  showNotice(`版本 ${downloaded.latestVersion ?? ""} 已下载并验证签名，可重启安装。`);
+                }
+              } catch (error) {
+                showNotice(`自动下载更新失败：${normalizeError(error).message}`, "error");
+              }
+            })();
           }, 3000);
         }
       }
@@ -466,6 +482,7 @@
       showNotice("请等待图片上传、Hexo 或发布任务完成后再安装更新。", "error");
       return;
     }
+    autoUpdateReady = null;
     requestGuard("安装更新前需要保存或放弃未完成的文章和设置修改。", async () => {
       try { await platform.installUpdate(); }
       catch (error) { showNotice(normalizeError(error).message, "error"); }
@@ -702,6 +719,16 @@
     </main>
   </div>
 </div>
+
+{#if autoUpdateReady}
+  <ModalDialog
+    title={`更新 ${autoUpdateReady.latestVersion ?? ""} 已准备好`}
+    description="更新包已在应用内自动下载并通过签名验证。可以现在重启安装，也可以稍后在“关于”页面安装。"
+    onClose={() => (autoUpdateReady = null)}
+  >
+    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (autoUpdateReady = null)}>稍后</button><button class="button primary" type="button" data-autofocus on:click={installUpdate}>重启并安装</button></svelte:fragment>
+  </ModalDialog>
+{/if}
 
 {#if guardAction}
   <ModalDialog
