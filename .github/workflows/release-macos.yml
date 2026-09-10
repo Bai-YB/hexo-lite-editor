@@ -123,8 +123,8 @@ jobs:
           gh release upload "$tag" \
             "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.dmg" \
             "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.zip" \
-            "release-artifacts/$version/Hexo Lite Editor.app.tar.gz" \
-            "release-artifacts/$version/Hexo Lite Editor.app.tar.gz.sig" \
+            "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz" \
+            "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz.sig" \
             "release-artifacts/$version/release-manifest-macos.json" \
             "release-artifacts/$version/SHA256SUMS-macos.txt" \
             --clobber
@@ -151,8 +151,8 @@ jobs:
             --notes "$notes" \
             --windows-asset "$windows_asset" \
             --windows-signature "$windows_signature" \
-            --macos-asset "release-artifacts/$version/Hexo Lite Editor.app.tar.gz" \
-            --macos-signature "release-artifacts/$version/Hexo Lite Editor.app.tar.gz.sig" \
+            --macos-asset "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz" \
+            --macos-signature "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz.sig" \
             --output "release-artifacts/$version/latest.json"
           node scripts/verify-updater-manifest.mjs \
             --manifest "release-artifacts/$version/latest.json" \

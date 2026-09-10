@@ -30,12 +30,13 @@ if [[ ! -d "$app_source" || ! -f "$dmg_source" ]]; then
 fi
 
 app_zip="Hexo-Lite-Editor_${version}_macos-universal.app.zip"
-updater_name="Hexo Lite Editor.app.tar.gz"
+updater_source_name="Hexo Lite Editor.app.tar.gz"
+updater_name="Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz"
 dmg_name="Hexo-Lite-Editor_${version}_macos-universal.dmg"
 ditto -c -k --sequesterRsrc --keepParent "$app_source" "$output_dir/$app_zip"
 cp "$dmg_source" "$output_dir/$dmg_name"
-cp "$bundle_root/macos/$updater_name" "$output_dir/$updater_name"
-cp "$bundle_root/macos/$updater_name.sig" "$output_dir/$updater_name.sig"
+cp "$bundle_root/macos/$updater_source_name" "$output_dir/$updater_name"
+cp "$bundle_root/macos/$updater_source_name.sig" "$output_dir/$updater_name.sig"
 
 code_signed=false
 if codesign --verify --deep --strict "$app_source" 2>/dev/null; then
