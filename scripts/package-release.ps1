@@ -42,22 +42,27 @@ try {
     $msiSource = Join-Path $targetDir "bundle\msi\Hexo Lite Editor_${Version}_x64_en-US.msi"
     $exeSource = Join-Path $targetDir "hexo-lite-editor.exe"
     $routeHelper = Join-Path $targetDir "resources\resolve-hexo-route.cjs"
-    $updaterSource = Join-Path $targetDir "bundle\nsis\Hexo Lite Editor_${Version}_x64-setup.nsis.zip"
-    $updaterSignature = "$updaterSource.sig"
+    # Tauri v2 reuses the NSIS installer itself as the Windows updater artifact.
+    # `createUpdaterArtifacts: true` therefore emits installer `.sig` files rather
+    # than the legacy v1-compatible `.nsis.zip` bundle.
+    $nsisSignature = "$nsisSource.sig"
+    $msiSignature = "$msiSource.sig"
 
-    foreach ($required in @($nsisSource, $msiSource, $exeSource, $routeHelper, $updaterSource, $updaterSignature)) {
+    foreach ($required in @($nsisSource, $nsisSignature, $msiSource, $msiSignature, $exeSource, $routeHelper)) {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
             throw "Missing release input: $required"
         }
     }
 
     $setupName = "Hexo-Lite-Editor_${Version}_windows-x64-setup.exe"
+    $setupSignatureName = "$setupName.sig"
     $msiName = "Hexo-Lite-Editor_${Version}_windows-x64.msi"
+    $msiSignatureName = "$msiName.sig"
     $portableName = "Hexo-Lite-Editor_${Version}_windows-x64-portable.zip"
     Copy-Item -LiteralPath $nsisSource -Destination (Join-Path $outputDir $setupName)
+    Copy-Item -LiteralPath $nsisSignature -Destination (Join-Path $outputDir $setupSignatureName)
     Copy-Item -LiteralPath $msiSource -Destination (Join-Path $outputDir $msiName)
-    Copy-Item -LiteralPath $updaterSource -Destination $outputDir
-    Copy-Item -LiteralPath $updaterSignature -Destination $outputDir
+    Copy-Item -LiteralPath $msiSignature -Destination (Join-Path $outputDir $msiSignatureName)
 
     $portableStage = Join-Path $outputDir "portable-stage"
     New-Item -ItemType Directory -Path (Join-Path $portableStage "resources") -Force | Out-Null
@@ -78,9 +83,7 @@ try {
     Compress-Archive -Path (Join-Path $portableStage "*") -DestinationPath (Join-Path $outputDir $portableName) -CompressionLevel Optimal
     Remove-Item -LiteralPath $portableStage -Recurse -Force
 
-    $updaterName = Split-Path -Leaf $updaterSource
-    $updaterSignatureName = Split-Path -Leaf $updaterSignature
-    $assetNames = @($setupName, $msiName, $portableName, $updaterName, $updaterSignatureName)
+    $assetNames = @($setupName, $setupSignatureName, $msiName, $msiSignatureName, $portableName)
     $commit = (& git rev-parse HEAD).Trim()
     $assetEntries = foreach ($name in $assetNames) {
         $file = Get-Item -LiteralPath (Join-Path $outputDir $name)

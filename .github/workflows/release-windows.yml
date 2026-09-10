@@ -73,7 +73,23 @@ jobs:
 
       - name: Package Windows release
         shell: pwsh
-        run: ./scripts/package-release.ps1 -Version $env:RELEASE_VERSION
+        run: |
+          $ErrorActionPreference = "Stop"
+          try {
+            ./scripts/package-release.ps1 -Version $env:RELEASE_VERSION *>&1 | Tee-Object -FilePath windows-package.log
+            if ($LASTEXITCODE -ne 0) { throw "Windows package command exited with code $LASTEXITCODE" }
+          } catch {
+            $_ | Out-String | Tee-Object -FilePath windows-package.log -Append | Write-Error
+            exit 1
+          }
+
+      - name: Upload package diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-package-diagnostics
+          path: windows-package.log
+          if-no-files-found: ignore
 
       - name: Smoke test portable archive
         shell: pwsh
@@ -90,7 +106,6 @@ jobs:
             release-artifacts/${{ env.RELEASE_VERSION }}/Hexo-Lite-Editor_${{ env.RELEASE_VERSION }}_windows-x64-portable.zip
             release-artifacts/${{ env.RELEASE_VERSION }}/Hexo-Lite-Editor_${{ env.RELEASE_VERSION }}_windows-x64-setup.exe
             release-artifacts/${{ env.RELEASE_VERSION }}/Hexo-Lite-Editor_${{ env.RELEASE_VERSION }}_windows-x64.msi
-            release-artifacts/${{ env.RELEASE_VERSION }}/*.nsis.zip
             release-artifacts/${{ env.RELEASE_VERSION }}/*.sig
             release-artifacts/${{ env.RELEASE_VERSION }}/release-manifest.json
             release-artifacts/${{ env.RELEASE_VERSION }}/SHA256SUMS.txt
@@ -111,9 +126,9 @@ jobs:
           $assets = @(
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-portable.zip"
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-setup.exe"
+            "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-setup.exe.sig"
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64.msi"
-            "$releaseDirectory/Hexo Lite Editor_$($env:RELEASE_VERSION)_x64-setup.nsis.zip"
-            "$releaseDirectory/Hexo Lite Editor_$($env:RELEASE_VERSION)_x64-setup.nsis.zip.sig"
+            "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64.msi.sig"
             "$releaseDirectory/release-manifest.json"
             "$releaseDirectory/SHA256SUMS.txt"
           )
