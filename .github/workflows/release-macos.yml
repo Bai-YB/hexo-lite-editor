@@ -160,7 +160,10 @@ jobs:
             --platform windows-x86_64 \
             --platform darwin-x86_64 \
             --platform darwin-aarch64
-          shasum -a 256 "release-artifacts/$version/latest.json" >> "release-artifacts/$version/SHA256SUMS-macos.txt"
+          (
+            cd "release-artifacts/$version"
+            shasum -a 256 latest.json >> SHA256SUMS-macos.txt
+          )
           gh release upload "$tag" \
             "release-artifacts/$version/latest.json" \
             "release-artifacts/$version/SHA256SUMS-macos.txt" \
