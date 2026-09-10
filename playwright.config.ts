@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
+  globalSetup: "./tests/e2e/global-setup.ts",
   testDir: "./tests/e2e",
   outputDir: "./output/playwright/results",
   reporter: [["list"], ["html", { outputFolder: "output/playwright/report", open: "never" }]],
@@ -12,7 +13,7 @@ export default defineConfig({
   webServer: {
     command: "pnpm dev --host 127.0.0.1 --port 1420",
     url: "http://127.0.0.1:1420/?demo=1",
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000
   },
   projects: [

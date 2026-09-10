@@ -103,18 +103,18 @@
 
 | 检查项 | 当前结果 | 最终证据 |
 |---|---|---|
-| 修复提交 SHA | 待完成 | 待填写最终提交，确认所有业务修改和本文均包含其中。 |
+| 修复提交 SHA | 以最终 `v1.0.6-r1^{}` 为准 | 主修复提交为 `556dc6a3bae1af4a9f32d61a96f90b1c182c8067`，最终候选另外修正图库焦点时序并预热 CI 页面；发布后补充最终提交。 |
 | `pnpm check` | 通过：0 errors、0 warnings，退出码 0 | `output/fix/frontend-check-final.log`，包含恢复逻辑最终修改。 |
 | `pnpm test` | 通过：24 个文件、118 个用例，退出码 0 | `output/fix/frontend-full-test-final.log`，包括恢复流程回归。 |
 | `pnpm test:e2e` | 通过：35 / 35，退出码 0 | `output/fix/e2e-full-final.log`；desktop-chromium，浏览器 demo/mock IPC，不是原生全链。 |
-| `pnpm build` | 通过，退出码 0 | 发布执行者的本轮最终命令结果；生成前端 `build/`。 |
+| `pnpm build` | 通过，退出码 0 | `output/fix/frontend-build-final.log`；生成前端 `build/`。 |
 | `pnpm audit --prod` | 通过：No known vulnerabilities，退出码 0 | `output/fix/dependency-audit-final.log`。 |
 | `cargo fmt --check` | 通过，退出码 0 | 同步最终修改后的本地命令执行结果；跨平台 CI 仍待核对。 |
 | `cargo clippy --all-targets --all-features -- -D warnings` | 通过，退出码 0 | 同步最终修改后的本地严格 Clippy 命令执行结果。 |
 | `cargo test --all-targets --all-features` | 通过，退出码 0；Rust 报告 94 passed | 其中 3 个真实 WebDAV 测试因缺环境内部提前返回，实际执行业务断言为 91 个；不将其计为联网验证。 |
 | Windows 构建、便携包/安装包 smoke | 待完成 | 填写 CI run URL、最终状态、对应提交、产物名及 smoke 结果。 |
 | macOS universal 构建 | 待完成 | 填写 CI run URL、最终状态、对应提交及产物名；区分构建成功和人工运行。 |
-| 新标签与原标签 | 待完成 | 验证 `v1.0.6-r1` 指向修复提交；原 `v1.0.6` 保留基线。 |
+| 新标签与原标签 | 修复候选构建中；原发布保持不变 | 首轮 `v1.0.6-r1` 未生成公开发布，CI 发现焦点时序和冷启动问题后中止。最终候选将重新构建；原 `v1.0.6` 标签对象仍为 `0b4787aa6fb62dfc2dae08881c1299bbb3dd0dfc`，指向 `6a4dd516edab0d294c8b8f6b283774ba21d72762`。 |
 | 资产哈希与签名 | 待完成 | 下载本次发布资产核对 SHA256 清单、签名及版本；不能复用原发布验证目录。 |
 | 更新清单 | 待完成 | 验证三个目标平台、签名、版本 `1.0.6` 及所有 URL 中的 `v1.0.6-r1`。 |
 | GitHub Release | 待完成 | 填写发布 URL、公开状态、是否 latest、发布时间。 |

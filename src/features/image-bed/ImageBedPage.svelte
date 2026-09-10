@@ -202,7 +202,7 @@
         event.preventDefault();
         const opener = context.opener;
         context = null;
-        requestAnimationFrame(() => opener.focus());
+        opener.focus();
         return;
       }
     }
@@ -210,7 +210,7 @@
       const opener = context?.opener;
       context = null;
       sourceMenuOpen = false;
-      requestAnimationFrame(() => opener?.focus());
+      opener?.focus();
     }
   }
 

@@ -139,6 +139,8 @@ test("Cloudflare 资源按目录显示文件夹、压缩包和图片灯箱", asy
   await expect(page.getByRole("menu")).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "插入当前文章" })).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(archive.locator(".asset-more")).toBeFocused();
   await archive.locator(".asset-primary").press("Shift+F10");
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");

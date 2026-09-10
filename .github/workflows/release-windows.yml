@@ -65,12 +65,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm exec playwright install chromium
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          pnpm test:e2e
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm test:e2e
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm audit --prod
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-playwright-report
+          path: output/playwright/
+          if-no-files-found: ignore
 
       - name: Rust checks
         working-directory: src-tauri
