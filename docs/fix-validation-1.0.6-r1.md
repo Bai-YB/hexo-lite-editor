@@ -2,7 +2,7 @@
 
 本记录对应 [2026-09-10 代码审计](code-audit-2026-09-10.md) 的 **36 项问题（9 项 P1、27 项 P2）**。审计基线为 `25c4b9460ce034c77d2ce0d3617127417261565f`；原审计中的缺陷探针、56 个前端测试、79 个 Rust 测试和 28 个浏览器测试属于修复前证据，不能用来证明本次修复通过。
 
-本文逐项核对当前工作区的实际实现和回归测试。**下表中的“回归证据”指已存在且已审阅的测试代码；是否在最终发布提交上执行成功，以文末发布检查记录为准。** 本文建立时，最终全量检查、打包与发布仍在进行，不据此声称已发布或所有平台全绿。
+本文逐项核对实际实现和回归测试。最终修复提交已通过 Linux、Windows、macOS CI，安装包已公开发布；下载后的 14 个资产、12 条 SHA-256、3 份更新包签名和三平台更新清单均已验证。逐项证据及验证边界见下表和文末记录。
 
 ## 版本与交付约定
 
@@ -99,25 +99,26 @@
 
 ## 最终检查与发布记录
 
-本地检查已完成，结果记录如下；最终提交、跨平台 CI、签名资产和公开发布仍需发布执行者补齐。空项或“待完成”均表示尚未证明完成，不允许根据旧日志推定通过。
+本地检查、最终提交 CI、原生打包和发布后下载验证均已完成。发布资产来自同一最终修复提交；本记录后续只补充验证结果，没有移动已公开发布的标签。
 
 | 检查项 | 当前结果 | 最终证据 |
 |---|---|---|
-| 修复提交 SHA | 以最终 `v1.0.6-r1^{}` 为准 | 主修复提交为 `556dc6a3bae1af4a9f32d61a96f90b1c182c8067`，最终候选另外修正图库焦点时序并预热 CI 页面；发布后补充最终提交。 |
-| `pnpm check` | 通过：0 errors、0 warnings，退出码 0 | `output/fix/frontend-check-final.log`，包含恢复逻辑最终修改。 |
+| 修复提交 SHA | `fc01b5e92f3bc869289a0e137a783a11447e7657` | 主修复提交为 `556dc6a3bae1af4a9f32d61a96f90b1c182c8067`，最终提交另外修正图库焦点时序并预热 CI 页面；后续文档提交仅补充验证证据。 |
+| `pnpm check` | 通过：0 errors、0 warnings，退出码 0 | `output/fix/frontend-check-final.log` 与焦点补丁后 `frontend-check-candidate2.log`；最终提交三个 CI 前端检查均通过。 |
 | `pnpm test` | 通过：24 个文件、118 个用例，退出码 0 | `output/fix/frontend-full-test-final.log`，包括恢复流程回归。 |
-| `pnpm test:e2e` | 通过：35 / 35，退出码 0 | `output/fix/e2e-full-final.log`；desktop-chromium，浏览器 demo/mock IPC，不是原生全链。 |
-| `pnpm build` | 通过，退出码 0 | `output/fix/frontend-build-final.log`；生成前端 `build/`。 |
+| `pnpm test:e2e` | 通过：35 / 35，退出码 0 | 本地最终 `output/fix/e2e-candidate2.log`，最终提交 Linux 与 Windows CI 均 35/35；浏览器 demo/mock IPC，不是原生全链。 |
+| `pnpm build` | 通过，退出码 0 | 本地 `output/fix/frontend-build-candidate2.log` 与三个 CI；生成前端 `build/`。 |
 | `pnpm audit --prod` | 通过：No known vulnerabilities，退出码 0 | `output/fix/dependency-audit-final.log`。 |
-| `cargo fmt --check` | 通过，退出码 0 | 同步最终修改后的本地命令执行结果；跨平台 CI 仍待核对。 |
+| `cargo fmt --check` | 通过，退出码 0 | 本地及最终提交 Linux、Windows、macOS CI 均通过。 |
 | `cargo clippy --all-targets --all-features -- -D warnings` | 通过，退出码 0 | 同步最终修改后的本地严格 Clippy 命令执行结果。 |
 | `cargo test --all-targets --all-features` | 通过，退出码 0；Rust 报告 94 passed | 其中 3 个真实 WebDAV 测试因缺环境内部提前返回，实际执行业务断言为 91 个；不将其计为联网验证。 |
-| Windows 构建、便携包/安装包 smoke | 待完成 | 填写 CI run URL、最终状态、对应提交、产物名及 smoke 结果。 |
-| macOS universal 构建 | 待完成 | 填写 CI run URL、最终状态、对应提交及产物名；区分构建成功和人工运行。 |
-| 新标签与原标签 | 修复候选构建中；原发布保持不变 | 首轮 `v1.0.6-r1` 未生成公开发布，CI 发现焦点时序和冷启动问题后中止。最终候选将重新构建；原 `v1.0.6` 标签对象仍为 `0b4787aa6fb62dfc2dae08881c1299bbb3dd0dfc`，指向 `6a4dd516edab0d294c8b8f6b283774ba21d72762`。 |
-| 资产哈希与签名 | 待完成 | 下载本次发布资产核对 SHA256 清单、签名及版本；不能复用原发布验证目录。 |
-| 更新清单 | 待完成 | 验证三个目标平台、签名、版本 `1.0.6` 及所有 URL 中的 `v1.0.6-r1`。 |
-| GitHub Release | 待完成 | 填写发布 URL、公开状态、是否 latest、发布时间。 |
+| Linux CI | 通过 | [run 34490551834](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34490551834)，前端 118、浏览器 35、Rust 93；两个作业均 success。 |
+| Windows 构建、便携包/安装包 smoke | 通过 | [run 34490551705](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34490551705)，success；Rust 94。便携包启动成功、版本 1.0.6；NSIS 安装/启动与 MSI 管理提取成功，生成 Setup EXE、MSI、便携 ZIP。 |
+| macOS universal 构建 | 通过 | [run 34490551807](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34490551807)，success；Rust 93。实际架构 `x86_64 arm64`，生成 DMG、App ZIP、更新 tar.gz 和签名；未执行 macOS 人工运行。 |
+| 新标签与原标签 | 已核对远端，原发布保持不变 | `v1.0.6-r1` 标签对象 `f30e9eb20bcea310fdc118cac470adcd37f98f07` 指向最终提交；首轮未公开候选被替换。原 `v1.0.6` 标签对象仍为 `0b4787aa6fb62dfc2dae08881c1299bbb3dd0dfc`，指向 `6a4dd516edab0d294c8b8f6b283774ba21d72762`。 |
+| 资产哈希与签名 | 全部通过 | 独立下载目录 `output/release-verify/v1.0.6-r1` 的 14 个资产与 GitHub digest 一致，12 条 SHA-256 全部匹配；Windows EXE/MSI 与 macOS 更新包使用应用内公钥验证签名通过。两份 release-manifest 的 sourceCommit 均为最终提交。 |
+| 更新清单 | 全部通过 | 下载的 `latest.json` 包含 `windows-x86_64`、`darwin-x86_64`、`darwin-aarch64`，版本 1.0.6；签名与资产一致，所有下载 URL 精确指向 `v1.0.6-r1`。 |
+| GitHub Release | 已公开，latest | [v1.0.6-r1](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6-r1)，`isDraft=false`、`isPrerelease=false`；发布时间 2026-09-10 15:03:40 UTC（北京时间 23:03:40）。 |
 
 ### 验证边界
 
@@ -125,3 +126,4 @@
 - Rust 回归以隔离项目、内存状态和回环服务验证删除范围、文件字节、注册表合并及超时，不操作用户真实博客或外部图床数据。
 - 真实 GitHub/WebDAV 同步往返、原生更新的下载撤回/安装失败恢复、macOS 手工运行、屏幕阅读器验收若没有本轮独立证据，应继续注明未执行。
 - 本轮发布为同版本修复构建，不能以“检查更新未提示新版本”判断安装包未更新；应核对发布标签、文件哈希和提交来源。
+- 更新包的 Tauri 签名已验证；Windows 无商业代码签名，macOS 未配置 Apple 代码签名且未公证，二者与更新包签名是不同验证。
