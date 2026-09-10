@@ -225,7 +225,7 @@ export const browserMock = {
     return structuredClone(item);
   },
   listLocalImages: async () => structuredClone(localImages),
-  importLocalImages: async () => structuredClone(localImages),
+  importLocalImages: async () => ({ canceled: true, importedCount: 0, images: structuredClone(localImages), failures: [] }),
   deleteLocalImage: async () => undefined,
   revealLocalImage: async () => undefined,
   importEditorImages: async (

@@ -10,10 +10,10 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe"><strong>Download setup</strong></a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip">Portable ZIP</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_macos-universal.dmg">macOS</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6">v1.0.6 Release</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe"><strong>Download setup</strong></a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip">Portable ZIP</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_macos-universal.dmg">macOS</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6-r1">v1.0.6 Fix Release</a>
   </p>
 </div>
 
@@ -51,16 +51,18 @@ The WebDAV endpoint, directory, and username remain editable after sync is enabl
 
 ## Install
 
-`v1.0.6` is available for Windows 10/11 x64 and macOS as a universal build.
+`v1.0.6-r1` is a fix build for Windows 10/11 x64 and universal macOS. The application version remains **1.0.6**. If you already use the original 1.0.6, download and reinstall this build manually; an identical version number does not trigger automatic updates.
+
+This build fixes article saving and image insertion, project sync consistency, settings drafts, and conflict recovery. The original `v1.0.6` release is preserved. See the [fix and validation record](docs/fix-validation-1.0.6-r1.md) for the changes and verification scope.
 
 | Package | Use |
 | --- | --- |
-| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe) | Recommended; install with the setup wizard |
-| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip) | Extract and run |
-| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_windows-x64.msi) | Managed or bulk deployment |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/Hexo-Lite-Editor_1.0.6_macos-universal.dmg) | Universal for Intel and Apple Silicon |
+| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe) | Recommended; install with the setup wizard |
+| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip) | Extract and run |
+| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64.msi) | Managed or bulk deployment |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_macos-universal.dmg) | Universal for Intel and Apple Silicon |
 
-The Windows packages do not have a commercial code-signing certificate, so SmartScreen may show “Unknown publisher.” Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/SHA256SUMS.txt) and [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6/SHA256SUMS-macos.txt). Starting with v1.0.6, the app downloads later Tauri signature-verified updates automatically and asks before installation.
+The Windows packages do not have a commercial code-signing certificate, so SmartScreen may show “Unknown publisher.” Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/SHA256SUMS.txt) and [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/SHA256SUMS-macos.txt). Starting with v1.0.6, the app downloads later Tauri signature-verified updates automatically and asks before installation.
 
 ## Usage
 

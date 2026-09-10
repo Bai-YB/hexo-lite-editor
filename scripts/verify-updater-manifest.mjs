@@ -35,5 +35,9 @@ for (const platform of platforms) {
   let url;
   try { url = new URL(entry.url); } catch { throw new Error(`Manifest URL is invalid for ${platform}`); }
   if (url.protocol !== "https:") throw new Error(`Manifest URL must use HTTPS for ${platform}`);
+  const tag = values.get("--tag");
+  if (tag && !url.pathname.includes(`/releases/download/${encodeURIComponent(tag)}/`)) {
+    throw new Error(`Manifest URL does not point to release ${tag} for ${platform}`);
+  }
 }
 console.log(`Verified ${manifestPath}: ${expectedVersion} (${platforms.join(", ")})`);

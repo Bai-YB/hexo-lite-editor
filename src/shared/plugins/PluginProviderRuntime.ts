@@ -46,11 +46,30 @@ export function disposePluginWorkers(): void {
   workers.clear();
 }
 
+export function disposePluginWorker(pluginId: string): void {
+  workers.get(pluginId)?.runtime.terminate();
+  workers.delete(pluginId);
+}
+
+export function reconcilePluginWorkers(plugins: PluginView[]): void {
+  for (const id of workers.keys()) {
+    const plugin = plugins.find((candidate) => candidate.manifest.id === id);
+    if (!plugin?.enabled || !plugin.entryUrl || workers.get(id)?.identity !== workerIdentity(plugin)) disposePluginWorker(id);
+  }
+}
+
+function workerIdentity(plugin: PluginView) {
+  return JSON.stringify([plugin.entryUrl, plugin.manifest]);
+}
+
 function workerFor(plugin: PluginView): HostedPluginWorker {
+  if (!plugin.enabled || !plugin.entryUrl) throw new Error("请先启用插件后再测试或上传。");
   const existing = workers.get(plugin.manifest.id);
-  if (existing) return existing;
-  if (!plugin.entryUrl) throw new Error("Plugin entry is unavailable");
-  const hosted = new HostedPluginWorker(plugin.manifest, plugin.entryUrl);
+  if (existing?.runtime.active && existing.identity === workerIdentity(plugin)) return existing;
+  disposePluginWorker(plugin.manifest.id);
+  const hosted = new HostedPluginWorker(plugin.manifest, plugin.entryUrl, workerIdentity(plugin), () => {
+    if (workers.get(plugin.manifest.id) === hosted) workers.delete(plugin.manifest.id);
+  });
   workers.set(plugin.manifest.id, hosted);
   return hosted;
 }
@@ -65,12 +84,12 @@ class HostedPluginWorker {
   private readonly worker: Worker;
   private readonly host: PluginHost;
 
-  constructor(manifest: PluginManifest, entryUrl: string) {
+  constructor(manifest: PluginManifest, entryUrl: string, readonly identity: string, onStopped: () => void) {
     this.worker = new Worker(entryUrl, { type: "module", name: manifest.id });
     this.host = new PluginHost(manifest, {
       "network.request": async (params) => {
         const request = params as { url: string; method?: string; headers?: Record<string, string>; body?: number[] };
-        return platform.pluginHttpRequest({ pluginId: manifest.id, ...request });
+        return platform.pluginHttpRequest({ ...request, pluginId: manifest.id });
       },
       "article.getCurrent": async () => { throw new Error("Current article access is not available in image uploads"); }
     });
@@ -78,7 +97,7 @@ class HostedPluginWorker {
       if (event.data?.kind !== "hostRequest") return;
       void this.replyToHostRequest(event.data);
     }) as EventListener);
-    this.runtime = new PluginWorkerRuntime(this.worker as unknown as WorkerLike);
+    this.runtime = new PluginWorkerRuntime(this.worker as unknown as WorkerLike, 30_000, onStopped);
   }
 
   private async replyToHostRequest(request: PluginHostRequest): Promise<void> {
@@ -90,6 +109,6 @@ class HostedPluginWorker {
       const candidate = error as { code?: string; message?: string };
       response = { id: request.id, error: { code: candidate.code ?? "plugin_host_failed", message: candidate.message ?? String(error) } };
     }
-    this.worker.postMessage(response);
+    if (this.runtime.active) this.worker.postMessage(response);
   }
 }

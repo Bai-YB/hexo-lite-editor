@@ -26,8 +26,58 @@ pub fn install_directory(source: &Path, plugins_root: &Path) -> AppResult<PathBu
     if target.exists() {
         return Err(AppError::new("plugin_exists", "插件已经安装。", true));
     }
-    copy_safe_tree(&source, &target)?;
+    let staging = plugins_root.join(format!(".install-{}", uuid::Uuid::new_v4()));
+    let result = (|| {
+        copy_safe_tree(&source, &staging)?;
+        // Installation always requires an explicit enable action in the host.
+        if staging.join(".enabled").exists() {
+            fs::remove_file(staging.join(".enabled"))
+                .map_err(|error| AppError::io("初始化插件状态失败", error))?;
+        }
+        let retained = retained_settings_path(plugins_root, &manifest.id);
+        if retained.is_file() {
+            fs::copy(retained, staging.join("settings.json"))
+                .map_err(|error| AppError::io("恢复插件设置失败", error))?;
+        }
+        fs::rename(&staging, &target).map_err(|error| AppError::io("完成插件安装失败", error))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result?;
     Ok(target)
+}
+
+fn retained_settings_path(plugins_root: &Path, plugin_id: &str) -> PathBuf {
+    plugins_root
+        .join(".retained-settings")
+        .join(format!("{plugin_id}.json"))
+}
+
+pub fn uninstall_directory(
+    path: &Path,
+    plugins_root: &Path,
+    plugin_id: &str,
+    preserve_settings: bool,
+) -> AppResult<()> {
+    let canonical_root = plugins_root
+        .canonicalize()
+        .map_err(|error| AppError::io("读取插件目录失败", error))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|error| AppError::io("读取插件目录失败", error))?;
+    if canonical_path.parent() != Some(canonical_root.as_path()) {
+        return Err(AppError::invalid("插件目录无效。"));
+    }
+    let retained = retained_settings_path(plugins_root, plugin_id);
+    let settings = path.join("settings.json");
+    if preserve_settings && settings.is_file() {
+        let bytes = fs::read(settings).map_err(|error| AppError::io("保留插件设置失败", error))?;
+        crate::platform::atomic_write(&retained, &bytes)?;
+    } else if !preserve_settings && retained.exists() {
+        fs::remove_file(retained).map_err(|error| AppError::io("删除保留的插件设置失败", error))?;
+    }
+    fs::remove_dir_all(canonical_path).map_err(|error| AppError::io("卸载插件失败", error))
 }
 
 fn copy_safe_tree(source: &Path, target: &Path) -> AppResult<()> {

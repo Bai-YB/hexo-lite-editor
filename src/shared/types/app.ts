@@ -76,6 +76,7 @@ export interface OpenProjectResult {
 
 export interface ProjectRescanResult {
   projectId: string;
+  previousGeneration?: number;
   generation: number;
   articles: ArticleSummary[];
 }
@@ -390,6 +391,8 @@ export type ContentSyncStatus =
 export type ContentSyncProvider = "github" | "webdav";
 
 export interface ContentSyncView {
+  projectId?: string;
+  sessionGeneration?: number;
   enabled: boolean;
   status: ContentSyncStatus;
   provider: ContentSyncProvider;
@@ -404,7 +407,16 @@ export interface ContentSyncView {
   requiresScopeConfirmation?: boolean;
 }
 
+export interface LocalImageImportResult {
+  canceled: boolean;
+  importedCount: number;
+  images: LocalImage[];
+  failures: Array<{ fileName: string; error: AppError }>;
+}
+
 export interface ContentSyncEvent {
+  projectId?: string;
+  sessionGeneration?: number;
   phase: "checking" | "waiting" | "attention" | "failed" | "completed" | string;
   status: ContentSyncStatus;
   message?: string;

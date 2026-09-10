@@ -64,6 +64,7 @@ pub struct OpenProjectResult {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRescanResult {
     pub project_id: String,
+    pub previous_generation: u64,
     pub generation: u64,
     pub articles: Vec<ArticleSummary>,
 }

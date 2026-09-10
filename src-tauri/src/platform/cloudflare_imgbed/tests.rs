@@ -28,3 +28,26 @@ fn paths_reject_traversal_and_rename_keeps_the_directory() {
         "blog/new.png"
     );
 }
+
+#[tokio::test]
+async fn stalled_requests_have_a_finite_budget_and_mutation_timeout_guidance() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    let client = http_client_builder()
+        .timeout(std::time::Duration::from_millis(50))
+        .build()
+        .unwrap();
+    let error = client
+        .get(format!("http://{address}"))
+        .send()
+        .await
+        .unwrap_err();
+    let result = request_error("upload_failed", error, true);
+    assert_eq!(result.code, "imgbed_request_timeout");
+    assert!(result.message.contains("结果尚未确认"));
+    server.abort();
+}

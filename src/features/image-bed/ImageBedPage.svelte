@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ui } from "$shared/i18n/ui";
   import { onDestroy, onMount, tick } from "svelte";
   import { fade } from "svelte/transition";
   import {
@@ -78,6 +79,9 @@
   let context: { asset: AssetView; x: number; y: number; opener: HTMLElement } | null = null;
   let contextMenu: HTMLDivElement;
   let loadedKey = "";
+  let requestVersion = 0;
+  let alive = true;
+  let sessionKey = "";
   let lightboxIndex = -1;
   let lightboxZoom = 1;
   let lightboxX = 0;
@@ -120,6 +124,20 @@
       }));
   $: previewableAssets = visibleAssets.filter((asset) => asset.kind === "image" && asset.previewUrl);
   $: lightboxAsset = lightboxIndex >= 0 ? previewableAssets[lightboxIndex] : undefined;
+  $: if (`${session?.projectId}:${session?.generation}` !== sessionKey) {
+    sessionKey = `${session?.projectId}:${session?.generation}`;
+    requestVersion += 1;
+    localImages = [];
+    remoteAssets = [];
+    remoteOffset = 0;
+    directory = "";
+    query = "";
+    appliedQuery = "";
+    deleting = renaming = moving = null;
+    context = null;
+    lightboxIndex = -1;
+    loadedKey = "";
+  }
   $: if (session && credentialReady) {
     const key = `${session.projectId}:${session.generation}:${provider}:${credential.configured}:${config.imageBed.localImageDir}:${config.imageBed.localMarkdownPrefix}:${config.imageBed.cloudflareApiUrl}:${directory}:${appliedQuery}:${remoteOffset}`;
     if (loadedKey !== key) {
@@ -139,6 +157,8 @@
   });
 
   onDestroy(() => {
+    alive = false;
+    requestVersion += 1;
     window.removeEventListener("pointerdown", closeFloatingMenus);
     window.removeEventListener("keydown", handleWindowKeydown);
   });
@@ -210,11 +230,18 @@
 
   async function loadCurrent() {
     if (!session) return;
+    const version = ++requestVersion;
+    const currentSession = sessionKey;
+    const currentProvider = provider;
+    const offset = remoteOffset;
+    const isCurrent = () => alive && version === requestVersion && currentSession === sessionKey && currentProvider === provider;
     loading = true;
     error = "";
     try {
       if (provider === "local") {
-        localImages = await platform.listLocalImages(session.projectId, session.generation);
+        const images = await platform.listLocalImages(session.projectId, session.generation);
+        if (!isCurrent()) return;
+        localImages = images;
       } else if (shouldLoadCloudflare({ sessionReady: true, credentialReady, credentialConfigured: credential.configured, apiUrl: config.imageBed.cloudflareApiUrl })) {
         const page = await platform.listCloudflareAssets(
           session.projectId,
@@ -224,6 +251,12 @@
           appliedQuery,
           directory
         );
+        if (!isCurrent()) return;
+        if (offset > 0 && (offset >= page.totalCount || !page.items.length)) {
+          remoteOffset = Math.max(0, Math.min(offset - pageSize, Math.floor(Math.max(0, page.totalCount - 1) / pageSize) * pageSize));
+          loadedKey = "";
+          return;
+        }
         remoteAssets = page.items;
         breadcrumbs = page.breadcrumbs;
         remoteTotal = page.totalCount;
@@ -233,9 +266,9 @@
         remoteTotal = 0;
       }
     } catch (value) {
-      error = normalizeError(value).message;
+      if (isCurrent()) error = normalizeError(value).message;
     } finally {
-      loading = false;
+      if (isCurrent()) loading = false;
     }
   }
 
@@ -252,13 +285,18 @@
   async function importOrUpload() {
     if (!session || working) return;
     working = true;
+    const currentSession = sessionKey;
     try {
       if (provider === "local") {
-        localImages = await platform.importLocalImages(session.projectId, session.generation);
-        onNotice(`图片已导入 ${config.imageBed.localImageDir}。`);
+        const result = await platform.importLocalImages(session.projectId, session.generation);
+        if (!alive || sessionKey !== currentSession || result.canceled) return;
+        localImages = result.images;
+        onNotice(result.failures.length
+          ? `${result.importedCount} 张图片已导入，${result.failures.length} 张失败：${result.failures.map((failure) => `${failure.fileName}：${failure.error.message}`).join("；")}`
+          : `${result.importedCount} 张图片已导入 ${config.imageBed.localImageDir}。`);
       } else {
         const result = await platform.uploadCloudflareImage(session.projectId, session.generation, directory || "/");
-        if (result) {
+        if (result && alive && sessionKey === currentSession) {
           onNotice("图片已上传到 Cloudflare-ImgBed。");
           loadedKey = "";
         }
@@ -347,30 +385,40 @@
   }
 
   async function removeAsset() {
-    if (!session || !deleting) return;
+    if (!session || !deleting || working) return;
+    const target = deleting;
+    const currentSession = sessionKey;
+    working = true;
     try {
-      if (deleting.source === "local") {
-        await platform.deleteLocalImage(session.projectId, session.generation, deleting.item.imageId);
-        localImages = localImages.filter((image) => image.imageId !== deleting?.id);
+      if (target.source === "local") {
+        await platform.deleteLocalImage(session.projectId, session.generation, target.item.imageId);
+        if (!alive || sessionKey !== currentSession) return;
+        localImages = localImages.filter((image) => image.imageId !== target.id);
         onNotice("图片已移动到系统回收站。");
       } else {
-        await platform.deleteCloudflareAsset(session.projectId, session.generation, deleting.item.assetId);
-        remoteAssets = remoteAssets.filter((asset) => asset.assetId !== deleting?.id);
+        await platform.deleteCloudflareAsset(session.projectId, session.generation, target.item.assetId);
+        if (!alive || sessionKey !== currentSession) return;
+        remoteAssets = remoteAssets.filter((asset) => asset.assetId !== target.id);
         remoteTotal = Math.max(0, remoteTotal - 1);
         onNotice("远程资源已删除。");
       }
-      deleting = null;
+      if (deleting === target) deleting = null;
+      loadedKey = "";
     } catch (value) {
       onNotice(normalizeError(value).message);
-    }
+    } finally { working = false; }
   }
 
   async function renameAsset() {
-    if (!session || renaming?.source !== "remote" || !renameValue.trim()) return;
+    if (!session || renaming?.source !== "remote" || !renameValue.trim() || working) return;
+    const target = renaming;
+    const newName = renameValue.trim();
+    const currentSession = sessionKey;
     working = true;
     try {
-      await platform.renameCloudflareAsset({ projectId: session.projectId, sessionGeneration: session.generation, assetId: renaming.item.assetId, newName: renameValue.trim() });
-      remoteAssets = remoteAssets.map((item) => item.assetId === renaming?.id ? { ...item, name: renameValue.trim(), fileName: renameValue.trim() } : item);
+      await platform.renameCloudflareAsset({ projectId: session.projectId, sessionGeneration: session.generation, assetId: target.item.assetId, newName });
+      if (!alive || sessionKey !== currentSession) return;
+      remoteAssets = remoteAssets.map((item) => item.assetId === target.id ? { ...item, name: newName, fileName: newName } : item);
       renaming = null;
       loadedKey = "";
       onNotice("远程资源已重命名。");
@@ -379,10 +427,13 @@
   }
 
   async function moveAsset() {
-    if (!session || moving?.source !== "remote") return;
+    if (!session || moving?.source !== "remote" || working) return;
+    const target = moving;
+    const currentSession = sessionKey;
     working = true;
     try {
-      await platform.moveCloudflareAsset({ projectId: session.projectId, sessionGeneration: session.generation, assetId: moving.item.assetId, targetDirectory: moveValue.trim().replace(/^\/+|\/+$/g, "") });
+      await platform.moveCloudflareAsset({ projectId: session.projectId, sessionGeneration: session.generation, assetId: target.item.assetId, targetDirectory: moveValue.trim().replace(/^\/+|\/+$/g, "") });
+      if (!alive || sessionKey !== currentSession) return;
       moving = null;
       loadedKey = "";
       onNotice("远程资源已移动。");
@@ -525,92 +576,97 @@
 </script>
 
 <div bind:this={pageElement} class="workspace-page image-bed-page">
-  <PageHeader title="图床" description="按目录浏览本地图片和 Cloudflare-ImgBed 资源。">
+  <PageHeader title={$ui("图床")} description={$ui("按目录浏览本地图片和 Cloudflare-ImgBed 资源。")}>
     <div class="source-switcher-wrap">
-      <button class="source-switcher" type="button" aria-expanded={sourceMenuOpen} on:click={() => (sourceMenuOpen = !sourceMenuOpen)}><span>{provider === "local" ? "本地图片" : "Cloudflare-ImgBed"}</span><ChevronDown size={14} /></button>
-      {#if sourceMenuOpen}<div class="source-menu quiet-menu"><button class:active={provider === "local"} type="button" on:click={() => selectProvider("local")}>本地图片<small>{config.imageBed.localImageDir}</small></button><button class:active={provider === "cloudflare-imgbed"} type="button" on:click={() => selectProvider("cloudflare-imgbed")}>Cloudflare-ImgBed<small>远程目录与文件</small></button></div>{/if}
+      <button class="source-switcher" type="button" aria-expanded={sourceMenuOpen} on:click={() => (sourceMenuOpen = !sourceMenuOpen)}><span>{provider === "local" ? $ui("本地图片") : "Cloudflare-ImgBed"}</span><ChevronDown size={14} /></button>
+      {#if sourceMenuOpen}<div class="source-menu quiet-menu"><button class:active={provider === "local"} type="button" on:click={() => selectProvider("local")}>{$ui("本地图片")}<small>{config.imageBed.localImageDir}</small></button><button class:active={provider === "cloudflare-imgbed"} type="button" on:click={() => selectProvider("cloudflare-imgbed")}>Cloudflare-ImgBed<small>{$ui("远程目录与文件")}</small></button></div>{/if}
     </div>
-    <button class="icon-button" type="button" disabled={!session || loading} title="刷新" aria-label="刷新资源" on:click={() => { loadedKey = ""; }}><RefreshCw size={16} /></button>
-    <button class="button primary" type="button" disabled={!session || working || (provider === "cloudflare-imgbed" && !credential.configured)} on:click={importOrUpload}>{#if working}<RefreshCw size={16} class="spin" />{provider === "local" ? "导入中" : "上传中"}{:else if provider === "local"}<Import size={16} />导入{:else}<Upload size={16} />上传图片{/if}</button>
+    <button class="icon-button" type="button" disabled={!session || loading} title={$ui("刷新")} aria-label={$ui("刷新资源")} on:click={() => { loadedKey = ""; }}><RefreshCw size={16} /></button>
+    <button class="button primary" type="button" disabled={!session || working || (provider === "cloudflare-imgbed" && !credential.configured)} on:click={importOrUpload}>{#if working}<RefreshCw size={16} class="spin" />{provider === "local" ? $ui("导入中") : $ui("上传中")}{:else if provider === "local"}<Import size={16} />{$ui("导入")}{:else}<Upload size={16} />{$ui("上传图片")}{/if}</button>
   </PageHeader>
+  {#if config.imageBed.defaultProvider.startsWith("plugin:")}
+    <p class="muted-line">{$ui("当前默认图床插件用于编辑器插图。此处浏览和上传的目标为所选本地或 Cloudflare 来源，插件资源列表暂不支持浏览。")}</p>
+  {/if}
 
   {#if !session}
-    <EmptyState title="请先打开项目" description="图片工作区与当前 Hexo 项目会话绑定。" />
+    <EmptyState title={$ui("请先打开项目")} description={$ui("图片工作区与当前 Hexo 项目会话绑定。")} />
   {:else}
     <form class="image-toolbar" on:submit|preventDefault={applySearch}>
-      <div class="search-control"><Search size={15} /><input bind:value={query} aria-label="搜索资源" placeholder="搜索文件名（远程搜索会递归目录）" />{#if query}<button class="search-clear" type="button" aria-label="清除搜索" on:click={clearSearch}><X size={14} /></button>{/if}</div>
-      {#if provider === "cloudflare-imgbed"}<button class="button quiet" type="submit">搜索</button>{/if}
-      <span class="image-count">{provider === "local" ? filteredLocal.length : remoteTotal} 项</span>
+      <div class="search-control"><Search size={15} /><input bind:value={query} aria-label={$ui("搜索资源")} placeholder={$ui("搜索文件名（远程搜索会递归目录）")} />{#if query}<button class="search-clear" type="button" aria-label={$ui("清除搜索")} on:click={clearSearch}><X size={14} /></button>{/if}</div>
+      {#if provider === "cloudflare-imgbed"}<button class="button quiet" type="submit">{$ui("搜索")}</button>{/if}
+      <span class="image-count">{provider === "local" ? filteredLocal.length : remoteTotal} {$ui("项")}</span>
     </form>
 
     {#if provider === "cloudflare-imgbed" && breadcrumbs.length > 1 && !appliedQuery}
-      <nav class="asset-breadcrumbs" aria-label="远程资源路径">{#each breadcrumbs as crumb, index (crumb.directory)}{#if index}<ChevronRight size={13} />{/if}<button class:current={index === breadcrumbs.length - 1} type="button" on:click={() => enterDirectory(crumb.directory)}>{crumb.name}</button>{/each}</nav>
+      <nav class="asset-breadcrumbs" aria-label={$ui("远程资源路径")}>{#each breadcrumbs as crumb, index (crumb.directory)}{#if index}<ChevronRight size={13} />{/if}<button class:current={index === breadcrumbs.length - 1} type="button" on:click={() => enterDirectory(crumb.directory)}>{crumb.name}</button>{/each}</nav>
     {:else if provider === "cloudflare-imgbed" && appliedQuery}
-      <div class="asset-search-state"><span>搜索：{appliedQuery}</span><button type="button" on:click={clearSearch}>清除</button></div>
+      <div class="asset-search-state"><span>{$ui("搜索：")}{appliedQuery}</span><button type="button" on:click={clearSearch}>{$ui("清除")}</button></div>
     {/if}
 
     {#if provider === "cloudflare-imgbed" && credentialReady && (!credential.configured || !config.imageBed.cloudflareApiUrl.trim())}
-      <EmptyState title="Cloudflare 尚未配置完成" description="请设置 HTTPS API 地址，并将 Token 保存到系统凭据库。"><button class="button primary" type="button" on:click={onOpenSettings}>打开图床设置</button></EmptyState>
+      <EmptyState title={$ui("Cloudflare 尚未配置完成")} description={$ui("请设置 HTTPS API 地址，并将 Token 保存到系统凭据库。")}><button class="button primary" type="button" on:click={onOpenSettings}>{$ui("打开图床设置")}</button></EmptyState>
     {:else if loading && !visibleAssets.length}
-      <div class="image-grid image-grid-skeleton" aria-label="正在读取资源" aria-busy="true">{#each Array(12) as _}<div class="asset-skeleton"><span></span><i></i><i></i></div>{/each}</div>
+      <div class="image-grid image-grid-skeleton" aria-label={$ui("正在读取资源")} aria-busy="true">{#each Array(12) as _}<div class="asset-skeleton"><span></span><i></i><i></i></div>{/each}</div>
     {:else if error}
-      <ErrorState message={error}><button class="button" type="button" on:click={() => { loadedKey = ""; }}>重试</button></ErrorState>
+      <ErrorState message={error}><button class="button" type="button" on:click={() => { loadedKey = ""; }}>{$ui("重试")}</button></ErrorState>
     {:else if !visibleAssets.length}
-      <EmptyState title={query ? "没有匹配的资源" : "当前目录为空"} description={query ? "换一个关键词，或清空搜索条件。" : "可导入或上传 PNG、JPEG、GIF、WebP，单张不超过 25 MB。"}><button class="button primary" type="button" on:click={importOrUpload}>{provider === "local" ? "导入图片" : "上传图片"}</button></EmptyState>
+      <EmptyState title={query ? $ui("没有匹配的资源") : $ui("当前目录为空")} description={query ? $ui("换一个关键词，或清空搜索条件。") : $ui("可导入或上传 PNG、JPEG、GIF、WebP，单张不超过 25 MB。")}><button class="button primary" type="button" on:click={importOrUpload}>{provider === "local" ? $ui("导入图片") : $ui("上传图片")}</button></EmptyState>
     {:else}
       <div class:loading class="image-results">
       <div class="image-grid" aria-busy={loading}>
         {#each visibleAssets as asset (asset.id)}
           <div class:folder={asset.kind === "folder"} class="asset-item">
-            <button class="asset-primary" type="button" aria-label={`${asset.name}，Enter 打开，Shift+F10 打开菜单`} on:click={(event) => activateAsset(asset, event.currentTarget)} on:contextmenu={(event) => showContext(event, asset, event.currentTarget)} on:keydown={(event) => handleAssetKeydown(event, asset)}>
+            <button class="asset-primary" type="button" aria-label={$ui("{p0}，Enter 打开，Shift+F10 打开菜单", { p0: asset.name })} on:click={(event) => activateAsset(asset, event.currentTarget)} on:contextmenu={(event) => showContext(event, asset, event.currentTarget)} on:keydown={(event) => handleAssetKeydown(event, asset)}>
               <span class="asset-thumb">
                 {#if asset.kind === "image" && asset.previewUrl}<img src={asset.previewUrl} alt="" loading="lazy" />{:else}<svelte:component this={iconFor(asset.kind)} size={asset.kind === "folder" ? 46 : 38} strokeWidth={1.35} />{/if}
               </span>
-              <strong title={asset.name}>{asset.name}</strong><span class="asset-meta">{asset.kind === "folder" ? "文件夹" : formatBytes(asset.size) || assetKindLabel(asset.kind)}</span>
+              <strong title={asset.name}>{asset.name}</strong><span class="asset-meta">{asset.kind === "folder" ? $ui("文件夹") : formatBytes(asset.size) || $ui(assetKindLabel(asset.kind))}</span>
             </button>
-            <button class="asset-more" type="button" tabindex="-1" aria-label={`打开 ${asset.name} 菜单`} on:click={(event) => showContext(event, asset, event.currentTarget)}><MoreHorizontal size={16} /></button>
+            <button class="asset-more" type="button" tabindex="-1" aria-label={$ui("打开 {p0} 菜单", { p0: asset.name })} on:click={(event) => showContext(event, asset, event.currentTarget)}><MoreHorizontal size={16} /></button>
           </div>
         {/each}
       </div>
-      {#if provider === "cloudflare-imgbed" && remoteTotal > pageSize}
-        <div class="pagination"><button class="button quiet" type="button" disabled={loading || remoteOffset === 0} on:click={() => changeRemotePage(remoteOffset - pageSize)}>上一页</button><span>{Math.floor(remoteOffset / pageSize) + 1} / {Math.ceil(remoteTotal / pageSize)}</span><button class="button quiet" type="button" disabled={loading || remoteOffset + pageSize >= remoteTotal} on:click={() => changeRemotePage(remoteOffset + pageSize)}>下一页</button></div>
-      {/if}
       </div>
+    {/if}
+    {#if provider === "cloudflare-imgbed" && (remoteTotal > pageSize || remoteOffset > 0)}
+      <div class="pagination"><button class="button quiet" type="button" disabled={loading || remoteOffset === 0} on:click={() => changeRemotePage(remoteOffset - pageSize)}>{$ui("上一页")}</button><span>{Math.floor(remoteOffset / pageSize) + 1} / {Math.max(1, Math.ceil(remoteTotal / pageSize))}</span><button class="button quiet" type="button" disabled={loading || remoteOffset + pageSize >= remoteTotal} on:click={() => changeRemotePage(remoteOffset + pageSize)}>{$ui("下一页")}</button></div>
     {/if}
   {/if}
 </div>
 
 {#if context}
   <div bind:this={contextMenu} class="asset-context-menu quiet-menu" role="menu" style={`left:${context.x}px;top:${context.y}px`}>
-    {#if context.asset.kind === "image" && context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyMarkdown)}<button type="button" role="menuitem" on:click={() => copyText(markdownFor(context!.asset), "Markdown 已复制。") }><Copy size={14} />复制 Markdown</button>{/if}
-    {#if context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyUrl)}<button type="button" role="menuitem" on:click={() => copyText(context!.asset.reference!, context!.asset.source === "remote" ? "链接已复制。" : "图片引用已复制。") }><Copy size={14} />{context.asset.source === "remote" ? "复制链接" : "复制 Markdown 路径"}</button>{/if}
-    {#if context.asset.source === "local"}<button type="button" role="menuitem" on:click={() => revealLocal(context!.asset)}><FolderOpen size={14} />在文件夹中显示</button>{/if}
-    {#if context.asset.kind === "image" && (context.asset.source === "local" || context.asset.item.capabilities.preview)}<button type="button" role="menuitem" on:click={() => { const asset = context!.asset; const opener = context!.opener; context = null; void openLightbox(asset, opener); }}><Maximize2 size={14} />查看大图</button>{/if}
-    {#if context.asset.source === "remote" && context.asset.item.capabilities.download}<button type="button" role="menuitem" on:click={() => downloadAsset(context!.asset)}><Download size={14} />下载</button>{/if}
-    {#if context.asset.source === "remote" && context.asset.item.capabilities.rename}<button type="button" role="menuitem" on:click={() => { renaming = context!.asset; renameValue = context!.asset.name; context = null; }}><Pencil size={14} />重命名</button>{/if}
-    {#if context.asset.source === "remote" && context.asset.item.capabilities.move}<button type="button" role="menuitem" on:click={() => prepareMove(context!.asset)}><Move size={14} />移动</button>{/if}
-    {#if (context.asset.source === "local" || context.asset.item.capabilities.delete)}<div class="menu-separator"></div><button class="danger" type="button" role="menuitem" on:click={() => { deleting = context!.asset; context = null; }}><Trash2 size={14} />{context.asset.source === "local" ? "移到回收站" : "删除远程资源"}</button>{/if}
+    {#if context.asset.kind === "image" && context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyMarkdown)}<button type="button" role="menuitem" on:click={() => copyText(markdownFor(context!.asset), "Markdown 已复制。") }><Copy size={14} />{$ui("复制 Markdown")}</button>{/if}
+    {#if context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyUrl)}<button type="button" role="menuitem" on:click={() => copyText(context!.asset.reference!, context!.asset.source === "remote" ? "链接已复制。" : "图片引用已复制。") }><Copy size={14} />{context.asset.source === "remote" ? $ui("复制链接") : $ui("复制 Markdown 路径")}</button>{/if}
+    {#if context.asset.source === "local"}<button type="button" role="menuitem" on:click={() => revealLocal(context!.asset)}><FolderOpen size={14} />{$ui("在文件夹中显示")}</button>{/if}
+    {#if context.asset.kind === "image" && (context.asset.source === "local" || context.asset.item.capabilities.preview)}<button type="button" role="menuitem" on:click={() => { const asset = context!.asset; const opener = context!.opener; context = null; void openLightbox(asset, opener); }}><Maximize2 size={14} />{$ui("查看大图")}</button>{/if}
+    {#if context.asset.source === "remote" && context.asset.item.capabilities.download}<button type="button" role="menuitem" on:click={() => downloadAsset(context!.asset)}><Download size={14} />{$ui("下载")}</button>{/if}
+    {#if context.asset.source === "remote" && context.asset.item.capabilities.rename}<button type="button" role="menuitem" on:click={() => { renaming = context!.asset; renameValue = context!.asset.name; context = null; }}><Pencil size={14} />{$ui("重命名")}</button>{/if}
+    {#if context.asset.source === "remote" && context.asset.item.capabilities.move}<button type="button" role="menuitem" on:click={() => prepareMove(context!.asset)}><Move size={14} />{$ui("移动")}</button>{/if}
+    {#if (context.asset.source === "local" || context.asset.item.capabilities.delete)}<div class="menu-separator"></div><button class="danger" type="button" role="menuitem" on:click={() => { deleting = context!.asset; context = null; }}><Trash2 size={14} />{context.asset.source === "local" ? $ui("移到回收站") : $ui("删除远程资源")}</button>{/if}
   </div>
 {/if}
 
 {#if renaming}
-  <ModalDialog title="重命名远程资源" description={renaming.name} onClose={() => (renaming = null)}>
-    <label class="modal-form"><span>新名称</span><input class="input" data-autofocus bind:value={renameValue} on:keydown={(event) => event.key === "Enter" && renameAsset()} /></label>
-    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (renaming = null)}>取消</button><button class="button primary" type="button" disabled={working || !renameValue.trim()} on:click={renameAsset}>确认</button></svelte:fragment>
+  <ModalDialog title={$ui("重命名远程资源")} description={renaming.name} onClose={() => { if (!working) renaming = null; }}>
+    <p class="muted-line">{$ui("重命名可能使已有文章中的图片链接失效，请同步检查并更新引用。")}</p>
+    <label class="modal-form"><span>{$ui("新名称")}</span><input class="input" data-autofocus disabled={working} bind:value={renameValue} /></label>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} on:click={() => (renaming = null)}>{$ui("取消")}</button><button class="button primary" type="button" disabled={working || !renameValue.trim()} on:click={renameAsset}>{working ? $ui("处理中…") : $ui("确认")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if moving}
-  <ModalDialog title="移动远程资源" description="填写目标目录；留空表示根目录。" onClose={() => (moving = null)}>
-    <label class="modal-form"><span>目标目录</span><input class="input" data-autofocus bind:value={moveValue} placeholder="blog/目标目录" on:keydown={(event) => event.key === "Enter" && moveAsset()} /></label>
-    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (moving = null)}>取消</button><button class="button primary" type="button" disabled={working} on:click={moveAsset}>确认</button></svelte:fragment>
+  <ModalDialog title={$ui("移动远程资源")} description={$ui("填写目标目录；留空表示根目录。")} onClose={() => { if (!working) moving = null; }}>
+    <p class="muted-line">{$ui("移动可能改变资源地址，请同步检查已有文章中的引用。")}</p>
+    <label class="modal-form"><span>{$ui("目标目录")}</span><input class="input" data-autofocus disabled={working} bind:value={moveValue} placeholder={$ui("blog/目标目录")} /></label>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} on:click={() => (moving = null)}>{$ui("取消")}</button><button class="button primary" type="button" disabled={working} on:click={moveAsset}>{working ? $ui("处理中…") : $ui("确认")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if lightboxAsset}
-  <div bind:this={lightboxDialog} class="image-lightbox" role="dialog" aria-modal="true" aria-label={`查看 ${lightboxAsset.name}`} transition:fade={{ duration: 120 }}>
-    <div class="lightbox-toolbar"><span>{lightboxAsset.name}</span><div><span class="lightbox-position">{lightboxIndex + 1} / {previewableAssets.length}</span><button class="icon-button inverse" type="button" aria-label="缩小" on:click={() => zoomLightbox(-0.25)}><ZoomOut size={18} /></button><button class="lightbox-zoom" type="button" on:click={resetLightboxView}>{Math.round(lightboxZoom * 100)}%</button><button class="icon-button inverse" type="button" aria-label="放大" on:click={() => zoomLightbox(0.25)}><ZoomIn size={18} /></button><button bind:this={lightboxCloseButton} class="icon-button inverse" type="button" aria-label="关闭" on:click={closeLightbox}><X size={19} /></button></div></div>
-    {#if previewableAssets.length > 1}<button class="lightbox-nav previous" type="button" aria-label="上一张" on:click={() => stepLightbox(-1)}><ChevronLeft size={28} /></button><button class="lightbox-nav next" type="button" aria-label="下一张" on:click={() => stepLightbox(1)}><ChevronRight size={28} /></button>{/if}
+  <div bind:this={lightboxDialog} class="image-lightbox" role="dialog" aria-modal="true" aria-label={$ui("查看 {p0}", { p0: lightboxAsset.name })} transition:fade={{ duration: 120 }}>
+    <div class="lightbox-toolbar"><span>{lightboxAsset.name}</span><div><span class="lightbox-position">{lightboxIndex + 1} / {previewableAssets.length}</span><button class="icon-button inverse" type="button" aria-label={$ui("缩小")} on:click={() => zoomLightbox(-0.25)}><ZoomOut size={18} /></button><button class="lightbox-zoom" type="button" on:click={resetLightboxView}>{Math.round(lightboxZoom * 100)}%</button><button class="icon-button inverse" type="button" aria-label={$ui("放大")} on:click={() => zoomLightbox(0.25)}><ZoomIn size={18} /></button><button bind:this={lightboxCloseButton} class="icon-button inverse" type="button" aria-label={$ui("关闭")} on:click={closeLightbox}><X size={19} /></button></div></div>
+    {#if previewableAssets.length > 1}<button class="lightbox-nav previous" type="button" aria-label={$ui("上一张")} on:click={() => stepLightbox(-1)}><ChevronLeft size={28} /></button><button class="lightbox-nav next" type="button" aria-label={$ui("下一张")} on:click={() => stepLightbox(1)}><ChevronRight size={28} /></button>{/if}
     <div bind:this={lightboxStage} class:dragging={lightboxDragging} class="lightbox-stage" role="presentation" on:dblclick={toggleLightboxZoom} on:wheel|preventDefault={(event) => zoomLightbox(event.deltaY < 0 ? 0.15 : -0.15, event)} on:pointerdown={startLightboxDrag} on:pointermove={moveLightboxDrag} on:pointerup={() => (lightboxDragging = false)} on:pointercancel={() => (lightboxDragging = false)}>
       <img bind:this={lightboxImage} src={lightboxAsset.previewUrl} alt={lightboxAsset.name} draggable="false" style={`transform:translate(${lightboxX}px, ${lightboxY}px) scale(${lightboxZoom})`} />
     </div>
@@ -618,7 +674,7 @@
 {/if}
 
 {#if deleting}
-  <ModalDialog title={deleting.source === "local" ? "移到回收站？" : "删除远程资源？"} description={deleting.source === "local" ? `${deleting.name} 将被移动到系统回收站。` : `${deleting.name} 将从 Cloudflare-ImgBed 永久删除。`} onClose={() => (deleting = null)}>
-    <svelte:fragment slot="actions"><button class="button" type="button" data-autofocus={deleting.source === "remote" ? "" : undefined} on:click={() => (deleting = null)}>取消</button><button class="button danger" type="button" data-autofocus={deleting.source === "local" ? "" : undefined} on:click={removeAsset}>{deleting.source === "local" ? "移到回收站" : "确认删除"}</button></svelte:fragment>
+  <ModalDialog title={deleting.source === "local" ? $ui("移到回收站？") : $ui("删除远程资源？")} description={deleting.source === "local" ? $ui("{p0} 将被移动到系统回收站。引用此图片的文章可能无法继续显示图片。", { p0: deleting.name }) : $ui("{p0} 将从 Cloudflare-ImgBed 永久删除。已有文章中的链接可能失效。", { p0: deleting.name })} onClose={() => { if (!working) deleting = null; }}>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} data-autofocus={deleting.source === "remote" ? "" : undefined} on:click={() => (deleting = null)}>{$ui("取消")}</button><button class="button danger" type="button" disabled={working} data-autofocus={deleting.source === "local" ? "" : undefined} on:click={removeAsset}>{working ? $ui("处理中…") : deleting.source === "local" ? $ui("移到回收站") : $ui("确认删除")}</button></svelte:fragment>
   </ModalDialog>
 {/if}

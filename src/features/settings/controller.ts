@@ -1,5 +1,5 @@
 export interface SettingsController {
   save(): Promise<void>;
-  discard(): void;
+  discard(): void | Promise<void>;
   hasDirty(): boolean;
 }

@@ -13,6 +13,53 @@ use walkdir::WalkDir;
 
 pub(super) const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalImageImportFailure {
+    pub file_name: String,
+    pub error: AppError,
+}
+
+pub(super) fn import_selected_images(
+    directory: &Path,
+    paths: &[PathBuf],
+) -> (usize, Vec<LocalImageImportFailure>) {
+    let mut imported = 0;
+    let mut failures = Vec::new();
+    for source in paths {
+        let name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("image");
+        let result = validate_image_file(source).and_then(|()| {
+            let target = unique_target(directory, name);
+            // A file chosen from this directory is already imported.
+            let existing = directory.join(name);
+            if existing.is_file()
+                && fs::metadata(&existing).ok().map(|entry| entry.len())
+                    == fs::metadata(source).ok().map(|entry| entry.len())
+            {
+                if let (Ok(incoming), Ok(present)) = (fs::read(source), fs::read(&existing)) {
+                    if incoming == present {
+                        return Ok(());
+                    }
+                }
+            }
+            let bytes =
+                fs::read(source).map_err(|error| AppError::io("读取导入图片失败", error))?;
+            crate::platform::atomic_write(&target, &bytes)
+        });
+        match result {
+            Ok(()) => imported += 1,
+            Err(error) => failures.push(LocalImageImportFailure {
+                file_name: name.to_string(),
+                error,
+            }),
+        }
+    }
+    (imported, failures)
+}
+
 pub(super) fn list_local_images_impl(
     state: &AppState,
     project_id: &str,
@@ -157,5 +204,33 @@ fn asset_url(token: &str) -> String {
         format!("http://hlex-asset.localhost/{token}")
     } else {
         format!("hlex-asset://localhost/{token}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_import_reports_each_failure_and_retry_does_not_duplicate_successes() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("photo.png");
+        fs::write(&source, b"example image").unwrap();
+        let large = temp.path().join("large.png");
+        fs::File::create(&large)
+            .unwrap()
+            .set_len(MAX_IMAGE_BYTES + 1)
+            .unwrap();
+        let target = temp.path().join("images");
+        fs::create_dir(&target).unwrap();
+        let paths = vec![source, large];
+        let (count, errors) = import_selected_images(&target, &paths);
+        assert_eq!(count, 1);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].file_name, "large.png");
+        assert_eq!(errors[0].error.code, "image_too_large");
+        let (_, errors) = import_selected_images(&target, &paths);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(fs::read_dir(target).unwrap().count(), 1);
     }
 }

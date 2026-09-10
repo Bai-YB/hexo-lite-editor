@@ -1,5 +1,6 @@
 use super::image_local::{
-    list_local_images_impl, supported_mime, unique_target, validate_image_file, MAX_IMAGE_BYTES,
+    import_selected_images, list_local_images_impl, supported_mime, unique_target,
+    validate_image_file, LocalImageImportFailure, MAX_IMAGE_BYTES,
 };
 use crate::{
     app::{AppState, ArticleRecord, AssetRecord, AssetSource, RemoteAssetRecord},
@@ -34,13 +35,22 @@ pub fn list_local_images(
     list_local_images_impl(&state, &project_id, session_generation)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalImageImportResult {
+    canceled: bool,
+    imported_count: usize,
+    images: Vec<LocalImage>,
+    failures: Vec<LocalImageImportFailure>,
+}
+
 #[tauri::command]
 pub fn import_local_images(
     app: AppHandle,
     project_id: String,
     session_generation: u64,
     state: State<'_, AppState>,
-) -> AppResult<Vec<LocalImage>> {
+) -> AppResult<LocalImageImportResult> {
     let root = state.with_project(&project_id, Some(session_generation), |project| {
         Ok(project.root.clone())
     })?;
@@ -52,23 +62,32 @@ pub fn import_local_images(
         .add_filter("图片", &["png", "jpg", "jpeg", "gif", "webp"])
         .blocking_pick_files()
     else {
-        return Ok(Vec::new());
+        return Ok(LocalImageImportResult {
+            canceled: true,
+            imported_count: 0,
+            images: Vec::new(),
+            failures: Vec::new(),
+        });
     };
     let canonical_target = local_image_directory(&root, &config.image_bed.local_image_dir)?;
 
-    for file in files {
-        let source = file
-            .into_path()
-            .map_err(|error| AppError::invalid(error.to_string()))?;
-        validate_image_file(&source)?;
-        let file_name = source
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| AppError::invalid("图片文件名不是有效文本。"))?;
-        let target = unique_target(&canonical_target, file_name);
-        fs::copy(&source, target).map_err(|error| AppError::io("导入图片失败", error))?;
-    }
-    list_local_images_impl(&state, &project_id, session_generation)
+    let paths = files
+        .into_iter()
+        .map(|file| {
+            file.into_path()
+                .map_err(|error| AppError::invalid(error.to_string()))
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    // Recheck after the native picker: the user may have switched projects while it was open.
+    state.with_project(&project_id, Some(session_generation), |_| Ok(()))?;
+    let (imported_count, failures) = import_selected_images(&canonical_target, &paths);
+    let images = list_local_images_impl(&state, &project_id, session_generation)?;
+    Ok(LocalImageImportResult {
+        canceled: false,
+        imported_count,
+        images,
+        failures,
+    })
 }
 
 #[tauri::command]
@@ -323,6 +342,11 @@ pub async fn finalize_cached_editor_image(
     upload_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
+    let root = state.with_project(&project_id, Some(session_generation), |project| {
+        Ok(project.root.clone())
+    })?;
+    let file_lock = state.project_file_lock(&root)?;
+    let _file_guard = file_lock.lock().map_err(|_| AppError::session_expired())?;
     let mut guard = state
         .project
         .write()
@@ -342,6 +366,15 @@ pub async fn finalize_cached_editor_image(
     };
     let path = path.clone();
     ensure_editor_cache_path(&state.editor_image_cache_dir, &path, &upload_id)?;
+    // Another article may still refer to a copied temporary URL. Keep its cache
+    // until every persisted article has stopped referencing this upload.
+    for article in project.articles.values() {
+        let content = fs::read_to_string(&article.canonical_path)
+            .map_err(|error| AppError::io("检查图片引用失败，已保留图片缓存", error))?;
+        if content.contains(&upload_id) {
+            return Ok(());
+        }
+    }
     fs::remove_file(&path).map_err(|error| AppError::io("清理已上传图片缓存失败", error))?;
     if let Some(parent) = path.parent() {
         let _ = fs::remove_dir(parent);
@@ -495,7 +528,7 @@ pub async fn list_cloudflare_assets(
         )
         .append_pair("search", search.trim())
         .append_pair("dir", directory.trim());
-    let response = reqwest::Client::new()
+    let response = crate::platform::cloudflare_imgbed::http_client()?
         .get(endpoint)
         .bearer_auth(cloudflare_token(
             &config.image_bed.cloudflare_connection_id,
@@ -503,7 +536,9 @@ pub async fn list_cloudflare_assets(
         )?)
         .send()
         .await
-        .map_err(|error| AppError::new("image_list_failed", error.to_string(), true))?;
+        .map_err(|error| {
+            crate::platform::cloudflare_imgbed::request_error("image_list_failed", error, false)
+        })?;
     let status = response.status();
     let value: Value = response
         .json()
@@ -561,7 +596,7 @@ pub async fn delete_cloudflare_asset(
         &config.image_bed.cloudflare_connection_id,
         &config.image_bed.cloudflare_api_url,
     )?;
-    CloudflareImgbedClient::new(base, token)
+    CloudflareImgbedClient::new(base, token)?
         .delete(&delete_key, kind == RemoteAssetKind::Folder)
         .await?;
     if let Ok(mut guard) = state.project.write() {
@@ -604,7 +639,7 @@ pub async fn rename_cloudflare_asset(
         &config.image_bed.cloudflare_connection_id,
         &config.image_bed.cloudflare_api_url,
     )?;
-    let client = CloudflareImgbedClient::new(base, token);
+    let client = CloudflareImgbedClient::new(base, token)?;
     if kind == RemoteAssetKind::Folder {
         return Err(AppError::new(
             "remote_folder_rename_unsupported",
@@ -653,7 +688,7 @@ pub async fn move_cloudflare_asset(
         &config.image_bed.cloudflare_connection_id,
         &config.image_bed.cloudflare_api_url,
     )?;
-    CloudflareImgbedClient::new(base, token)
+    CloudflareImgbedClient::new(base, token)?
         .move_asset(
             &path,
             &request.target_directory,
@@ -682,11 +717,17 @@ pub async fn download_cloudflare_asset(
                 )
             })
     })?;
-    let response = reqwest::Client::new()
+    let response = crate::platform::cloudflare_imgbed::http_client()?
         .get(url)
         .send()
         .await
-        .map_err(|error| AppError::new("remote_download_failed", error.to_string(), true))?;
+        .map_err(|error| {
+            crate::platform::cloudflare_imgbed::request_error(
+                "remote_download_failed",
+                error,
+                false,
+            )
+        })?;
     if !response.status().is_success() {
         return Err(AppError::new(
             "remote_download_failed",
@@ -752,19 +793,20 @@ async fn upload_cloudflare_bytes(
         .file_name(file_name.to_string())
         .mime_str(mime)
         .map_err(|error| AppError::invalid(error.to_string()))?;
-    let response = reqwest::Client::new()
+    let response = crate::platform::cloudflare_imgbed::http_client()?
         .post(endpoint.clone())
         .bearer_auth(token)
         .header("authCode", token)
         .multipart(reqwest::multipart::Form::new().part("file", part))
         .send()
         .await
-        .map_err(|error| AppError::new("upload_failed", error.to_string(), true))?;
+        .map_err(|error| {
+            crate::platform::cloudflare_imgbed::request_error("upload_failed", error, true)
+        })?;
     let status = response.status();
-    let value: Value = response
-        .json()
-        .await
-        .map_err(|error| AppError::new("upload_response_invalid", error.to_string(), true))?;
+    let value: Value = response.json().await.map_err(|error| {
+        crate::platform::cloudflare_imgbed::request_error("upload_response_invalid", error, true)
+    })?;
     if !status.is_success() {
         return Err(AppError::new(
             "upload_failed",

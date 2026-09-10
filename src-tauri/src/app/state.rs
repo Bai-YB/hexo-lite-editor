@@ -1,5 +1,6 @@
 use crate::domain::{
-    AppError, AppResult, ArticleSummary, PreviewServerView, ProjectSessionView, RemoteAssetKind,
+    AppError, AppResult, ArticleSummary, PreviewServerView, ProjectRescanResult,
+    ProjectSessionView, RemoteAssetKind,
 };
 use std::{
     collections::HashMap,
@@ -97,6 +98,8 @@ pub struct AppState {
     pub recent_path: PathBuf,
     pub task_log_dir: PathBuf,
     pub sync_registry_path: PathBuf,
+    pub sync_registry_write_lock: Mutex<()>,
+    pub update_operation_lock: tokio::sync::Mutex<()>,
     pub sync_cache_dir: PathBuf,
     pub sync_backup_dir: PathBuf,
     pub editor_image_cache_dir: PathBuf,
@@ -108,7 +111,9 @@ pub struct AppState {
     pub task_log_write_lock: Mutex<()>,
     pub save_locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
     pub sync_locks: Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>,
-    pub sync_schedules: Mutex<HashMap<String, oneshot::Sender<()>>>,
+    pub project_file_locks: Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
+    pub pending_sync_rescans: Mutex<HashMap<PathBuf, ProjectRescanResult>>,
+    pub sync_schedules: Mutex<HashMap<String, (Uuid, oneshot::Sender<()>)>>,
     pub task_cancellations: Mutex<HashMap<String, oneshot::Sender<()>>>,
     pub preview: Mutex<Option<PreviewRuntime>>,
     pub shutdown_started: AtomicBool,
@@ -125,6 +130,8 @@ impl AppState {
             recent_path: config_dir.join("recent-project.json"),
             task_log_dir: config_dir.join("task-logs"),
             sync_registry_path: config_dir.join("content-sync-v1.json"),
+            sync_registry_write_lock: Mutex::new(()),
+            update_operation_lock: tokio::sync::Mutex::new(()),
             sync_cache_dir: config_dir.join("content-sync-cache"),
             sync_backup_dir: config_dir.join("content-sync-backups"),
             editor_image_cache_dir: config_dir.join("editor-image-cache"),
@@ -136,6 +143,8 @@ impl AppState {
             task_log_write_lock: Mutex::new(()),
             save_locks: Mutex::new(HashMap::new()),
             sync_locks: Mutex::new(HashMap::new()),
+            project_file_locks: Mutex::new(HashMap::new()),
+            pending_sync_rescans: Mutex::new(HashMap::new()),
             sync_schedules: Mutex::new(HashMap::new()),
             task_cancellations: Mutex::new(HashMap::new()),
             preview: Mutex::new(None),
@@ -167,6 +176,17 @@ impl AppState {
             .ok_or_else(|| AppError::new("project_not_open", "请先打开一个 Hexo 项目。", true))?;
         project.require_identity(project_id, generation)?;
         callback(project)
+    }
+
+    pub fn project_file_lock(&self, root: &Path) -> AppResult<Arc<Mutex<()>>> {
+        let mut locks = self
+            .project_file_locks
+            .lock()
+            .map_err(|_| AppError::new("state_poisoned", "项目文件队列不可用。", false))?;
+        Ok(locks
+            .entry(root.to_path_buf())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone())
     }
 
     pub fn article_save_lock(&self, article_id: &str) -> AppResult<std::sync::Arc<Mutex<()>>> {

@@ -175,6 +175,13 @@ pub fn save_document(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<SaveDocumentResult> {
+    let root_for_lock = state.with_project(
+        &request.project_id,
+        Some(request.session_generation),
+        |project| Ok(project.root.clone()),
+    )?;
+    let file_lock = state.project_file_lock(&root_for_lock)?;
+    let _file_guard = file_lock.lock().map_err(|_| AppError::session_expired())?;
     let save_lock = state.article_save_lock(&request.article_id)?;
     let _save_guard = save_lock
         .lock()
@@ -250,6 +257,7 @@ pub fn save_document(
         saved_at: Local::now().to_rfc3339(),
     };
     drop(project_guard);
+    drop(_file_guard);
     super::sync::schedule_sync_after_save(app, root);
     Ok(result)
 }
@@ -264,6 +272,9 @@ pub fn create_article(
         Some(request.session_generation),
         |project| Ok((project.root.clone(), project.id.clone(), project.generation)),
     )?;
+    let file_lock = state.project_file_lock(&root)?;
+    let _file_guard = file_lock.lock().map_err(|_| AppError::session_expired())?;
+    state.with_project(&project_id, Some(generation), |_| Ok(()))?;
     let target = article_target(&root, request.kind, &request.file_name)?;
     let date = request.date.trim();
     if date.is_empty() {
@@ -347,6 +358,13 @@ pub fn rename_article(
     if new_title.is_empty() {
         return Err(AppError::invalid("文章标题不能为空。"));
     }
+    let root_for_lock = state.with_project(
+        &request.project_id,
+        Some(request.session_generation),
+        |project| Ok(project.root.clone()),
+    )?;
+    let file_lock = state.project_file_lock(&root_for_lock)?;
+    let _file_guard = file_lock.lock().map_err(|_| AppError::session_expired())?;
     let save_lock = state.article_save_lock(&request.article_id)?;
     let _save_guard = save_lock
         .lock()
@@ -435,6 +453,7 @@ pub fn rename_article(
         project.assets.insert(token, asset);
     }
     drop(guard);
+    drop(_file_guard);
     super::sync::schedule_sync_after_save(app, root);
     Ok(summary)
 }
@@ -448,6 +467,11 @@ pub fn delete_article(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     ensure_article_action_available(&state)?;
+    let root_for_lock = state.with_project(&project_id, Some(session_generation), |project| {
+        Ok(project.root.clone())
+    })?;
+    let file_lock = state.project_file_lock(&root_for_lock)?;
+    let _file_guard = file_lock.lock().map_err(|_| AppError::session_expired())?;
     let save_lock = state.article_save_lock(&article_id)?;
     let _save_guard = save_lock
         .lock()
@@ -477,6 +501,7 @@ pub fn delete_article(
         .article_summaries
         .retain(|summary| summary.article_id != article_id);
     drop(guard);
+    drop(_file_guard);
     super::sync::schedule_sync_after_save(app, root);
     Ok(())
 }
@@ -491,6 +516,11 @@ pub fn move_article(
     state: State<'_, AppState>,
 ) -> AppResult<ArticleSummary> {
     ensure_article_action_available(&state)?;
+    let root_for_lock = state.with_project(&project_id, Some(session_generation), |project| {
+        Ok(project.root.clone())
+    })?;
+    let file_lock = state.project_file_lock(&root_for_lock)?;
+    let _file_guard = file_lock.lock().map_err(|_| AppError::session_expired())?;
     let save_lock = state.article_save_lock(&article_id)?;
     let _save_guard = save_lock
         .lock()
@@ -522,27 +552,7 @@ pub fn move_article(
                 .ok_or_else(|| AppError::new("article_not_found", "文章已离开当前项目会话。", true))
         });
     }
-    let folder = match kind {
-        ArticleKind::Post => "_posts",
-        ArticleKind::Draft => "_drafts",
-    };
-    let directory = root.join("source").join(folder);
-    fs::create_dir_all(&directory).map_err(|error| AppError::io("无法创建文章目录", error))?;
-    let file_name = source
-        .file_name()
-        .ok_or_else(|| AppError::new("invalid_article_path", "文章文件名无效。", false))?;
-    let target = directory.join(file_name);
-    if target.exists() {
-        return Err(AppError::new(
-            "article_exists",
-            "目标位置已有同名文章，请先处理同名文件。",
-            true,
-        ));
-    }
-    fs::rename(&source, &target).map_err(|error| AppError::io("移动文章失败", error))?;
-    let canonical = target
-        .canonicalize()
-        .map_err(|error| AppError::io("验证移动后的文章失败", error))?;
+    let canonical = crate::engine::move_article_files(&root, &source, current_kind, kind)?;
     let (summary, cover_asset) = summarize_article(&root, &canonical, kind, &article_id)?;
 
     let mut guard = state
@@ -568,6 +578,7 @@ pub fn move_article(
         project.assets.insert(token, asset);
     }
     drop(guard);
+    drop(_file_guard);
     super::sync::schedule_sync_after_save(app, root);
     Ok(summary)
 }
@@ -624,8 +635,9 @@ fn ensure_article_action_available(state: &AppState) -> AppResult<()> {
 
 fn open_project_path(state: &AppState, path: &Path) -> AppResult<OpenProjectResult> {
     let (root, name, warnings) = validate_hexo_root(path)?;
-    super::sync::sync_before_open(state, &root);
-    let sync = super::sync::content_sync_view_for_root(state, &root);
+    let sync = super::sync::sync_before_open(state, &root);
+    let file_lock = state.project_file_lock(&root)?;
+    let _file_guard = file_lock.lock().map_err(|_| AppError::session_expired())?;
     let (articles, records, mut assets) = scan_articles(&root)?;
     let generation = state.next_generation();
     for asset in assets.values_mut() {
@@ -645,6 +657,11 @@ fn open_project_path(state: &AppState, path: &Path) -> AppResult<OpenProjectResu
     };
     let view = session.view();
     remember_recent_project(state, &root, &view.name)?;
+    state
+        .pending_sync_rescans
+        .lock()
+        .map_err(|_| AppError::session_expired())?
+        .remove(&root);
     cancel_project_work(state);
     let mut guard = state
         .project
@@ -658,39 +675,96 @@ fn open_project_path(state: &AppState, path: &Path) -> AppResult<OpenProjectResu
     })
 }
 
-pub fn rescan_project_after_sync(state: &AppState, root: &Path) -> AppResult<ProjectRescanResult> {
+pub fn rescan_project_after_sync(
+    state: &AppState,
+    root: &Path,
+    project_id: &str,
+    previous_generation: u64,
+) -> AppResult<ProjectRescanResult> {
+    state.with_project(project_id, Some(previous_generation), |project| {
+        if project.root != root {
+            return Err(AppError::session_expired());
+        }
+        Ok(())
+    })?;
+    let file_lock = state.project_file_lock(root)?;
+    let _file_guard = file_lock.lock().map_err(|_| AppError::session_expired())?;
+    rescan_project_after_sync_locked(state, root, project_id, previous_generation)
+}
+
+/// The caller holds the project's file lock through both disk changes and session replacement.
+pub(super) fn rescan_project_after_sync_locked(
+    state: &AppState,
+    root: &Path,
+    project_id: &str,
+    previous_generation: u64,
+) -> AppResult<ProjectRescanResult> {
+    state.with_project(project_id, Some(previous_generation), |project| {
+        if project.root != root {
+            return Err(AppError::session_expired());
+        }
+        Ok(())
+    })?;
     let (validated_root, name, warnings) = validate_hexo_root(root)?;
-    let (articles, records, mut assets) = scan_articles(&validated_root)?;
+    let (mut articles, records, mut assets) = scan_articles(&validated_root)?;
     let generation = state.next_generation();
     for asset in assets.values_mut() {
         asset.generation = generation;
     }
     super::images::recover_editor_image_assets(state, &records, &mut assets, generation)?;
-    let project_id = state
-        .project
-        .read()
-        .ok()
-        .and_then(|project| project.as_ref().map(|project| project.id.clone()))
-        .unwrap_or_else(AppState::new_project_id);
-    let session = ProjectSession {
-        id: project_id.clone(),
-        generation,
-        name,
-        root: validated_root.clone(),
-        warnings,
-        article_summaries: articles.clone(),
-        articles: records,
-        assets,
-        remote_assets: Default::default(),
-    };
-    cancel_project_work(state);
     let mut guard = state
         .project
         .write()
         .map_err(|_| AppError::new("state_poisoned", "项目状态不可用。", false))?;
-    *guard = Some(session);
+    let current = guard.as_ref().ok_or_else(AppError::session_expired)?;
+    current.require_identity(project_id, Some(previous_generation))?;
+    if current.root != validated_root {
+        return Err(AppError::session_expired());
+    }
+    // Paths identify surviving articles across scans; session generation rejects stale requests.
+    let previous_by_path = current
+        .articles
+        .values()
+        .map(|record| (&record.canonical_path, record))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut stable_records = std::collections::HashMap::new();
+    let mut stable_ids = std::collections::HashMap::new();
+    for (scanned_id, mut record) in records {
+        if let Some(previous) = previous_by_path.get(&record.canonical_path) {
+            record.id = previous.id.clone();
+            record.revision = previous.revision;
+            stable_ids.insert(scanned_id, record.id.clone());
+        }
+        stable_records.insert(record.id.clone(), record);
+    }
+    for article in &mut articles {
+        if let Some(stable_id) = stable_ids.get(&article.article_id) {
+            article.article_id = stable_id.clone();
+        }
+    }
+    // Unsaved editor drafts may still reference a cached asset absent from disk content.
+    for (token, previous) in &current.assets {
+        assets.entry(token.clone()).or_insert_with(|| {
+            let mut asset = previous.clone();
+            asset.generation = generation;
+            asset
+        });
+    }
+    // A rescan updates the active session only; it must not cancel unrelated jobs.
+    *guard = Some(ProjectSession {
+        id: project_id.to_string(),
+        generation,
+        name,
+        root: validated_root,
+        warnings,
+        article_summaries: articles.clone(),
+        articles: stable_records,
+        assets,
+        remote_assets: Default::default(),
+    });
     Ok(ProjectRescanResult {
-        project_id,
+        project_id: project_id.to_string(),
+        previous_generation,
         generation,
         articles,
     })

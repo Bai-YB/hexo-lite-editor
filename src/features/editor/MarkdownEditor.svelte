@@ -4,7 +4,8 @@
   import { markdown } from "@codemirror/lang-markdown";
   import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
   import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
-  import { EditorState, StateEffect, type Extension } from "@codemirror/state";
+  import { EditorState, StateEffect, type ChangeDesc, type Extension } from "@codemirror/state";
+  import { externalEditorChange, resolvedImageHistory } from "./imageHistory";
   import { tags } from "@lezer/highlight";
   import {
     EditorView,
@@ -20,6 +21,7 @@
   } from "@codemirror/view";
 
   export let content = "";
+  export let documentInstance = 0;
   export let fontSize = 15;
   export let lineHeight = 1.65;
   export let showLineNumbers = true;
@@ -29,7 +31,8 @@
   export let selectionFrom = 0;
   export let selectionTo = 0;
   export let scrollTop = 0;
-  export let onChange: (value: string) => void = () => {};
+  export let imageUrlReplacements: Record<string, string> = {};
+  export let onChange: (value: string, changes: ChangeDesc) => void = () => {};
   export let onSelectionChange: (from: number, to: number) => void = () => {};
   export let onScroll: (scrollTop: number, scrollHeight: number, clientHeight: number) => void = () => {};
   export let onImageFiles: (files: File[]) => void = () => {};
@@ -39,6 +42,7 @@
   let host: HTMLDivElement;
   let view: EditorView | null = null;
   let externalContent = content;
+  let viewDocumentInstance = documentInstance;
 
   // 组件实例级常量：样式值全部走 CSS var，主题切换无需重建；
   // reconfigure 时引用同一实例，生成的高亮 class 不抖动。
@@ -93,6 +97,7 @@
   function extensions(): Extension[] {
     return [
       history(),
+      resolvedImageHistory(() => imageUrlReplacements),
       markdown(),
       syntaxHighlighting(quietHighlight),
       EditorState.tabSize.of(tabSize),
@@ -118,7 +123,7 @@
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           externalContent = update.state.doc.toString();
-          onChange(externalContent);
+          onChange(externalContent, update.changes);
         }
         if (update.docChanged || update.selectionSet) {
           const range = update.state.selection.main;
@@ -262,11 +267,22 @@
     }
   }
 
+  $: if (view && documentInstance !== viewDocumentInstance) {
+    viewDocumentInstance = documentInstance;
+    externalContent = content;
+    view.setState(EditorState.create({
+      doc: content,
+      selection: { anchor: Math.min(selectionFrom, content.length), head: Math.min(selectionTo, content.length) },
+      extensions: extensions()
+    }));
+    view.scrollDOM.scrollTop = scrollTop;
+  }
+
   $: if (view && content !== externalContent) {
     externalContent = content;
     const cursor = Math.max(0, Math.min(selectionFrom, content.length));
     view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: content },
+      ...externalEditorChange(view.state.doc.toString(), content, imageUrlReplacements),
       selection: { anchor: cursor, head: Math.max(cursor, Math.min(selectionTo, content.length)) }
     });
     requestAnimationFrame(() => {

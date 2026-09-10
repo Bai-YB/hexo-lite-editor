@@ -19,6 +19,10 @@ The `id` is a stable reverse-domain identifier. `apiVersion` must be `0.1`; inco
 
 Install the directory, review requested permissions, and enable the plugin in Settings > Images and plugins. Disabled and incompatible plugins are never loaded. Worker crashes are isolated from the app; requests time out and terminate the worker.
 
+Disabling or uninstalling a plugin stops its worker and rejects pending requests. A request has a 30-second budget; host HTTP requests finish within 15 seconds. After a crash or timeout, retrying creates a new worker. Uninstall asks for confirmation and preserves settings by default; reinstall restores those settings and always starts disabled.
+
+Settings forms materialize schema defaults before validation and saving. Supported editable fields are string, number, integer, boolean, and enum; required fields, numeric bounds, text length and URI format are checked. Unsupported complex fields retain their saved values. Enabled providers must also accept the configuration through `image.validateConfig` before it is saved.
+
 ## Permissions
 
 - `network:https://example.com` permits only that exact HTTPS origin.

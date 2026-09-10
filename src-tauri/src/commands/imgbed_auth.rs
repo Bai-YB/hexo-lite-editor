@@ -55,7 +55,7 @@ async fn request_cloudflare_imgbed_token(
     request: AcquireCloudflareImgbedTokenRequest,
 ) -> AppResult<(AcquireCloudflareImgbedTokenResult, String)> {
     let base = normalize_imgbed_base_url(&request.base_url)?;
-    let client = reqwest::Client::builder()
+    let client = crate::platform::cloudflare_imgbed::http_client_builder()
         .cookie_store(true)
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -158,7 +158,7 @@ pub async fn test_cloudflare_imgbed_token(
         .append_pair("search", "")
         .append_pair("dir", "");
 
-    let response = reqwest::Client::builder()
+    let response = crate::platform::cloudflare_imgbed::http_client_builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| AppError::new("imgbed_client_failed", error.to_string(), true))?

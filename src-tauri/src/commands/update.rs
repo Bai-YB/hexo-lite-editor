@@ -138,8 +138,17 @@ pub fn get_update_snapshot(app: AppHandle, state: State<'_, AppState>) -> Update
 
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
-    if let Ok(mut cached) = app.state::<AppState>().downloaded_update.lock() {
-        *cached = None;
+    let state = app.state::<AppState>();
+    let _operation = state
+        .update_operation_lock
+        .try_lock()
+        .map_err(|_| AppError::new("update_busy", "更新任务正在运行，请稍后重试。", true))?;
+    if state
+        .downloaded_update
+        .lock()
+        .is_ok_and(|cached| cached.is_some())
+    {
+        return Ok(get_update_snapshot(app.clone(), app.state()));
     }
     let mut snapshot = initial(&app);
     snapshot.status = UpdateStatus::Checking;
@@ -170,6 +179,18 @@ pub async fn check_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
 
 #[tauri::command]
 pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
+    let state = app.state::<AppState>();
+    let _operation = state
+        .update_operation_lock
+        .try_lock()
+        .map_err(|_| AppError::new("update_busy", "更新任务正在运行，请稍后重试。", true))?;
+    if state
+        .downloaded_update
+        .lock()
+        .is_ok_and(|cached| cached.is_some())
+    {
+        return Ok(get_update_snapshot(app.clone(), app.state()));
+    }
     let mut snapshot = get_update_snapshot(app.clone(), app.state());
     snapshot.status = UpdateStatus::Downloading;
     snapshot.downloaded_bytes = Some(0);
@@ -178,17 +199,24 @@ pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
     snapshot.error_message = None;
     store(&app, snapshot.clone());
 
-    let update = check_for_update(&app)
-        .await
-        .map_err(|error| {
-            failure(
-                &app,
-                snapshot.clone(),
-                UpdateErrorStage::Download,
-                describe_update_check_error(error),
-            )
-        })?
-        .ok_or_else(|| AppError::new("update_not_available", "No update is available.", true))?;
+    let update = check_for_update(&app).await.map_err(|error| {
+        failure(
+            &app,
+            snapshot.clone(),
+            UpdateErrorStage::Download,
+            describe_update_check_error(error),
+        )
+    })?;
+    let Some(update) = update else {
+        snapshot = initial(&app);
+        snapshot.status = UpdateStatus::UpToDate;
+        store(&app, snapshot.clone());
+        return Ok(snapshot);
+    };
+    snapshot.latest_version = Some(update.version.clone());
+    snapshot.release_notes = update.body.clone();
+    snapshot.release_date = update.date.map(|date| date.to_string());
+    snapshot.asset_download_url = Some(update.download_url.to_string());
     let progress_app = app.clone();
     let progress_snapshot = std::sync::Arc::new(std::sync::Mutex::new(snapshot));
     let progress_state = progress_snapshot.clone();
@@ -241,6 +269,11 @@ pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
 
 #[tauri::command]
 pub fn install_update(app: AppHandle) -> AppResult<()> {
+    let state = app.state::<AppState>();
+    let _operation = state
+        .update_operation_lock
+        .try_lock()
+        .map_err(|_| AppError::new("update_busy", "更新任务正在运行，请稍后重试。", true))?;
     let mut snapshot = get_update_snapshot(app.clone(), app.state());
     let cached = app
         .state::<AppState>()

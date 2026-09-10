@@ -16,6 +16,7 @@ import type {
   ImageImportResult,
   ImgBedConnectionTestResult,
   LocalImage,
+  LocalImageImportResult,
   OpenProjectResult,
   ProjectSessionView,
   ProjectRescanResult,
@@ -187,7 +188,7 @@ export const platform = {
   },
   importLocalImages(projectId: string, sessionGeneration: number) {
     if (isBrowserDemo()) return browserMock.importLocalImages();
-    return call<LocalImage[]>("import_local_images", { projectId, sessionGeneration });
+    return call<LocalImageImportResult>("import_local_images", { projectId, sessionGeneration });
   },
   deleteLocalImage(projectId: string, sessionGeneration: number, imageId: string) {
     if (isBrowserDemo()) return browserMock.deleteLocalImage();
@@ -292,7 +293,7 @@ export const platform = {
   pluginHttpRequest(request: { pluginId: string; url: string; method?: string; headers?: Record<string, string>; body?: number[] }) {
     return call<{ status: number; headers: Record<string, string>; body: number[] }>("plugin_http_request", { request });
   },
-  uninstallPlugin(pluginId: string) { if (isBrowserDemo()) return browserMock.uninstallPlugin(pluginId); return call<import("$shared/plugins/types").PluginView[]>("uninstall_plugin", { pluginId }); },
+  uninstallPlugin(pluginId: string, preserveSettings = true) { if (isBrowserDemo()) return browserMock.uninstallPlugin(pluginId); return call<import("$shared/plugins/types").PluginView[]>("uninstall_plugin", { pluginId, preserveSettings }); },
   enablePlugin(pluginId: string) { if (isBrowserDemo()) return browserMock.enablePlugin(pluginId); return call<import("$shared/plugins/types").PluginView[]>("enable_plugin", { pluginId }); },
   disablePlugin(pluginId: string) { if (isBrowserDemo()) return browserMock.disablePlugin(pluginId); return call<import("$shared/plugins/types").PluginView[]>("disable_plugin", { pluginId }); },
   getPluginSettings(pluginId: string) { return call<Record<string, unknown>>("get_plugin_settings", { pluginId }); },

@@ -88,13 +88,16 @@ pub fn choose_and_install_plugin(
 #[tauri::command]
 pub fn uninstall_plugin(
     plugin_id: String,
+    preserve_settings: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PluginView>> {
-    let path = state.plugins_dir.join(&plugin_id);
-    if !path.exists() {
-        return Err(errors::not_found());
-    }
-    fs::remove_dir_all(path).map_err(|error| AppError::io("卸载插件失败", error))?;
+    let path = registered_plugin_path(&state, &plugin_id)?;
+    package::uninstall_directory(
+        &path,
+        &state.plugins_dir,
+        &plugin_id,
+        preserve_settings.unwrap_or(true),
+    )?;
     reload(&state)?;
     list_plugins(state)
 }
@@ -109,7 +112,7 @@ pub fn disable_plugin(plugin_id: String, state: State<'_, AppState>) -> AppResul
     list_plugins(state)
 }
 fn toggle(plugin_id: &str, enabled: bool, state: &AppState) -> AppResult<()> {
-    let path = state.plugins_dir.join(plugin_id).join(".enabled");
+    let path = registered_plugin_path(state, plugin_id)?.join(".enabled");
     if !path.parent().is_some_and(|parent| parent.exists()) {
         return Err(errors::not_found());
     }
@@ -125,7 +128,7 @@ pub fn get_plugin_settings(
     plugin_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<serde_json::Value> {
-    let path = state.plugins_dir.join(plugin_id).join("settings.json");
+    let path = registered_plugin_path(&state, &plugin_id)?.join("settings.json");
     if !path.exists() {
         return Ok(serde_json::json!({}));
     }
@@ -178,15 +181,26 @@ pub fn save_plugin_settings(
     if !settings.is_object() {
         return Err(AppError::invalid("插件设置必须是对象。"));
     }
-    let path = state.plugins_dir.join(plugin_id).join("settings.json");
+    let path = registered_plugin_path(&state, &plugin_id)?.join("settings.json");
     if !path.parent().is_some_and(|parent| parent.exists()) {
         return Err(errors::not_found());
     }
-    fs::write(
-        path,
-        serde_json::to_vec_pretty(&settings).unwrap_or_default(),
+    crate::platform::atomic_write(
+        &path,
+        &serde_json::to_vec_pretty(&settings)
+            .map_err(|error| AppError::invalid(error.to_string()))?,
     )
-    .map_err(|error| AppError::io("保存插件设置失败", error))
+}
+
+fn registered_plugin_path(state: &AppState, plugin_id: &str) -> AppResult<PathBuf> {
+    state
+        .plugin_registry
+        .read()
+        .map_err(|_| AppError::new("state_poisoned", "插件状态不可用。", false))?
+        .plugins
+        .get(plugin_id)
+        .map(|(_, _, path)| path.clone())
+        .ok_or_else(errors::not_found)
 }
 
 #[tauri::command]

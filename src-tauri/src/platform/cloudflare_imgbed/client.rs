@@ -2,6 +2,35 @@ use super::{join_directory, management_endpoint, OperationResponse, RenameBody};
 use crate::domain::{AppError, AppResult};
 use url::Url;
 
+pub fn http_client() -> AppResult<reqwest::Client> {
+    http_client_builder()
+        .build()
+        .map_err(|error| AppError::new("imgbed_client_failed", error.to_string(), true))
+}
+
+pub fn http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::none())
+}
+
+pub fn request_error(code: &str, error: reqwest::Error, mutation: bool) -> AppError {
+    if error.is_timeout() {
+        AppError::new(
+            "imgbed_request_timeout",
+            if mutation {
+                "请求超时，操作结果尚未确认。请刷新资源列表确认后再重试，避免重复操作。"
+            } else {
+                "图床请求超时，请检查网络后重试。"
+            },
+            true,
+        )
+    } else {
+        AppError::new(code, error.to_string(), true)
+    }
+}
+
 pub struct CloudflareImgbedClient {
     http: reqwest::Client,
     base: Url,
@@ -9,12 +38,12 @@ pub struct CloudflareImgbedClient {
 }
 
 impl CloudflareImgbedClient {
-    pub fn new(base: Url, token: String) -> Self {
-        Self {
-            http: reqwest::Client::new(),
+    pub fn new(base: Url, token: String) -> AppResult<Self> {
+        Ok(Self {
+            http: http_client()?,
             base,
             token,
-        }
+        })
     }
 
     pub async fn rename(&self, asset_path: &str, new_path: &str) -> AppResult<()> {
@@ -27,7 +56,7 @@ impl CloudflareImgbedClient {
             })
             .send()
             .await
-            .map_err(|error| AppError::new("remote_rename_failed", error.to_string(), true))?;
+            .map_err(|error| request_error("remote_rename_failed", error, true))?;
         Self::require_success(response, "remote_rename_failed").await
     }
 
@@ -48,7 +77,7 @@ impl CloudflareImgbedClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .map_err(|error| AppError::new("remote_move_failed", error.to_string(), true))?;
+            .map_err(|error| request_error("remote_move_failed", error, true))?;
         Self::require_success(response, "remote_move_failed").await
     }
 
@@ -63,7 +92,7 @@ impl CloudflareImgbedClient {
             .bearer_auth(&self.token)
             .send()
             .await
-            .map_err(|error| AppError::new("remote_delete_failed", error.to_string(), true))?;
+            .map_err(|error| request_error("remote_delete_failed", error, true))?;
         Self::require_success(response, "remote_delete_failed").await
     }
 
@@ -77,7 +106,11 @@ impl CloudflareImgbedClient {
 
     async fn require_success(response: reqwest::Response, code: &str) -> AppResult<()> {
         let status = response.status();
-        let body = response.json::<OperationResponse>().await.ok();
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|error| request_error(code, error, true))?;
+        let body = serde_json::from_slice::<OperationResponse>(&bytes).ok();
         if status.is_success() && body.as_ref().is_none_or(|value| value.success) {
             return Ok(());
         }

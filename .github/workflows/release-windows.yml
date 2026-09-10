@@ -47,7 +47,8 @@ jobs:
         shell: pwsh
         run: |
           if ($env:GITHUB_REF -like "refs/tags/v*") {
-            $version = $env:GITHUB_REF_NAME.Substring(1)
+            $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+            if ($env:GITHUB_REF_NAME -notmatch ('^v' + [regex]::Escape($version) + '(?:-r[1-9][0-9]*)?$')) { throw "Release tag does not match package version" }
           } else {
             $version = "${{ inputs.version }}"
           }
@@ -59,17 +60,27 @@ jobs:
       - name: Frontend checks
         run: |
           pnpm check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm exec playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm test:e2e
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm audit --prod
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Rust checks
         working-directory: src-tauri
         run: |
           cargo fmt --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo clippy --all-targets --all-features -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package Windows release
         shell: pwsh
@@ -133,9 +144,12 @@ jobs:
             "$releaseDirectory/SHA256SUMS.txt"
           )
           if (gh release view $tag 2>$null) {
-            gh release upload $tag @assets --clobber
             gh release edit $tag --draft --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag @assets --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } else {
             $tagArgument = if ($env:GITHUB_REF -like "refs/tags/v*") { @("--verify-tag") } else { @("--target", $env:GITHUB_SHA) }
             gh release create $tag @assets @tagArgument --draft --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

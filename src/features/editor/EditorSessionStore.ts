@@ -3,8 +3,13 @@ import type {
   SaveDocumentRequest,
   SaveDocumentResult
 } from "$shared/types/app";
+import type { ChangeDesc } from "@codemirror/state";
+import { contentChanges } from "./editorChanges";
 
 export interface EditorSessionState {
+  documentInstance: number;
+  externalChange: "changed" | "deleted" | null;
+  imageUrlReplacements: Record<string, string>;
   snapshot: DocumentSnapshot | null;
   content: string;
   revision: number;
@@ -16,8 +21,18 @@ export interface EditorSessionState {
   selection: { from: number; to: number };
 }
 
+export interface InsertionBookmark {
+  documentInstance: number;
+  from: number;
+  to: number;
+  valid: boolean;
+}
+
 export class EditorSessionStore {
   private state: EditorSessionState = {
+    documentInstance: 0,
+    externalChange: null,
+    imageUrlReplacements: {},
     snapshot: null,
     content: "",
     revision: 0,
@@ -32,6 +47,7 @@ export class EditorSessionStore {
   private cursorByArticle = new Map<string, { from: number; to: number }>();
   private queue: Promise<SaveDocumentResult | null> = Promise.resolve(null);
   private listeners = new Set<(state: EditorSessionState) => void>();
+  private bookmarks = new Set<InsertionBookmark>();
 
   constructor(
     private readonly saveDocument: (request: SaveDocumentRequest) => Promise<SaveDocumentResult>
@@ -48,12 +64,16 @@ export class EditorSessionStore {
   }
 
   load(snapshot: DocumentSnapshot) {
+    this.bookmarks.clear();
     this.lastSavedContent = snapshot.content;
     const selection = this.cursorByArticle.get(snapshot.articleId) ?? {
       from: snapshot.content.length,
       to: snapshot.content.length
     };
     this.state = {
+      documentInstance: this.state.documentInstance + 1,
+      externalChange: null,
+      imageUrlReplacements: {},
       snapshot,
       content: snapshot.content,
       revision: snapshot.revision,
@@ -68,8 +88,12 @@ export class EditorSessionStore {
   }
 
   clear() {
+    this.bookmarks.clear();
     this.lastSavedContent = "";
     this.state = {
+      documentInstance: this.state.documentInstance + 1,
+      externalChange: null,
+      imageUrlReplacements: {},
       snapshot: null,
       content: "",
       revision: 0,
@@ -89,11 +113,53 @@ export class EditorSessionStore {
     this.notify();
   }
 
-  update(content: string) {
+  documentToken() { return this.state.documentInstance; }
+
+  matchesDocument(token: number) {
+    return Boolean(this.state.snapshot) && this.state.documentInstance === token;
+  }
+
+  markExternalChange(kind: "changed" | "deleted") {
+    this.state.externalChange = kind;
+    this.state.dirty = true;
+    this.notify();
+  }
+
+  allowExternalOverwrite() {
+    this.state.externalChange = null;
+    this.state.dirty = true;
+    this.state.revision += 1;
+    this.notify();
+  }
+
+  createInsertionBookmark(): InsertionBookmark {
+    const bookmark = { documentInstance: this.documentToken(), ...this.state.selection, valid: true };
+    this.bookmarks.add(bookmark);
+    return bookmark;
+  }
+
+  releaseInsertionBookmark(bookmark: InsertionBookmark) { this.bookmarks.delete(bookmark); }
+
+  private mapBookmarks(changes: ChangeDesc) {
+    for (const bookmark of this.bookmarks) {
+      const collapsed = bookmark.from === bookmark.to;
+      changes.iterChangedRanges((from, to) => {
+        if (!collapsed && from < bookmark.to && to > bookmark.from) bookmark.valid = false;
+      });
+      bookmark.from = changes.mapPos(bookmark.from, -1);
+      bookmark.to = changes.mapPos(bookmark.to, collapsed ? -1 : 1);
+    }
+  }
+
+  update(content: string, changes?: ChangeDesc) {
+    const normalized = resolveImageUrls(content, this.state.imageUrlReplacements);
+    if (normalized !== content) changes = undefined;
+    content = normalized;
     if (!this.state.snapshot || content === this.state.content) return;
+    this.mapBookmarks(changes ?? contentChanges(this.state.content, content));
     this.state.content = content;
     this.state.revision += 1;
-    this.state.dirty = true;
+    this.state.dirty = Boolean(this.state.externalChange) || content !== this.lastSavedContent;
     this.state.error = null;
     this.notify();
   }
@@ -114,20 +180,27 @@ export class EditorSessionStore {
     this.notify();
   }
 
-  insertMarkdown(markdown: string) {
+  insertMarkdown(markdown: string, bookmark?: InsertionBookmark) {
     if (!this.state.snapshot || !markdown) return false;
-    const { from, to } = this.state.selection;
+    if (bookmark && (!bookmark.valid || !this.matchesDocument(bookmark.documentInstance))) return false;
+    const { from, to } = bookmark ?? this.state.selection;
     const before = this.state.content.slice(0, from);
     const after = this.state.content.slice(to);
     const prefix = before && !before.endsWith("\n") ? "\n" : "";
     const suffix = after && !after.startsWith("\n") ? "\n" : "";
     const insertion = `${prefix}${markdown}${suffix}`;
     const cursor = from + insertion.length;
-    this.state.content = `${before}${insertion}${after}`;
+    const nextContent = `${before}${insertion}${after}`;
+    const changes = contentChanges(this.state.content, nextContent);
+    this.mapBookmarks(changes);
+    const selection = bookmark
+      ? { from: changes.mapPos(this.state.selection.from), to: changes.mapPos(this.state.selection.to) }
+      : { from: cursor, to: cursor };
+    this.state.content = nextContent;
     this.state.revision += 1;
     this.state.dirty = true;
     this.state.error = null;
-    this.state.selection = { from: cursor, to: cursor };
+    this.state.selection = selection;
     this.cursorByArticle.set(this.state.snapshot.articleId, this.state.selection);
     this.notify();
     return true;
@@ -135,8 +208,15 @@ export class EditorSessionStore {
 
   replaceMarkdownImageUrl(expectedUrl: string, replacementUrl: string, articleId: string) {
     if (!this.state.snapshot || this.state.snapshot.articleId !== articleId) return false;
+    this.state.imageUrlReplacements = { ...this.state.imageUrlReplacements, [expectedUrl]: replacementUrl };
     const next = replaceMarkdownImageUrl(this.state.content, expectedUrl, replacementUrl);
-    if (next === this.state.content) return false;
+    if (next === this.state.content) { this.notify(); return false; }
+    const changes = contentChanges(this.state.content, next);
+    this.mapBookmarks(changes);
+    this.state.selection = {
+      from: changes.mapPos(this.state.selection.from),
+      to: changes.mapPos(this.state.selection.to)
+    };
     this.state.content = next;
     this.state.revision += 1;
     this.state.dirty = true;
@@ -155,9 +235,10 @@ export class EditorSessionStore {
 
   discard() {
     if (!this.state.snapshot) return;
+    this.mapBookmarks(contentChanges(this.state.content, this.lastSavedContent));
     this.state.content = this.lastSavedContent;
-    this.state.revision = this.state.persistedRevision;
-    this.state.dirty = false;
+    this.state.revision += 1;
+    this.state.dirty = Boolean(this.state.externalChange);
     this.state.error = null;
     const cursor = Math.min(this.state.selection.from, this.lastSavedContent.length);
     this.state.selection = { from: cursor, to: cursor };
@@ -166,8 +247,9 @@ export class EditorSessionStore {
   }
 
   save(): Promise<SaveDocumentResult | null> {
+    if (this.state.externalChange) return Promise.reject(new Error("文章已在外部更改，请先选择保留本地内容或使用远端版本。"));
     const snapshot = this.state.snapshot;
-    if (!snapshot || !this.state.dirty) return this.queue;
+    if (!snapshot || !this.state.dirty) return this.queue.catch(() => null);
     const request: SaveDocumentRequest = {
       projectId: snapshot.projectId,
       articleId: snapshot.articleId,
@@ -175,44 +257,67 @@ export class EditorSessionStore {
       revision: this.state.revision,
       sessionGeneration: snapshot.sessionGeneration
     };
+    const token = this.documentToken();
+    this.state.saving = true;
+    this.notify();
     this.queue = this.queue
       .catch(() => null)
       .then(async () => {
+        if (!this.matchesDocument(token)) return null;
         this.state.saving = true;
         this.state.error = null;
         this.notify();
         try {
+          if (this.state.externalChange) throw new Error("文章已在外部更改，请先处理版本冲突。");
           const result = await this.saveDocument(request);
           const current = this.state.snapshot;
           if (
-            current?.projectId === request.projectId &&
+            this.matchesDocument(token) && current?.projectId === request.projectId &&
             current.articleId === request.articleId &&
             current.sessionGeneration === request.sessionGeneration &&
             result.acceptedRevision >= this.state.persistedRevision
           ) {
             this.state.persistedRevision = result.acceptedRevision;
-            if (result.acceptedRevision === this.state.revision) {
-              this.lastSavedContent = request.content;
-              this.state.dirty = false;
-            }
+            this.lastSavedContent = request.content;
+            this.state.dirty = Boolean(this.state.externalChange) || this.state.content !== request.content;
             this.state.savedAt = result.savedAt;
           }
           return result;
         } catch (error) {
-          this.state.error = error instanceof Error ? error.message : String(error);
+          if (this.matchesDocument(token)) this.state.error = error instanceof Error ? error.message : String(error);
           throw error;
         } finally {
-          this.state.saving = false;
-          this.notify();
+          if (this.matchesDocument(token)) {
+            this.state.saving = false;
+            this.notify();
+          }
         }
       });
     return this.queue;
+  }
+
+  waitForSave() { return this.queue; }
+
+  async saveUntilClean() {
+    const token = this.documentToken();
+    if (!this.state.snapshot) return;
+    do {
+      await this.save();
+      if (!this.matchesDocument(token)) throw new Error("当前文章已切换，请重新操作。");
+    } while (this.state.dirty);
   }
 
   private notify() {
     const copy = this.getState();
     this.listeners.forEach((listener) => listener(copy));
   }
+}
+
+export function resolveImageUrls(content: string, replacements: Record<string, string>) {
+  for (const [localUrl, remoteUrl] of Object.entries(replacements)) {
+    content = replaceMarkdownImageUrl(content, localUrl, remoteUrl);
+  }
+  return content;
 }
 
 export function replaceMarkdownImageUrl(content: string, expectedUrl: string, replacementUrl: string) {

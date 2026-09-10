@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ui } from "$shared/i18n/ui";
   import { onDestroy, onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -7,6 +8,10 @@
   import NavRail from "./NavRail.svelte";
   import LoadingState from "$shared/components/LoadingState.svelte";
   import ModalDialog from "$shared/components/ModalDialog.svelte";
+  import { hasOpenModal } from "$shared/components/modalStack";
+  import { reconcileProjectRescan } from "./projectRescan";
+  import { checkRecoveryRemote, matchesRecovery, persistRecoveryDraft, waitForRecovery, type RecoveryIdentity } from "./documentRecovery";
+  import { disposePluginWorkers } from "$shared/plugins/PluginProviderRuntime";
   import PageTransition from "$shared/components/PageTransition.svelte";
   import { isTauri, normalizeError, platform } from "$platform/tauri";
   import { defaultConfig } from "$shared/types/app";
@@ -24,8 +29,7 @@
   } from "$shared/types/app";
   import { EditorSessionStore } from "$features/editor/EditorSessionStore";
   import type { SettingsController } from "$features/settings/controller";
-  import { initI18n, language, t } from "$shared/i18n";
-  import { startLegacyDomTranslation, stopLegacyDomTranslation } from "$shared/i18n/legacyDom";
+  import { initI18n, t } from "$shared/i18n";
 
   const pageLoaders: Record<AppPage, () => Promise<{ default: any }>> = {
     editor: () => import("$features/editor/EditorPage.svelte"),
@@ -58,6 +62,7 @@
   let noticeSeverity: "info" | "error" = "info";
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
   let guardAction: (() => void | Promise<void>) | null = null;
+  let guardCompletion: ((accepted: boolean) => void) | null = null;
   let guardDescription = "";
   let guardBusy = false;
   let guardSource: "editor" | "settings" | "both" = "editor";
@@ -72,15 +77,22 @@
   let settingsInitialSection: SettingsSectionId | null = null;
   let autoUpdateReady: UpdateSnapshot | null = null;
   let configRevision = 0;
-  $: $language;
-  $: if (configLoaded && typeof document !== "undefined") {
-    if ($language === "en-US") setTimeout(startLegacyDomTranslation, 0);
-    else stopLegacyDomTranslation();
-  }
+  let configSaveQueue: Promise<unknown> = Promise.resolve();
+  let externalChange: "changed" | "deleted" | null = null;
+  let recoveryOpen = false;
+  let recoveryBusy = false;
+  let recoveryRemote: string | null = null;
+  let recoveryLocal = "";
+  let recoveryIdentity: RecoveryIdentity | null = null;
+  let recoveryDraft: { projectId: string; generation: number; token: number; article: ArticleSummary } | null = null;
+  let taskDetailsOpen = false;
+  let cancelingTask = false;
 
   const unsubscribeEditor = editorStore.subscribe((state) => {
     dirty = state.dirty;
     activeArticleId = state.snapshot?.articleId ?? null;
+    externalChange = state.externalChange ?? null;
+    if (!externalChange && !recoveryBusy) recoveryOpen = false;
   });
 
   $: pagePromise = pageLoaders[page]();
@@ -145,7 +157,7 @@
           const reason = latestTaskFailure(taskEvents, event.taskId);
           showNotice(
             isPublish
-              ? `发布失败：${reason || "未上传不完整的站点，请修正文章或项目设置后重试。"}`
+              ? `发布失败：${reason || "请检查任务详情；若已进入部署阶段，请核对远端结果。"}`
               : reason || "任务执行失败，请检查项目设置或网络连接后重试。",
             "error"
           );
@@ -165,25 +177,28 @@
       }
     });
     unlistenSync = await platform.onContentSyncStatus((view) => {
+      if (view.projectId !== session?.projectId || view.sessionGeneration !== session?.generation) return;
       if (["offline", "authRequired", "remoteAhead", "conflict", "error"].includes(view.status)) {
         showNotice(view.message || `内容同步：${view.status}`, "error");
       }
     });
     unlistenSyncPhase = await platform.onContentSyncPhase((event) => {
+      if (event.projectId !== session?.projectId || event.sessionGeneration !== session?.generation) return;
       if (event.phase === "failed" && event.message) showNotice(event.message, "error");
     });
     unlistenRescan = await platform.onProjectRescanned((project) => void applyProjectRescan(project));
     if (isTauri()) {
       unlistenClose = await getCurrentWindow().onCloseRequested((event) => {
         if (allowWindowClose) return;
+        if (recoveryBusy) { event.preventDefault(); return; }
         if (pendingImageUploads > 0) {
           event.preventDefault();
           showNotice(`还有 ${pendingImageUploads} 张图片正在上传，请等待完成后再退出。`, "error");
           return;
         }
         const settingsDirty = settingsController?.hasDirty() ?? false;
-        const editorDirty = editorStore.hasDirty();
-        if (!editorDirty && !settingsDirty) {
+        const editorDirty = editorStore.hasDirty() || editorStore.getState().saving;
+        if (!editorDirty && !settingsDirty && !activeTask && !publishing) {
           void platform.cleanupBeforeExit().catch(console.error);
           return;
         }
@@ -204,7 +219,7 @@
     clearTimeout(configTimer);
     clearTimeout(noticeTimer);
     unsubscribeEditor();
-    stopLegacyDomTranslation();
+    disposePluginWorkers();
   });
 
   function applyTheme(mode: AppConfigV3["appearance"]["themeMode"]) {
@@ -212,14 +227,16 @@
   }
 
   function handleShortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
     const modifier = event.ctrlKey || event.metaKey;
     if (!modifier) return;
     const key = event.key.toLowerCase();
     const isAppShortcut = (event.shiftKey && key === "p")
       || (!event.shiftKey && ["s", "n", "o", ",", "\\"].includes(key))
       || /^Digit[1-4]$/.test(event.code);
-    if (guardAction && isAppShortcut) {
+    if ((guardAction || recoveryBusy || hasOpenModal()) && isAppShortcut) {
       event.preventDefault();
+      event.stopPropagation();
       return;
     }
     if (event.shiftKey && key === "p") {
@@ -258,6 +275,7 @@
   }
 
   function navigate(next: AppPage, settingsSection: SettingsSectionId | null = null) {
+    if (recoveryBusy) return;
     if (next === page) return;
     if (pendingImageUploads > 0) {
       showNotice("图片正在上传并更新地址，请等待完成后再离开写作页。", "error");
@@ -275,6 +293,12 @@
   }
 
   function openProject() {
+    if (recoveryBusy) return;
+    if (activeTask || publishing) {
+      taskDetailsOpen = true;
+      showNotice("请等待后台任务完成，或取消任务后再切换博客。", "error");
+      return;
+    }
     if (pendingImageUploads > 0) {
       showNotice("图片正在上传并更新地址，请等待完成后再切换博客。", "error");
       return;
@@ -293,6 +317,12 @@
   }
 
   async function openRecent(recentId: string) {
+    if (recoveryBusy) return;
+    if (activeTask || publishing) {
+      taskDetailsOpen = true;
+      showNotice("请等待后台任务完成，或取消任务后再切换博客。", "error");
+      return;
+    }
     if (pendingImageUploads > 0) {
       showNotice("图片正在上传并更新地址，请等待完成后再切换博客。", "error");
       return;
@@ -310,33 +340,114 @@
   }
 
   async function applyProjectRescan(project: import("$shared/types/app").ProjectRescanResult) {
-    if (!session || project.projectId !== session.projectId) return;
-    const previousState = editorStore.getState();
-    const previousArticleId = previousState.snapshot?.articleId ?? null;
-    const nextSession = { ...session, generation: project.generation };
-    session = nextSession;
-    articles = project.articles;
-    previewServer = null;
+    try {
+      const result = await reconcileProjectRescan(project, {
+        store: editorStore,
+        getSession: () => session,
+        accept: (next) => {
+          session = { ...session!, generation: next.generation };
+          articles = next.articles;
+          previewServer = null;
+        },
+        loadDocument: platform.loadDocument
+      });
+      if (result === "changed" || result === "deleted") showNotice("云端文章已变化，本地内容已保留。请先处理版本差异再保存。");
+      else if (result === "refreshed") showNotice("远端内容已应用，文章列表已刷新。");
+    } catch (error) { showNotice(normalizeError(error).message, "error"); }
+  }
 
-    if (previousState.snapshot?.projectId === project.projectId) {
-      editorStore.rebaseSessionGeneration(project.generation);
-      if (!previousState.dirty && previousArticleId && project.articles.some((item) => item.articleId === previousArticleId)) {
-        try {
-          const snapshot = await platform.loadDocument(project.projectId, previousArticleId, project.generation);
-          editorStore.load(snapshot);
-        } catch (error) {
-          showNotice(normalizeError(error).message, "error");
+  async function reviewExternalChange() {
+    if (!session || !externalChange || recoveryBusy) return;
+    const state = editorStore.getState();
+    const token = editorStore.documentToken();
+    const project = { ...session };
+    recoveryLocal = state.content;
+    recoveryIdentity = { projectId: project.projectId, generation: project.generation, token, revision: state.revision, externalChange };
+    const identity = recoveryIdentity;
+    recoveryRemote = null;
+    recoveryOpen = true;
+    if (externalChange === "deleted" || !state.snapshot) return;
+    recoveryBusy = true;
+    try {
+      const remote = await checkRecoveryRemote(identity, recoveryContext(), null);
+      if (remote.status !== "stale") recoveryRemote = remote.snapshot.content;
+    } catch (error) { showNotice(normalizeError(error).message, "error"); }
+    finally { recoveryBusy = false; }
+  }
+
+  function recoveryContext() {
+    return { store: editorStore, getSession: () => session, loadDocument: platform.loadDocument };
+  }
+
+  async function resolveExternalChange(choice: "local" | "remote" | "draft" | "close") {
+    if (!session || recoveryBusy || !externalChange) return;
+    recoveryBusy = true;
+    const project = { ...session };
+    const token = editorStore.documentToken();
+    const state = editorStore.getState();
+    const identity = recoveryIdentity;
+    const context = recoveryContext();
+    if (!identity || !matchesRecovery(identity, context)) {
+      recoveryBusy = false;
+      showNotice("文章版本已变化，请核对刷新后的内容，再选择处理方式。", "error");
+      await reviewExternalChange();
+      return;
+    }
+    const current = () => editorStore.matchesDocument(token) && session?.projectId === project.projectId && session.generation === project.generation;
+    try {
+      if (!await waitForRecovery(identity, context) || !state.snapshot) return;
+      if (externalChange === "changed" && (choice === "local" || choice === "remote")) {
+        const result = await checkRecoveryRemote(identity, context, recoveryRemote);
+        if (result.status === "stale") return;
+        if (result.status === "review") {
+          recoveryRemote = result.snapshot.content;
+          showNotice("云端内容已更新，请核对当前比较后再次选择。", "error");
+          return;
         }
+        if (choice === "remote") { editorStore.load(result.snapshot); recoveryOpen = false; return; }
       }
-    } else {
-      editorStore.clear();
-    }
+      if (choice === "close") editorStore.clear();
+      else if (choice === "local") {
+        editorStore.allowExternalOverwrite();
+        try { await editorStore.saveUntilClean(); }
+        catch (error) { if (current()) editorStore.markExternalChange("changed"); throw error; }
+      } else if (choice === "remote") {
+        return;
+      } else {
+        const article = recoveryDraft?.projectId === project.projectId && recoveryDraft.generation === project.generation && recoveryDraft.token === token
+          ? recoveryDraft.article : null;
+        const saved = await persistRecoveryDraft({
+          identity, context, article, content: state.content,
+          request: {
+            projectId: project.projectId, sessionGeneration: project.generation,
+            title: activeDocumentTitle || "恢复的文章", fileName: `recovered-${Date.now()}`, kind: "draft",
+            date: new Date().toLocaleString("sv-SE"), tags: [], categories: []
+          },
+          createArticle: platform.createArticle, saveDocument: platform.saveDocument,
+          remember: (created) => {
+            recoveryDraft = { projectId: project.projectId, generation: project.generation, token, article: created };
+            if (current() && !articles.some((item) => item.articleId === created.articleId)) articles = [created, ...articles];
+          }
+        });
+        editorStore.load(saved);
+        recoveryDraft = null;
+        showNotice("本地内容已另存为草稿，请核对文章中的相对图片路径。");
+      }
+      if (!editorStore.getState().externalChange) recoveryOpen = false;
+    } catch (error) {
+      showNotice(`${normalizeError(error).message}${choice === "draft" && recoveryDraft ? " 恢复草稿已创建，再次点击另存草稿会继续保存到同一文件。" : ""}`, "error");
+    } finally { recoveryBusy = false; if (!editorStore.getState().externalChange) recoveryOpen = false; }
+  }
 
-    if (previousState.dirty) {
-      showNotice("远端内容已刷新；当前未保存稿已保留，请核对后再保存。");
-    } else {
-      showNotice("远端内容已应用，文章列表已刷新。");
+  function beforeSync(): Promise<boolean> {
+    if (guardAction || recoveryBusy || pendingImageUploads > 0 || externalChange) {
+      showNotice("请先完成图片操作或处理当前文章的版本差异，再同步。", "error");
+      return Promise.resolve(false);
     }
+    return new Promise((resolve) => {
+      guardCompletion = resolve;
+      requestGuard("应用云端内容前，请保存或放弃当前文章的修改。", () => { resolve(true); guardCompletion = null; });
+    });
   }
 
   function acceptProject(nextSession: ProjectSessionView, nextArticles: ArticleSummary[]) {
@@ -364,12 +475,19 @@
   }
 
   function requestClose() {
+    if (recoveryBusy) return;
+    if (guardAction) return;
+    if (activeTask || publishing) {
+      taskDetailsOpen = true;
+      showNotice("后台任务仍在运行，请等待完成或在任务详情中取消后再退出。", "error");
+      return;
+    }
     if (pendingImageUploads > 0) {
       showNotice(`还有 ${pendingImageUploads} 张图片正在上传，请等待完成后再退出。`, "error");
       return;
     }
     const settingsDirty = settingsController?.hasDirty() ?? false;
-    const editorDirty = editorStore.hasDirty();
+    const editorDirty = editorStore.hasDirty() || editorStore.getState().saving;
     closeWindowState = {
       ...closeWindowState,
       hasUnsavedChanges: settingsDirty || editorDirty
@@ -394,6 +512,7 @@
     closeWindowState = { ...closeWindowState, isClosing: true };
     try {
       await flushPendingConfig();
+      disposePluginWorkers();
       allowWindowClose = true;
       void platform.cleanupBeforeExit().catch(console.error);
       if (isTauri()) await getCurrentWindow().destroy();
@@ -411,7 +530,7 @@
   ) {
     if (guardAction) return;
     const settingsDirty = settingsController?.hasDirty() ?? false;
-    const editorDirty = editorStore.hasDirty();
+    const editorDirty = editorStore.hasDirty() || editorStore.getState().saving;
     const hasDirty = source === "settings"
       ? settingsDirty
       : source === "both"
@@ -428,7 +547,10 @@
   }
 
   async function resolveGuard(choice: "save" | "discard" | "cancel") {
+    if (guardBusy) return;
     if (choice === "cancel") {
+      guardCompletion?.(false);
+      guardCompletion = null;
       guardAction = null;
       guardIsClosing = false;
       return;
@@ -436,14 +558,28 @@
     guardBusy = true;
     const action = guardAction;
     try {
+      if ((guardSource === "editor" || guardSource === "both") && externalChange) {
+        guardCompletion?.(false);
+        guardCompletion = null;
+        guardAction = null;
+        guardIsClosing = false;
+        await reviewExternalChange();
+        return;
+      }
       if (guardSource === "settings" || guardSource === "both") {
         if (choice === "save") await settingsController?.save();
-        else settingsController?.discard();
+        else await settingsController?.discard();
+        if (settingsController?.hasDirty()) throw new Error("设置还有新的修改，请保存后继续。");
       }
       if (guardSource === "editor" || guardSource === "both") {
-        if (choice === "save") await editorStore.save();
-        else editorStore.discard();
+        if (choice === "save") await editorStore.saveUntilClean();
+        else {
+          await editorStore.waitForSave().catch(() => null);
+          if (editorStore.getState().externalChange) throw new Error("文章已在云端变化，请取消并处理版本差异后继续。");
+          editorStore.discard();
+        }
       }
+      if ((guardSource === "editor" || guardSource === "both") && (editorStore.getState().externalChange || editorStore.hasDirty())) throw new Error("文章仍有未处理的修改，请处理后继续。");
       guardAction = null;
       await action?.();
       if (!closeWindowState.isClosing) guardIsClosing = false;
@@ -463,12 +599,18 @@
       return;
     }
     publishing = true;
+    const project = { ...session };
+    const token = editorStore.documentToken();
     try {
-      if (editorStore.hasDirty()) {
-        await editorStore.save();
-        articles = await platform.listArticles(session.projectId, session.generation);
-      }
-      const task = await platform.startTask(session.projectId, "publish");
+      if (externalChange) throw new Error("请先处理当前文章的版本差异再发布。");
+      await editorStore.saveUntilClean();
+      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error("当前项目或文章已变化，请重新发布。");
+      const nextArticles = await platform.listArticles(project.projectId, project.generation);
+      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error("当前项目或文章已变化，请重新发布。");
+      await editorStore.saveUntilClean();
+      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token) || editorStore.getState().externalChange) throw new Error("当前文章已变化，请处理后重新发布。");
+      articles = nextArticles;
+      const task = await platform.startTask(project.projectId, "publish");
       publishTaskId = task.taskId;
       showNotice("正在后台清理缓存、重新生成并发布博客。" );
     } catch (error) {
@@ -489,14 +631,20 @@
     }, "both");
   }
 
-  async function ensurePreviewRunning() {
-    if (!session) throw new Error("请先打开博客项目。");
-    let view = await platform.getPreviewStatus(session.projectId, session.generation);
-    if (view.state !== "running") view = await platform.startPreviewServer(session.projectId, session.generation);
+  async function ensurePreviewRunning(project = session && { ...session }) {
+    if (!project) throw new Error("请先打开博客项目。");
+    const assertCurrent = () => {
+      if (session?.projectId !== project.projectId || session.generation !== project.generation) throw new Error("博客项目已切换，请重新打开预览。");
+    };
+    let view = await platform.getPreviewStatus(project.projectId, project.generation);
+    assertCurrent();
+    if (view.state !== "running") view = await platform.startPreviewServer(project.projectId, project.generation);
     for (let index = 0; index < 100 && view.state === "starting"; index += 1) {
       await new Promise((resolve) => setTimeout(resolve, 150));
-      view = await platform.getPreviewStatus(session.projectId, session.generation);
+      assertCurrent();
+      view = await platform.getPreviewStatus(project.projectId, project.generation);
     }
+    assertCurrent();
     previewServer = view;
     if (view.state !== "running") throw view.error ?? new Error("Hexo 预览尚未就绪。");
     return view;
@@ -504,13 +652,25 @@
 
   async function previewProject(openInBrowser = true) {
     if (!session || previewBusy) return "";
+    const project = { ...session };
+    const token = editorStore.documentToken();
+    const articleId = editorStore.getState().snapshot?.articleId;
+    const assertCurrent = () => {
+      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error("当前文章已变化，请重新打开预览。");
+    };
     previewBusy = true;
     try {
-      if (editorStore.hasDirty()) await editorStore.save();
-      const articleId = editorStore.getState().snapshot?.articleId;
+      if (pendingImageUploads > 0) throw new Error("请等待图片处理完成后再打开预览。");
+      if (externalChange) throw new Error("请先处理当前文章的版本差异再预览。");
+      await editorStore.saveUntilClean();
+      assertCurrent();
       if (!articleId) throw new Error("请先打开一篇文章。");
-      await ensurePreviewRunning();
-      const url = await platform.resolveArticlePreviewUrl(session.projectId, session.generation, articleId);
+      await ensurePreviewRunning(project);
+      assertCurrent();
+      await editorStore.saveUntilClean();
+      assertCurrent();
+      const url = await platform.resolveArticlePreviewUrl(project.projectId, project.generation, articleId);
+      assertCurrent();
       if (openInBrowser) await platform.openMarkdownLink(url);
       return url;
     } catch (error) {
@@ -553,7 +713,7 @@
       configTimer = undefined;
       const snapshot = structuredClone(next);
       try {
-        const saved = await platform.saveConfig(snapshot);
+        const saved = await persistConfigSnapshot(snapshot);
         if (revision === configRevision) config = saved;
       } catch (error) {
         showNotice(normalizeError(error).message, "error");
@@ -562,22 +722,31 @@
   }
 
   async function flushPendingConfig() {
-    if (!configTimer) return;
+    if (!configTimer) { await configSaveQueue; return; }
     clearTimeout(configTimer);
     configTimer = undefined;
     const revision = configRevision;
-    const saved = await platform.saveConfig(structuredClone(config));
+    const saved = await persistConfigSnapshot(structuredClone(config));
     if (revision === configRevision) config = saved;
   }
 
   async function saveConfigNow(next: AppConfigV3) {
     clearTimeout(configTimer);
     configTimer = undefined;
-    configRevision += 1;
-    const saved = await platform.saveConfig(next);
-    config = saved;
-    applyTheme(saved.appearance.themeMode);
+    const revision = ++configRevision;
+    const saved = await persistConfigSnapshot(next);
+    if (revision === configRevision) {
+      config = saved;
+      applyTheme(saved.appearance.themeMode);
+    }
     return saved;
+  }
+
+  function persistConfigSnapshot(next: AppConfigV3): Promise<AppConfigV3> {
+    const snapshot = structuredClone(next);
+    const save = configSaveQueue.catch(() => undefined).then(() => platform.saveConfig(snapshot));
+    configSaveQueue = save;
+    return save;
   }
 
   async function removeRecentProject(recentId: string) {
@@ -598,6 +767,17 @@
     clearTimeout(noticeTimer);
     const duration = Math.max(5000, Math.min(12_000, message.length * 90));
     if (effectiveSeverity === "info") noticeTimer = setTimeout(() => (notice = ""), duration);
+  }
+
+  async function cancelActiveTask() {
+    if (!activeTask || cancelingTask) return;
+    const taskId = activeTask.taskId;
+    cancelingTask = true;
+    try {
+      await platform.cancelTask(taskId);
+      showNotice("已请求停止任务。已经执行的部署操作不会被撤回，请核对远端结果。");
+    } catch (error) { showNotice(normalizeError(error).message, "error"); }
+    finally { cancelingTask = false; }
   }
 
   function dismissNotice() {
@@ -639,7 +819,7 @@
     if (/输出了错误，发布已停止/.test(output)) {
       return "生成过程发现错误，已停止发布，未上传不完整的站点。";
     }
-    return "任务没有成功完成，未上传不完整的站点。";
+    return "任务没有成功完成。若已进入部署阶段，请核对远端结果后再重试。";
   }
 </script>
 
@@ -671,7 +851,7 @@
             {recentProjects}
             {previewServer}
             initialSection={settingsInitialSection}
-            autoSaveSuspended={guardIsClosing}
+            autoSaveSuspended={Boolean(guardAction) || Boolean(externalChange)}
             taskBusy={Boolean(activeTask) || publishing}
             {previewBusy}
             onOpenProject={openProject}
@@ -679,6 +859,7 @@
             onArticlesChange={(next: ArticleSummary[]) => (articles = next)}
             onConfigChange={updateConfig}
             onSaveConfig={saveConfigNow}
+            onBeforeSync={beforeSync}
             onThemePreview={(mode: AppConfigV3["appearance"]["themeMode"]) => applyTheme(mode)}
             onRegisterSettingsController={(controller: SettingsController | null) => (settingsController = controller)}
             onRemoveRecentProject={removeRecentProject}
@@ -697,6 +878,12 @@
         {/key}
       {/if}
       <div class="status-toasts" aria-live="polite">
+        {#if externalChange}
+          <div class="task-indicator notice-indicator" role="status">
+            <span>{externalChange === "deleted" ? $ui("当前文章已在云端删除，本地内容已保留。") : $ui("当前文章有云端更新，保存已暂停。")}</span>
+            <button class="button" type="button" on:click={reviewExternalChange}>{$ui("处理版本差异")}</button>
+          </div>
+        {/if}
         {#if notice}
           <div
             class:error={noticeSeverity === "error"}
@@ -706,49 +893,83 @@
             out:fade={{ duration: 120 }}
           >
             <span>{notice}</span>
-            <button class="notice-close" type="button" aria-label="关闭通知" on:click={dismissNotice}><X size={14} /></button>
+            <button class="notice-close" type="button" aria-label={$ui("关闭通知")} on:click={dismissNotice}><X size={14} /></button>
           </div>
         {/if}
         {#if activeTask}
           <div class="task-indicator" role="status" in:fly={{ y: 8, duration: 160 }} out:fade={{ duration: 120 }}>
             <LoaderCircle size={15} class="spin" />
-            <span>{activeTask.step ?? "正在处理项目"}</span>
+            <span>{activeTask.step ?? $ui("正在处理项目")}</span>
+            <button class="button" type="button" on:click={() => (taskDetailsOpen = true)}>{$ui("任务详情")}</button>
           </div>
+        {:else if taskEvents.length}
+          <button class="button" type="button" on:click={() => (taskDetailsOpen = true)}>{$ui("查看最近任务")}</button>
         {/if}
       </div>
     </main>
   </div>
 </div>
 
+{#if taskDetailsOpen}
+  <ModalDialog title={$ui("后台任务")} description={$ui("查看任务阶段、输出与结果。取消不会撤回已经完成的远端操作。")} closeLabel={$ui("关闭")} onClose={() => (taskDetailsOpen = false)}>
+    <p>{session?.name ?? $ui("博客项目")} · {activeTask ? $ui("运行中") : $ui("已结束")}</p>
+    <pre class="task-log">{taskEvents.filter((event) => event.taskId === (activeTask?.taskId ?? taskEvents.at(-1)?.taskId)).map((event) => event.line ?? (event.kind === "finished" ? event.success ? $ui("任务完成") : $ui("任务未完成") : event.step ?? "")).filter(Boolean).join("\n")}</pre>
+    <svelte:fragment slot="actions">
+      <button class="button" type="button" on:click={() => (taskDetailsOpen = false)}>{$ui("关闭")}</button>
+      {#if activeTask}<button class="button danger" type="button" disabled={cancelingTask} on:click={cancelActiveTask}>{cancelingTask ? $ui("正在请求停止") : $ui("取消任务")}</button>{/if}
+    </svelte:fragment>
+  </ModalDialog>
+{/if}
+
+{#if recoveryOpen && (externalChange || recoveryBusy)}
+  <ModalDialog title={externalChange === "deleted" ? $ui("保留已删除文章的本地内容") : $ui("处理文章版本差异")}
+    description={$ui("本地内容会保留到你明确选择处理方式。使用云端将替换当前本地编辑。")}
+    onClose={() => !recoveryBusy && (recoveryOpen = false)}>
+    <label class="field"><span>{$ui("本地内容")}</span><textarea class="input" rows="6" readonly value={recoveryLocal}></textarea></label>
+    {#if externalChange === "changed"}<label class="field"><span>{$ui("云端内容")}</span><textarea class="input" rows="6" readonly value={recoveryRemote ?? ""}></textarea></label>{/if}
+    <svelte:fragment slot="actions">
+      <button class="button" type="button" disabled={recoveryBusy} on:click={() => (recoveryOpen = false)}>{$ui("稍后处理")}</button>
+      <button class="button" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("draft")}>{$ui("另存草稿")}</button>
+      {#if externalChange === "changed"}
+        <button class="button" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("remote")}>{$ui("使用云端")}</button>
+        <button class="button primary" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("local")}>{$ui("保留本地并保存")}</button>
+      {:else}
+        <button class="button danger" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("close")}>{$ui("放弃并关闭文章")}</button>
+      {/if}
+    </svelte:fragment>
+  </ModalDialog>
+{/if}
+
 {#if autoUpdateReady}
   <ModalDialog
-    title={`更新 ${autoUpdateReady.latestVersion ?? ""} 已准备好`}
-    description="更新包已在应用内自动下载并通过签名验证。可以现在重启安装，也可以稍后在“关于”页面安装。"
+    title={$ui("更新 {p0} 已准备好", { p0: autoUpdateReady.latestVersion ?? "" })}
+    description={$ui("更新包已在应用内自动下载并通过签名验证。可以现在重启安装，也可以稍后在“关于”页面安装。")}
     onClose={() => (autoUpdateReady = null)}
   >
-    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (autoUpdateReady = null)}>稍后</button><button class="button primary" type="button" data-autofocus on:click={installUpdate}>重启并安装</button></svelte:fragment>
+    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (autoUpdateReady = null)}>{$ui("稍后")}</button><button class="button primary" type="button" data-autofocus on:click={installUpdate}>{$ui("重启并安装")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if guardAction}
   <ModalDialog
-    title={guardIsClosing ? "退出 Hexo Lite Editor？" : "有未保存的内容"}
+    title={guardIsClosing ? $ui("退出 Hexo Lite Editor？") : $ui("有未保存的内容")}
     description={guardDescription}
     onClose={() => !guardBusy && resolveGuard("cancel")}
   >
     <svelte:fragment slot="actions">
-      <button class="button" type="button" disabled={guardBusy || closeWindowState.isClosing} on:click={() => resolveGuard("cancel")}>取消</button>
+      <button class="button" type="button" disabled={guardBusy || closeWindowState.isClosing} on:click={() => resolveGuard("cancel")}>{$ui("取消")}</button>
       <button class="button danger" type="button" disabled={guardBusy || closeWindowState.isClosing} on:click={() => resolveGuard("discard")}>
-        {guardIsClosing ? "不保存退出" : "放弃"}
+        {guardIsClosing ? $ui("不保存退出") : $ui("放弃")}
       </button>
       <button class="button primary" type="button" data-autofocus disabled={guardBusy || closeWindowState.isClosing} on:click={() => resolveGuard("save")}>
-        {guardBusy ? "处理中" : guardIsClosing ? "保存并退出" : "保存并继续"}
+        {guardBusy ? $ui("处理中") : guardIsClosing ? $ui("保存并退出") : $ui("保存并继续")}
       </button>
     </svelte:fragment>
   </ModalDialog>
 {/if}
 
 <style>
+  .task-log { max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
   :global(.spin) {
     animation: rotate 1s linear infinite;
   }

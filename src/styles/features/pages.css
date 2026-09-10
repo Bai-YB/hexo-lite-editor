@@ -226,6 +226,7 @@
 }
 
 .setting-copy strong,
+.setting-copy .setting-title,
 .setting-subsection-heading strong,
 .recent-project-row strong {
   display: block;

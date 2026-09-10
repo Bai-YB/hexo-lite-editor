@@ -15,7 +15,7 @@ pub fn signal_background_shutdown(state: &AppState) {
         }
     }
     if let Ok(mut schedules) = state.sync_schedules.lock() {
-        for (_, cancel) in schedules.drain() {
+        for (_, (_, cancel)) in schedules.drain() {
             let _ = cancel.send(());
         }
     }

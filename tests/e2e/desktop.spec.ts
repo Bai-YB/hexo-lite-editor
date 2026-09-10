@@ -328,6 +328,8 @@ test("内容同步冲突逐文件展示 Markdown 差异与二进制哈希选择"
   await expect(cards.nth(1)).toContainText("local-bin");
   await expect(cards.nth(1)).toContainText("remote-bin");
   await cards.nth(0).getByLabel("远端").check();
+  await expect(page.getByRole("button", { name: "提交冲突选择" })).toBeDisabled();
+  await cards.nth(1).getByLabel("本地").check();
   await page.getByRole("button", { name: "提交冲突选择" }).click();
   await expect(cards).toHaveCount(0);
   await expect(page.locator(".sync-status.synced")).toBeVisible();
@@ -400,8 +402,11 @@ test("设置分类状态持久化，未保存标记和图床来源正确联动",
   await tokenDialog.getByRole("button", { name: "获取并保存" }).click();
   await expect(tokenDialog).toHaveCount(0);
   await expect(page.getByText("Token 已创建并保存到系统凭据库。")).toBeVisible();
+  // Token acquisition persists only connection fields; explicitly save the selected provider.
+  await expect(page.getByRole("button", { name: /图片与图床/ }).locator(".settings-dirty-dot")).toBeVisible();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
 
-  await imageBed.getByRole("button", { name: "测试连接" }).click();
+  await imageBed.getByRole("button", { name: "测试连接", exact: true }).click();
   await expect(imageBed.getByText("Cloudflare-ImgBed 连接正常。")).toBeVisible();
   await imageBed.getByRole("button", { name: /重新获取|一键获取 Token/ }).click();
   await expect(tokenDialog.getByLabel("管理员密码")).toHaveValue("");
@@ -506,7 +511,7 @@ test("英文模式覆盖编辑器、图床、设置和插件管理 UI", async ({
   await page.locator(".nav-item").filter({ hasText: "Images" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Save and continue" }).click();
   await expect(page.getByRole("heading", { name: "Images", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Import" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Editor" }).click();
-  await expect(page.getByRole("button", { name: "Quick preview" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Quick preview", exact: true })).toBeVisible();
 });

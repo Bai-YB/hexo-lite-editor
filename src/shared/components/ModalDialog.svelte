@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { cubicIn, cubicOut } from "svelte/easing";
   import { fade } from "svelte/transition";
+  import { isTopModal, registerModal } from "./modalStack";
 
   export let title: string;
   export let description = "";
@@ -21,15 +22,23 @@
 
   onMount(() => {
     restoreFocus = document.activeElement as HTMLElement | null;
-    requestAnimationFrame(() => {
-      dialog.querySelector<HTMLElement>("[data-autofocus], button, input, select, textarea")?.focus();
+    const unregister = registerModal(dialog);
+    const frame = requestAnimationFrame(() => {
+      if (isTopModal(dialog)) dialog.querySelector<HTMLElement>("[data-autofocus], button, input, select, textarea")?.focus();
     });
-    return () => restoreFocus?.focus();
+    return () => {
+      cancelAnimationFrame(frame);
+      const wasTop = isTopModal(dialog);
+      unregister();
+      if (wasTop && restoreFocus?.isConnected) restoreFocus.focus();
+    };
   });
 
   function handleKeydown(event: KeyboardEvent) {
+    if (!isTopModal(dialog) || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopImmediatePropagation();
       onClose();
       return;
     }
@@ -38,11 +47,14 @@
       && !event.ctrlKey
       && !event.metaKey
       && !event.shiftKey
+      && !event.altKey
       && event.target instanceof HTMLInputElement
     ) {
+      if (event.repeat) { event.preventDefault(); return; }
       const submit = dialog.querySelector<HTMLButtonElement>(".modal-actions .button.primary:not(:disabled)");
       if (submit) {
         event.preventDefault();
+        event.stopImmediatePropagation();
         submit.click();
       }
       return;
@@ -79,7 +91,7 @@
   class="modal-backdrop"
   role="presentation"
   transition:fade={{ duration: 120 }}
-  on:mousedown={(event) => event.target === event.currentTarget && onClose()}
+  on:mousedown={(event) => isTopModal(dialog) && event.target === event.currentTarget && onClose()}
 >
   <div
     class="modal-dialog"

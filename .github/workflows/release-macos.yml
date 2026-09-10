@@ -52,11 +52,15 @@ jobs:
       - name: Resolve version
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"
+            version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+            tag="$GITHUB_REF_NAME"
+            TAG="$tag" VERSION="$version" node -e 'if (!new RegExp("^v" + process.env.VERSION.replaceAll(".", "\\.") + "(?:-r[1-9][0-9]*)?$").test(process.env.TAG)) throw new Error("Tag does not match package version")'
           else
             version="${{ inputs.version || '1.0.6' }}"
+            tag="v$version"
           fi
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Frontend checks
         run: |
@@ -67,6 +71,7 @@ jobs:
       - name: Rust checks
         working-directory: src-tauri
         run: |
+          set -o pipefail
           cargo fmt --check 2>&1 | tee rust-checks.log
           cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee -a rust-checks.log
           cargo test 2>&1 | tee -a rust-checks.log
@@ -117,7 +122,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$RELEASE_VERSION"
-          tag="v$version"
+          tag="$RELEASE_TAG"
           notes=".github/release-notes/v$version.md"
           gh release view "$tag" >/dev/null || gh release create "$tag" --draft --title "Hexo Lite Editor $version" --notes-file "$notes"
           gh release upload "$tag" \
@@ -147,6 +152,7 @@ jobs:
           windows_signature="$windows_asset.sig"
           node scripts/generate-latest-json.mjs \
             --version "$version" \
+            --tag "$tag" \
             --repository "$GITHUB_REPOSITORY" \
             --notes "$notes" \
             --windows-asset "$windows_asset" \
@@ -157,6 +163,7 @@ jobs:
           node scripts/verify-updater-manifest.mjs \
             --manifest "release-artifacts/$version/latest.json" \
             --version "$version" \
+            --tag "$tag" \
             --platform windows-x86_64 \
             --platform darwin-x86_64 \
             --platform darwin-aarch64
@@ -173,6 +180,7 @@ jobs:
           node scripts/verify-updater-manifest.mjs \
             --manifest "release-artifacts/$version/updater-verify/latest.json" \
             --version "$version" \
+            --tag "$tag" \
             --platform windows-x86_64 \
             --platform darwin-x86_64 \
             --platform darwin-aarch64

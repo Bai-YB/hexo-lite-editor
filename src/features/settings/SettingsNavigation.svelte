@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ui } from "$shared/i18n/ui";
   import { Image, PenLine, RefreshCw, Rocket, SlidersHorizontal, Wrench } from "@lucide/svelte";
   import type { SettingsSectionId } from "$shared/types/app";
 
@@ -18,7 +19,7 @@
   };
 </script>
 
-<nav class="settings-nav" aria-label="设置分类">
+<nav class="settings-nav" aria-label={$ui("设置分类")}>
   {#each sections as section, index (section.id)}
     {@const SectionIcon = icons[section.id]}
     <button
@@ -30,8 +31,8 @@
       on:keydown={(event) => onKeydown(event, index)}
     >
       <span class="settings-nav-icon" aria-hidden="true"><SectionIcon size={16} /></span>
-      <span class="settings-nav-copy"><strong>{section.title}</strong><small>{section.description}</small></span>
-      {#if dirtySections[section.id]}<i class="settings-dirty-dot" aria-label="此分类有未保存更改"></i>{/if}
+      <span class="settings-nav-copy"><strong>{$ui(section.title)}</strong><small>{$ui(section.description)}</small></span>
+      {#if dirtySections[section.id]}<i class="settings-dirty-dot" aria-label={$ui("此分类有未保存更改")}></i>{/if}
     </button>
   {/each}
 </nav>
