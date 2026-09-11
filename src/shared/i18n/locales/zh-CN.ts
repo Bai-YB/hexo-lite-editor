@@ -2,7 +2,7 @@ import type { TranslationTree } from "../types";
 
 export const zhCN: TranslationTree = {
   common: { confirm: "确认", cancel: "取消", save: "保存", delete: "删除", retry: "重试", close: "关闭" },
-  navigation: { label: "主导航", editor: "编辑器", imageBed: "图床", settings: "设置", about: "关于" },
+  navigation: { label: "主导航", editor: "编辑器", imageBed: "图床", plugins: "插件", files: "全部文件", settings: "设置", about: "关于" },
   window: { minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭", unsaved: "有未保存更改" },
   loading: { workspace: "正在初始化桌面工作区", page: "正在加载页面" },
   settings: {

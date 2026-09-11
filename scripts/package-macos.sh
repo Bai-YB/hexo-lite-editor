@@ -4,8 +4,8 @@ set -euo pipefail
 if [[ "${1:-}" == "--" ]]; then
   shift
 fi
-version="${1:-1.0.6}"
-if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+version="${1:-1.0.6.1}"
+if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
   echo "Invalid release version: $version" >&2
   exit 1
 fi
@@ -15,6 +15,11 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+runtime_version="$(node "$repo_root/scripts/release-version.mjs" runtimeVersion)"
+if [[ "$version" != "$(node "$repo_root/scripts/release-version.mjs" version)" ]]; then
+  echo "Requested release version does not match package.json" >&2
+  exit 1
+fi
 output_dir="$repo_root/release-artifacts/$version"
 target="universal-apple-darwin"
 bundle_root="$repo_root/src-tauri/target/$target/release/bundle"
@@ -23,9 +28,16 @@ mkdir -p "$output_dir"
 pnpm tauri build --target "$target"
 
 app_source="$bundle_root/macos/Hexo Lite Editor.app"
-dmg_source="$bundle_root/dmg/Hexo Lite Editor_${version}_universal.dmg"
+dmg_source="$bundle_root/dmg/Hexo Lite Editor_${runtime_version}_universal.dmg"
 if [[ ! -d "$app_source" || ! -f "$dmg_source" ]]; then
   echo "Missing macOS bundle output under $bundle_root" >&2
+  exit 1
+fi
+
+short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_source/Contents/Info.plist")"
+bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_source/Contents/Info.plist")"
+if [[ "$short_version" != "1.0.6" || "$bundle_version" != "1.0.601" ]]; then
+  echo "Unexpected macOS bundle versions: $short_version / $bundle_version" >&2
   exit 1
 fi
 
@@ -57,6 +69,9 @@ generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cat > "$output_dir/release-manifest-macos.json" <<EOF
 {
   "version": "$version",
+  "runtimeVersion": "$runtime_version",
+  "bundleShortVersion": "$short_version",
+  "bundleVersion": "$bundle_version",
   "platform": "macos",
   "architecture": "$architecture",
   "sourceCommit": "$commit",

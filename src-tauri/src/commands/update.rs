@@ -36,7 +36,9 @@ fn apply_download_event(snapshot: &mut UpdateSnapshot, event: DownloadEvent) {
 
 fn initial(app: &AppHandle) -> UpdateSnapshot {
     UpdateSnapshot {
-        current_version: app.package_info().version.to_string(),
+        current_version: crate::app::version::display_version(
+            &app.package_info().version.to_string(),
+        ),
         status: UpdateStatus::Idle,
         latest_version: None,
         release_notes: None,
@@ -156,7 +158,7 @@ pub async fn check_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
     match check_for_update(&app).await {
         Ok(Some(update)) => {
             snapshot.status = UpdateStatus::Available;
-            snapshot.latest_version = Some(update.version.clone());
+            snapshot.latest_version = Some(crate::app::version::display_version(&update.version));
             snapshot.release_notes = update.body.clone();
             snapshot.release_date = update.date.map(|date| date.to_string());
             snapshot.asset_download_url = Some(update.download_url.to_string());
@@ -213,7 +215,7 @@ pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
         store(&app, snapshot.clone());
         return Ok(snapshot);
     };
-    snapshot.latest_version = Some(update.version.clone());
+    snapshot.latest_version = Some(crate::app::version::display_version(&update.version));
     snapshot.release_notes = update.body.clone();
     snapshot.release_date = update.date.map(|date| date.to_string());
     snapshot.asset_download_url = Some(update.download_url.to_string());

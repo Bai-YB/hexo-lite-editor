@@ -1,16 +1,19 @@
 param(
-    [string]$Version = "1.0.6",
+    [string]$Version = "1.0.6.1",
     [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
     throw "Invalid release version: $Version"
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$releaseVersion = (& node (Join-Path $PSScriptRoot "release-version.mjs") | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0 -or $Version -ne $releaseVersion.version) { throw "Requested release version does not match package.json" }
+$runtimeVersion = $releaseVersion.runtimeVersion
 $releaseRoot = Join-Path $repoRoot "release-artifacts"
 $outputDir = Join-Path $releaseRoot $Version
 $targetDir = Join-Path $repoRoot "src-tauri\target\release"
@@ -38,8 +41,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Tauri portable build failed" }
     }
 
-    $nsisSource = Join-Path $targetDir "bundle\nsis\Hexo Lite Editor_${Version}_x64-setup.exe"
-    $msiSource = Join-Path $targetDir "bundle\msi\Hexo Lite Editor_${Version}_x64_en-US.msi"
+    $nsisSource = Join-Path $targetDir "bundle\nsis\Hexo Lite Editor_${runtimeVersion}_x64-setup.exe"
+    $msiSource = Join-Path $targetDir "bundle\msi\Hexo Lite Editor_${runtimeVersion}_x64_en-US.msi"
     $exeSource = Join-Path $targetDir "hexo-lite-editor.exe"
     $routeHelper = Join-Path $targetDir "resources\resolve-hexo-route.cjs"
     # Tauri v2 reuses the NSIS installer itself as the Windows updater artifact.
@@ -96,6 +99,7 @@ try {
     }
     $manifest = [ordered]@{
         version = $Version
+        runtimeVersion = $runtimeVersion
         platform = "windows"
         architecture = "x64"
         sourceCommit = $commit

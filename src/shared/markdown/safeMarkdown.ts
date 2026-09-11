@@ -115,9 +115,10 @@ DOMPurify.addHook("uponSanitizeAttribute", (_node, event) => {
 export function renderSafeMarkdown(
   source: string,
   imageResults: Record<string, PreviewImageResult> = {},
-  imagePending = false
+  imagePending = false,
+  sourceLines = false
 ): string {
-  const rendered = markdown.render(stripFrontMatter(source));
+  const rendered = sourceLines ? renderMarkdownWithSourceLines(source) : markdown.render(stripFrontMatter(source));
   const renderedDocument = new DOMParser().parseFromString(rendered, "text/html");
   sanitizeSourceAttributes(renderedDocument);
   renderedDocument.querySelectorAll("img").forEach((image) => {
@@ -142,9 +143,9 @@ export function renderSafeMarkdown(
     ALLOWED_ATTR: [
       "abbr", "alt", "aria-label", "cite", "class", "colspan", "datetime", "dir", "height",
       "high", "href", "lang", "low", "max", "min", "open", "optimum", "reversed", "role",
-      "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry", "rowspan", "scope", "src", "start", "style", "tabindex", "title", "value", "width"
+      "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry", "data-source-line", "data-source-end", "rowspan", "scope", "src", "start", "style", "tabindex", "title", "value", "width"
     ],
-    ADD_ATTR: [...safeSemanticAttributes, "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry"],
+    ADD_ATTR: [...safeSemanticAttributes, "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry", "data-source-line", "data-source-end"],
     ALLOW_DATA_ATTR: false,
     FORBID_TAGS: ["form", "iframe", "object", "script", "style", "svg", "math"],
     ALLOWED_URI_REGEXP: /^(?:(?:https?|hlex-asset):|blob:|data:image\/(?:png|jpeg|gif|webp);base64,|(?:\.{0,2}\/|\/)?[^:/?#][^:]*)/i
@@ -164,6 +165,41 @@ export function renderSafeMarkdown(
     if (isSafeImageSource(src)) image.setAttribute("loading", "lazy");
   });
   return document.body.innerHTML;
+}
+
+/** Block maps use original, one-based document lines, including front matter. */
+export function renderMarkdownWithSourceLines(source: string): string {
+  const env: Record<string, unknown> = {};
+  const body = stripFrontMatter(source);
+  const offset = source.slice(0, source.length - body.length).split("\n").length - 1;
+  const tokens = markdown.parse(body, env);
+  const renderer = Object.create(markdown.renderer) as typeof markdown.renderer;
+  renderer.rules = { ...markdown.renderer.rules };
+  for (const token of tokens) {
+    if (!token.map || token.hidden || (!token.block && token.type !== "hr")) continue;
+    if (token.nesting === 1 || ["fence", "code_block", "html_block", "hr"].includes(token.type)) {
+      token.attrSet("data-source-line", String(token.map[0] + offset + 1));
+      token.attrSet("data-source-end", String(token.map[1] + offset + 1));
+    }
+  }
+  // These rules render their own outer tags and do not use renderToken attributes.
+  for (const type of ["fence", "code_block"] as const) {
+    const original = renderer.rules[type]!;
+    renderer.rules[type] = (items, index, options, environment, self) => {
+      const token = items[index];
+      return original(items, index, options, environment, self).replace("<pre>",
+        `<pre data-source-line="${token.attrGet("data-source-line")}" data-source-end="${token.attrGet("data-source-end")}">`);
+    };
+  }
+  const htmlRule = renderer.rules.html_block!;
+  renderer.rules.html_block = (items, index, options, environment, self) => {
+    const token = items[index];
+    // A zero-height marker also works for HTML blocks whose opening/closing tags
+    // span multiple Markdown tokens; a wrapper would change their structure.
+    return `<span data-source-line="${token.attrGet("data-source-line")}" style="display: block; height: 0; margin: 0; padding: 0"></span>`
+      + htmlRule(items, index, options, environment, self);
+  };
+  return renderer.render(tokens, markdown.options, env);
 }
 
 function editorUploadId(value: string): string | undefined {

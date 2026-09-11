@@ -129,15 +129,17 @@
   }
 </script>
 
-<div class="settings-block">
+<div class="settings-block plugin-manager">
   <div class="settings-block-heading"><h3>{$ui("插件")}</h3><p>{$ui("插件在隔离 Worker 中运行，所有 Host API 请求都需要声明权限。")}</p><button class="button" type="button" disabled={busy} on:click={install}>{$ui("安装插件")}</button></div>
   {#if loading}<p class="muted-line">{$ui("正在读取插件…")}</p>{:else if !plugins.length}<p class="muted-line">{$ui("尚未安装插件。将插件目录安装到应用配置目录后会显示在这里。")}</p>{:else}
     <div class="recent-project-list">{#each plugins as plugin (plugin.manifest.id)}
-      <div class="recent-project-row"><div><strong>{plugin.manifest.name}</strong><span>{plugin.manifest.id} · {plugin.manifest.version}</span></div>
+      <div class="recent-project-row plugin-row"><div class="plugin-identity"><strong>{plugin.manifest.name}</strong><span>{plugin.manifest.id} · {plugin.manifest.version}</span></div>
+        <div class="plugin-actions">
         {#if contributedImageBedProviders(plugin).length}<button class="button" type="button" disabled={busy} on:click={() => onProviderChange(imageBedProviderId(plugin.manifest.id))}>{selectedProvider === imageBedProviderId(plugin.manifest.id) ? $ui("当前图床") : $ui("设为图床")}</button>{/if}
         {#if plugin.manifest.contributes.settings}<button class="button" type="button" disabled={busy} on:click={() => openSettings(plugin)}>{$ui("设置")}</button>{/if}
         <button class="button" type="button" disabled={busy} on:click={() => plugin.enabled ? disable(plugin) : (pendingEnable = plugin)}>{plugin.enabled ? $ui("禁用") : $ui("启用")}</button>
         <button class="button danger" type="button" disabled={busy} on:click={() => { pendingUninstall = plugin; preserveSettings = true; }}>{$ui("卸载")}</button>
+        </div>
       </div>
     {/each}</div>
   {/if}
@@ -182,3 +184,11 @@
     <svelte:fragment slot="actions"><button class="button" type="button" disabled={busy} data-autofocus on:click={() => (pendingUninstall = null)}>{$ui("取消")}</button><button class="button danger" type="button" disabled={busy} on:click={uninstall}>{busy ? $ui("卸载中…") : $ui("确认卸载")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
+
+<style>
+  .plugin-manager { padding: 0; }
+  .plugin-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; padding: 16px; border: 1px solid var(--border-subtle); }
+  .plugin-identity { flex: 1 1 240px; overflow-wrap: anywhere; }
+  .plugin-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .plugin-actions .button { white-space: nowrap; }
+</style>

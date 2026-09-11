@@ -28,12 +28,21 @@ test("项目菜单提供最近项目和打开其他博客", async ({ page }) => 
   await expect(page.getByRole("button", { name: /打开其他博客/ })).toBeVisible();
 });
 
-test("导航不再包含发布页且数字快捷键只对应四个工作区", async ({ page }) => {
+test("导航提供六个工作区并保留原有数字快捷键", async ({ page }) => {
   await expect(page.locator(".nav-rail").getByText("发布", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".nav-rail .nav-item")).toHaveCount(6);
   await page.keyboard.press("Control+3");
   await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
   await page.keyboard.press("Control+4");
   await expect(page.getByRole("heading", { name: "关于" })).toBeVisible();
+  await page.keyboard.press("Control+5");
+  await expect(page.getByRole("heading", { name: "插件", exact: true, level: 1 })).toBeVisible();
+  await page.keyboard.press("Control+6");
+  await expect(page.getByRole("complementary", { name: "项目文件" })).toBeVisible();
+  await page.keyboard.press("Control+2");
+  await expect(page.getByRole("heading", { name: "图床", exact: true })).toBeVisible();
+  await page.keyboard.press("Control+1");
+  await expect(page.locator(".markdown-editor-host")).toBeVisible();
 });
 
 test("Ctrl+Shift+P 单次发布并在保存失败时中止", async ({ page }) => {
@@ -271,6 +280,8 @@ test("WebDAV 真实测试通过后启用且配置表单始终可编辑", async (
   await expect(panel.getByLabel("WebDAV 密码")).toHaveValue("");
   await expect(panel.getByText(/hexo\/my-blog/)).toBeVisible();
   await panel.getByRole("button", { name: "确认启用 WebDAV" }).click();
+  await expect(panel.getByRole("button", { name: "上传本地内容" })).toBeVisible();
+  await panel.locator(".sync-connection-details > summary").click();
   await expect(panel.getByText("当前已应用连接")).toBeVisible();
   await expect(panel.getByLabel("WebDAV 服务器地址")).toBeVisible();
   await expect(panel.getByLabel("WebDAV 远端目录")).toBeVisible();
@@ -507,11 +518,11 @@ test("英文模式覆盖编辑器、图床、设置和插件管理 UI", async ({
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByLabel("界面语言").selectOption("en-US");
   await expect(page.getByText("Startup", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Images & plugins" }).click();
-  await expect(page.getByText("Plugins", { exact: true })).toBeVisible();
+  await page.locator(".nav-item").filter({ hasText: "Plugins" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Save and continue" }).click();
+  await expect(page.getByRole("heading", { name: "Plugins", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Use as image host" })).toBeVisible();
   await page.locator(".nav-item").filter({ hasText: "Images" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save and continue" }).click();
   await expect(page.getByRole("heading", { name: "Images", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Import", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Editor" }).click();

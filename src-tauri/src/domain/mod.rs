@@ -3,6 +3,30 @@ use serde_json::Value;
 
 pub type AppResult<T> = Result<T, AppError>;
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileEntry {
+    pub path: String,
+    pub name: String,
+    pub kind: String,
+    pub extension: Option<String>,
+    pub size: Option<u64>,
+    pub modified_at: Option<String>,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileSnapshot {
+    pub project_id: String,
+    pub session_generation: u64,
+    pub path: String,
+    pub content: String,
+    pub content_hash: String,
+    pub editable: bool,
+    pub read_only_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, thiserror::Error)]
 #[serde(rename_all = "camelCase")]
 #[error("{message}")]

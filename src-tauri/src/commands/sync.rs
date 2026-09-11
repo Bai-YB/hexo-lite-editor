@@ -22,6 +22,7 @@ use std::{
 use tauri::Emitter;
 use uuid::Uuid;
 
+use super::sync_runtime::{check as check_operation, progress as sync_progress};
 #[cfg(test)]
 use super::sync_validation::local_http_webdav_allowed;
 use super::sync_validation::{
@@ -104,6 +105,8 @@ pub struct ContentSyncEvent {
     pub phase: String,
     pub status: ContentSyncStatus,
     pub message: Option<String>,
+    pub completed_files: Option<usize>,
+    pub total_files: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -351,12 +354,25 @@ struct RemoteFetch {
 }
 
 #[tauri::command]
-pub fn detect_content_sync(
+pub async fn detect_content_sync(
     project_id: String,
     session_generation: u64,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> AppResult<ContentSyncDetection> {
-    let root = project_root(&state, &project_id, session_generation)?;
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        detect_content_sync_blocking(project_id, session_generation, &app.state::<AppState>())
+    })
+    .await
+    .map_err(|error| AppError::invalid(format!("读取同步目标失败：{error}")))?
+}
+
+fn detect_content_sync_blocking(
+    project_id: String,
+    session_generation: u64,
+    state: &AppState,
+) -> AppResult<ContentSyncDetection> {
+    let root = project_root(state, &project_id, session_generation)?;
     let candidates = detect_candidates(&root);
     Ok(ContentSyncDetection {
         requires_selection: candidates.len() > 1,
@@ -365,11 +381,24 @@ pub fn detect_content_sync(
 }
 
 #[tauri::command]
-pub fn preflight_content_sync(
+pub async fn preflight_content_sync(
     request: ContentSyncPreflightRequest,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> AppResult<ContentSyncPreflight> {
-    let root = project_root(&state, &request.project_id, request.session_generation)?;
+    super::sync_runtime::run(
+        app,
+        request.project_id.clone(),
+        request.session_generation,
+        move |state| preflight_content_sync_blocking(request, state),
+    )
+    .await
+}
+
+fn preflight_content_sync_blocking(
+    request: ContentSyncPreflightRequest,
+    state: &AppState,
+) -> AppResult<ContentSyncPreflight> {
+    let root = project_root(state, &request.project_id, request.session_generation)?;
     let operation_lock = state.content_sync_lock(&path_key(&root))?;
     let _operation_guard = operation_lock.try_lock().map_err(|_| {
         AppError::new(
@@ -390,7 +419,7 @@ pub fn preflight_content_sync(
             "内容分支不能与 Hexo Pages 发布分支相同。",
         ));
     }
-    let config = load_config(&state)?.config;
+    let config = load_config(state)?.config;
     let snapshot = local_snapshot(&root, &config.image_bed.local_image_dir)?;
     let total_bytes = snapshot
         .keys()
@@ -474,11 +503,24 @@ pub fn webdav_credential_delete(endpoint: String) -> AppResult<crate::domain::Cr
 }
 
 #[tauri::command]
-pub fn test_webdav_content_sync(
+pub async fn test_webdav_content_sync<R: tauri::Runtime>(
     request: TestWebDavContentSyncRequest,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle<R>,
 ) -> AppResult<WebDavConnectionTestResult> {
-    test_webdav_content_sync_inner(request, &state)
+    super::sync_runtime::run(
+        app,
+        request.project_id.clone(),
+        request.session_generation,
+        move |state| test_webdav_content_sync_blocking(request, state),
+    )
+    .await
+}
+
+fn test_webdav_content_sync_blocking(
+    request: TestWebDavContentSyncRequest,
+    state: &AppState,
+) -> AppResult<WebDavConnectionTestResult> {
+    test_webdav_content_sync_inner(request, state)
 }
 
 fn test_webdav_content_sync_inner(
@@ -532,6 +574,7 @@ fn test_webdav_content_sync_inner(
             true,
         ));
     }
+    check_operation()?;
     set_webdav_credentials(&endpoint, &credentials.username, &credentials.password)?;
     let key = path_key(&root);
     let mut registry = load_registry(state)?;
@@ -570,11 +613,24 @@ fn test_webdav_content_sync_inner(
 }
 
 #[tauri::command]
-pub fn update_webdav_content_sync(
+pub async fn update_webdav_content_sync<R: tauri::Runtime>(
     request: UpdateWebDavContentSyncRequest,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle<R>,
 ) -> AppResult<ContentSyncView> {
-    update_webdav_content_sync_request_inner(request, &state)
+    super::sync_runtime::run(
+        app,
+        request.project_id.clone(),
+        request.session_generation,
+        move |state| update_webdav_content_sync_blocking(request, state),
+    )
+    .await
+}
+
+fn update_webdav_content_sync_blocking(
+    request: UpdateWebDavContentSyncRequest,
+    state: &AppState,
+) -> AppResult<ContentSyncView> {
+    update_webdav_content_sync_request_inner(request, state)
 }
 
 fn update_webdav_content_sync_request_inner(
@@ -662,11 +718,24 @@ fn update_webdav_content_sync_inner(
 }
 
 #[tauri::command]
-pub fn preflight_webdav_content_sync(
+pub async fn preflight_webdav_content_sync(
     request: WebDavContentSyncPreflightRequest,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> AppResult<WebDavContentSyncPreflight> {
-    let root = project_root(&state, &request.project_id, request.session_generation)?;
+    super::sync_runtime::run(
+        app,
+        request.project_id.clone(),
+        request.session_generation,
+        move |state| preflight_webdav_content_sync_blocking(request, state),
+    )
+    .await
+}
+
+fn preflight_webdav_content_sync_blocking(
+    request: WebDavContentSyncPreflightRequest,
+    state: &AppState,
+) -> AppResult<WebDavContentSyncPreflight> {
+    let root = project_root(state, &request.project_id, request.session_generation)?;
     let operation_lock = state.content_sync_lock(&path_key(&root))?;
     let _operation_guard = operation_lock.try_lock().map_err(|_| {
         AppError::new(
@@ -684,7 +753,7 @@ pub fn preflight_webdav_content_sync(
             true,
         )
     })?;
-    webdav_preflight_for_credentials(&state, &root, &endpoint, &remote_dir, &credentials)
+    webdav_preflight_for_credentials(state, &root, &endpoint, &remote_dir, &credentials)
 }
 
 fn webdav_preflight_for_credentials(
@@ -763,12 +832,26 @@ pub fn get_content_sync_status(
 }
 
 #[tauri::command]
-pub fn enable_content_sync(
+pub async fn enable_content_sync(
     request: ConfigureContentSyncRequest,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
 ) -> AppResult<ContentSyncView> {
-    let root = project_root(&state, &request.project_id, request.session_generation)?;
+    let worker_app = app.clone();
+    super::sync_runtime::run(
+        app,
+        request.project_id.clone(),
+        request.session_generation,
+        move |state| enable_content_sync_blocking(request, worker_app, state),
+    )
+    .await
+}
+
+fn enable_content_sync_blocking(
+    request: ConfigureContentSyncRequest,
+    app: tauri::AppHandle,
+    state: &AppState,
+) -> AppResult<ContentSyncView> {
+    let root = project_root(state, &request.project_id, request.session_generation)?;
     let identity = Some((request.project_id.clone(), request.session_generation));
     let operation_lock = state.content_sync_lock(&path_key(&root))?;
     let _operation_guard = operation_lock.try_lock().map_err(|_| {
@@ -817,7 +900,7 @@ pub fn enable_content_sync(
             true,
         ));
     }
-    let config = load_config(&state)?.config;
+    let config = load_config(state)?.config;
     let cache = state.sync_cache_dir.join(cache_key(&path_key(&root)));
     ensure_cache(&cache, &candidate.repository).map_err(git_failure_error)?;
     if fetch_remote_branch(&cache, &branch).map_err(git_failure_error)? {
@@ -840,7 +923,7 @@ pub fn enable_content_sync(
             ));
         }
     }
-    let mut registry = load_registry(&state)?;
+    let mut registry = load_registry(state)?;
     let key = path_key(&root);
     let record = SyncRecord {
         project_path: key.clone(),
@@ -862,7 +945,7 @@ pub fn enable_content_sync(
     };
     registry.records.retain(|item| item.project_path != key);
     registry.records.push(record);
-    save_registry(&state, &mut registry)?;
+    save_registry(state, &mut registry)?;
 
     if let Some(choice) = request.initial_choice.as_deref() {
         let before = local_snapshot(&root, &config.image_bed.local_image_dir)
@@ -875,10 +958,10 @@ pub fn enable_content_sync(
             ContentSyncStatus::Checking,
             None,
         );
-        let view = run_sync_for_root_locked(&state, &root, choice);
+        let view = run_sync_for_root_locked(state, &root, choice);
         emit_rescan_if_changed(
             &app,
-            &state,
+            state,
             &root,
             &config.image_bed.local_image_dir,
             before,
@@ -903,12 +986,26 @@ pub fn enable_content_sync(
 }
 
 #[tauri::command]
-pub fn enable_webdav_content_sync(
+pub async fn enable_webdav_content_sync(
     request: ConfigureWebDavContentSyncRequest,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
 ) -> AppResult<ContentSyncView> {
-    let root = project_root(&state, &request.project_id, request.session_generation)?;
+    let worker_app = app.clone();
+    super::sync_runtime::run(
+        app,
+        request.project_id.clone(),
+        request.session_generation,
+        move |state| enable_webdav_content_sync_blocking(request, worker_app, state),
+    )
+    .await
+}
+
+fn enable_webdav_content_sync_blocking(
+    request: ConfigureWebDavContentSyncRequest,
+    app: tauri::AppHandle,
+    state: &AppState,
+) -> AppResult<ContentSyncView> {
+    let root = project_root(state, &request.project_id, request.session_generation)?;
     let identity = Some((request.project_id.clone(), request.session_generation));
     let operation_lock = state.content_sync_lock(&path_key(&root))?;
     let _operation_guard = operation_lock.try_lock().map_err(|_| {
@@ -928,8 +1025,8 @@ pub fn enable_webdav_content_sync(
         )
     })?;
     test_webdav_connection(&endpoint, &remote_dir, &credentials)?;
-    let config = load_config(&state)?.config;
-    let cache = webdav_cache_dir(&state, &root);
+    let config = load_config(state)?.config;
+    let cache = webdav_cache_dir(state, &root);
     let remote = fetch_webdav_remote(&cache, &endpoint, &remote_dir, &credentials, WEBDAV_TIMEOUT)
         .map_err(git_failure_error)?;
     if remote.exists {
@@ -951,7 +1048,7 @@ pub fn enable_webdav_content_sync(
             ));
         }
     }
-    let mut registry = load_registry(&state)?;
+    let mut registry = load_registry(state)?;
     let key = path_key(&root);
     let record = SyncRecord {
         project_path: key.clone(),
@@ -973,7 +1070,7 @@ pub fn enable_webdav_content_sync(
     };
     registry.records.retain(|item| item.project_path != key);
     registry.records.push(record);
-    save_registry(&state, &mut registry)?;
+    save_registry(state, &mut registry)?;
     if let Some(choice) = request.initial_choice.as_deref() {
         let before = local_snapshot(&root, &config.image_bed.local_image_dir)
             .ok()
@@ -985,10 +1082,10 @@ pub fn enable_webdav_content_sync(
             ContentSyncStatus::Checking,
             None,
         );
-        let view = run_sync_for_root_locked(&state, &root, choice);
+        let view = run_sync_for_root_locked(state, &root, choice);
         emit_rescan_if_changed(
             &app,
-            &state,
+            state,
             &root,
             &config.image_bed.local_image_dir,
             before,
@@ -1041,10 +1138,24 @@ pub fn disable_content_sync(
 }
 
 #[tauri::command]
-pub fn run_content_sync(
+pub async fn run_content_sync(
     request: RunContentSyncRequest,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+) -> AppResult<ContentSyncView> {
+    let worker_app = app.clone();
+    super::sync_runtime::run(
+        app,
+        request.project_id.clone(),
+        request.session_generation,
+        move |state| run_content_sync_blocking(request, worker_app, state),
+    )
+    .await
+}
+
+fn run_content_sync_blocking(
+    request: RunContentSyncRequest,
+    app: tauri::AppHandle,
+    state: &AppState,
 ) -> AppResult<ContentSyncView> {
     if !matches!(
         request.direction.as_str(),
@@ -1056,7 +1167,7 @@ pub fn run_content_sync(
             true,
         ));
     }
-    let root = project_root(&state, &request.project_id, request.session_generation)?;
+    let root = project_root(state, &request.project_id, request.session_generation)?;
     let identity = Some((request.project_id.clone(), request.session_generation));
     emit_sync_phase(
         &app,
@@ -1065,7 +1176,7 @@ pub fn run_content_sync(
         ContentSyncStatus::Checking,
         None,
     );
-    let config = load_config(&state)?.config;
+    let config = load_config(state)?.config;
     let before = local_snapshot(&root, &config.image_bed.local_image_dir)
         .ok()
         .map(|value| hash_map(&value));
@@ -1076,7 +1187,7 @@ pub fn run_content_sync(
         ContentSyncStatus::Checking,
         None,
     );
-    let view = run_sync_for_root(&state, &root, &request.direction);
+    let view = run_sync_for_root(state, &root, &request.direction);
     emit_sync_status(&app, identity.as_ref(), &view);
     emit_sync_phase(
         &app,
@@ -1087,7 +1198,7 @@ pub fn run_content_sync(
     );
     emit_rescan_if_changed(
         &app,
-        &state,
+        state,
         &root,
         &config.image_bed.local_image_dir,
         before,
@@ -1097,12 +1208,23 @@ pub fn run_content_sync(
 }
 
 #[tauri::command]
-pub fn get_content_sync_conflicts(
+pub async fn get_content_sync_conflicts(
     project_id: String,
     session_generation: u64,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> AppResult<Vec<ContentSyncConflict>> {
-    let root = project_root(&state, &project_id, session_generation)?;
+    super::sync_runtime::run(app, project_id.clone(), session_generation, move |state| {
+        get_content_sync_conflicts_blocking(project_id, session_generation, state)
+    })
+    .await
+}
+
+fn get_content_sync_conflicts_blocking(
+    project_id: String,
+    session_generation: u64,
+    state: &AppState,
+) -> AppResult<Vec<ContentSyncConflict>> {
+    let root = project_root(state, &project_id, session_generation)?;
     let operation_lock = state.content_sync_lock(&path_key(&root))?;
     let _operation_guard = operation_lock.try_lock().map_err(|_| {
         AppError::new(
@@ -1112,14 +1234,14 @@ pub fn get_content_sync_conflicts(
         )
     })?;
     let key = path_key(&root);
-    let registry = load_registry(&state)?;
+    let registry = load_registry(state)?;
     let record = registry
         .records
         .iter()
         .find(|item| item.project_path == key && item.enabled)
         .ok_or_else(|| AppError::new("sync_not_enabled", "当前项目未启用内容同步。", true))?;
     let local = local_snapshot(&root, &record.image_dir)?;
-    let cache = record_cache_dir(&state, &root, record);
+    let cache = record_cache_dir(state, &root, record);
     prepare_remote_cache(&cache, record).map_err(git_failure_error)?;
     let fetched = fetch_record_remote(&cache, record, WEBDAV_TIMEOUT.max(GIT_TIMEOUT))
         .map_err(git_failure_error)?;
@@ -1144,19 +1266,33 @@ pub fn get_content_sync_conflicts(
 }
 
 #[tauri::command]
-pub fn resolve_content_sync_conflicts(
+pub async fn resolve_content_sync_conflicts(
     request: ResolveContentSyncConflictsRequest,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
 ) -> AppResult<ContentSyncView> {
-    let root = project_root(&state, &request.project_id, request.session_generation)?;
+    let worker_app = app.clone();
+    super::sync_runtime::run(
+        app,
+        request.project_id.clone(),
+        request.session_generation,
+        move |state| resolve_content_sync_conflicts_blocking(request, worker_app, state),
+    )
+    .await
+}
+
+fn resolve_content_sync_conflicts_blocking(
+    request: ResolveContentSyncConflictsRequest,
+    app: tauri::AppHandle,
+    state: &AppState,
+) -> AppResult<ContentSyncView> {
+    let root = project_root(state, &request.project_id, request.session_generation)?;
     let identity = Some((request.project_id.clone(), request.session_generation));
     let key = path_key(&root);
     let sync_lock = state.content_sync_lock(&key)?;
     let _guard = sync_lock
         .try_lock()
         .map_err(|_| AppError::new("sync_busy", "此项目已有同步任务正在运行。", true))?;
-    let mut registry = load_registry(&state)?;
+    let mut registry = load_registry(state)?;
     let record = registry
         .records
         .iter_mut()
@@ -1176,7 +1312,7 @@ pub fn resolve_content_sync_conflicts(
     {
         return Err(AppError::invalid("请为每个冲突文件选择本地或远端版本。"));
     }
-    let cache = record_cache_dir(&state, &root, record);
+    let cache = record_cache_dir(state, &root, record);
     prepare_remote_cache(&cache, record).map_err(git_failure_error)?;
     let fetched = fetch_record_remote(&cache, record, WEBDAV_TIMEOUT.max(GIT_TIMEOUT))
         .map_err(git_failure_error)?;
@@ -1203,7 +1339,7 @@ pub fn resolve_content_sync_conflicts(
     let before = Some(hash_map(&local));
     let image_dir = record.image_dir.clone();
     apply_conflict_choices(
-        &state,
+        state,
         &root,
         &cache,
         record,
@@ -1214,19 +1350,19 @@ pub fn resolve_content_sync_conflicts(
     let snapshot = match local_snapshot(&root, &record.image_dir) {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            emit_rescan_if_changed(&app, &state, &root, &image_dir, before, identity.as_ref());
+            emit_rescan_if_changed(&app, state, &root, &image_dir, before, identity.as_ref());
             return Err(error);
         }
     };
     let view = finish_local_push(
-        &state,
+        state,
         &root,
         &cache,
         record.clone(),
         snapshot,
         &mut registry,
     );
-    emit_rescan_if_changed(&app, &state, &root, &image_dir, before, identity.as_ref());
+    emit_rescan_if_changed(&app, state, &root, &image_dir, before, identity.as_ref());
     emit_sync_status(&app, identity.as_ref(), &view);
     emit_sync_phase(
         &app,
@@ -1251,12 +1387,23 @@ pub fn open_content_sync_backups(
 }
 
 #[tauri::command]
-pub fn reconnect_content_sync(
+pub async fn reconnect_content_sync(
     project_id: String,
     session_generation: u64,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> AppResult<ContentSyncView> {
-    let root = project_root(&state, &project_id, session_generation)?;
+    super::sync_runtime::run(app, project_id.clone(), session_generation, move |state| {
+        reconnect_content_sync_blocking(project_id, session_generation, state)
+    })
+    .await
+}
+
+fn reconnect_content_sync_blocking(
+    project_id: String,
+    session_generation: u64,
+    state: &AppState,
+) -> AppResult<ContentSyncView> {
+    let root = project_root(state, &project_id, session_generation)?;
     let operation_lock = state.content_sync_lock(&path_key(&root))?;
     let _operation_guard = operation_lock.try_lock().map_err(|_| {
         AppError::new(
@@ -1266,13 +1413,13 @@ pub fn reconnect_content_sync(
         )
     })?;
     let key = path_key(&root);
-    let mut registry = load_registry(&state)?;
+    let mut registry = load_registry(state)?;
     let record = registry
         .records
         .iter_mut()
         .find(|record| record.project_path == key && record.enabled)
         .ok_or_else(|| AppError::new("sync_not_enabled", "当前项目未启用内容同步。", true))?;
-    let cache = record_cache_dir(&state, &root, record);
+    let cache = record_cache_dir(state, &root, record);
     prepare_remote_cache(&cache, record).map_err(git_failure_error)?;
     let result = match record.provider {
         ContentSyncProvider::Github => {
@@ -1302,23 +1449,38 @@ pub fn reconnect_content_sync(
         });
     }
     let view = view_from_record(record);
-    save_registry(&state, &mut registry)?;
+    save_registry(state, &mut registry)?;
     Ok(view)
 }
 
 pub fn sync_before_open(state: &AppState, root: &Path) -> Option<ContentSyncView> {
-    let registry = match load_registry(state) {
-        Ok(registry) => registry,
-        Err(error) => return Some(error_view(error.message)),
-    };
-    if registry
-        .records
-        .iter()
-        .any(|record| record.enabled && record.project_path == path_key(root))
-    {
-        return Some(run_sync_for_root(state, root, "startup"));
+    // Opening a local project must never depend on an online provider or wait for a download.
+    match load_registry(state) {
+        Ok(registry) => registry
+            .records
+            .iter()
+            .find(|record| record.project_path == path_key(root))
+            .map(view_from_record),
+        Err(error) => Some(error_view(error.message)),
     }
-    current_view_for_root(state, root)
+}
+
+pub fn schedule_sync_after_open(app: tauri::AppHandle, project_id: String, generation: u64) {
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let identity = (project_id.clone(), generation);
+        let _ = super::sync_runtime::run(app, project_id, generation, move |state| {
+            let root = project_root(state, &identity.0, identity.1)?;
+            if !current_view_for_root(state, &root).is_some_and(|view| view.enabled) {
+                return Ok(());
+            }
+            // Check only: a cloud update must not replace content the user has started editing.
+            let view = run_sync_for_root(state, &root, "check");
+            emit_sync_status(&worker_app, Some(&identity), &view);
+            Ok(())
+        })
+        .await;
+    });
 }
 
 pub fn schedule_sync_after_save(app: tauri::AppHandle, root: PathBuf) {
@@ -1355,7 +1517,9 @@ pub fn schedule_sync_after_save(app: tauri::AppHandle, root: PathBuf) {
             _ = &mut timeout => {
                 let app_for_task = app.clone();
                 let root_for_task = root.clone();
-                let _ = tauri::async_runtime::spawn_blocking(move || {
+                let operation_identity = identity.clone();
+                let Some((project_id, generation)) = operation_identity else { return; };
+                let result = super::sync_runtime::run(app.clone(), project_id, generation, move |_state| {
                     let state_for_task = app_for_task.state::<AppState>();
                     let view = run_sync_for_root(&state_for_task, &root_for_task, "push");
                     emit_sync_status(&app_for_task, identity.as_ref(), &view);
@@ -1366,8 +1530,12 @@ pub fn schedule_sync_after_save(app: tauri::AppHandle, root: PathBuf) {
                         view.message.clone(),
                     );
                     emit_pending_rescan(&app_for_task, &state_for_task, &root_for_task);
-                    view
+                    Ok(view)
                 }).await;
+                if result.as_ref().is_err_and(|error| error.code == "sync_busy") {
+                    // A save made during a foreground transfer still needs its own later upload.
+                    schedule_sync_after_save(app.clone(), root.clone());
+                }
             }
             _ = cancelled => {}
         }
@@ -1410,6 +1578,8 @@ fn emit_sync_phase(
             phase: phase.to_string(),
             status,
             message,
+            completed_files: None,
+            total_files: None,
         },
     );
 }
@@ -1458,13 +1628,24 @@ fn run_sync_for_root(state: &AppState, root: &Path, direction: &str) -> ContentS
         Err(error) => return error_view(error.message),
     };
     if direction == "push" {
-        let Ok(_guard) = sync_lock.lock() else {
-            return error_view("同步队列不可用。".to_string());
+        let _guard = loop {
+            if let Err(error) = check_operation() {
+                return error_view(error.message);
+            }
+            match sync_lock.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return error_view("同步队列不可用。".to_string())
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(Duration::from_millis(100))
+                }
+            }
         };
         return run_sync_for_root_locked(state, root, direction);
     }
     let Ok(_guard) = sync_lock.try_lock() else {
-        return current_view_for_root(state, root).unwrap_or_else(|| ContentSyncView {
+        let mut view = current_view_for_root(state, root).unwrap_or_else(|| ContentSyncView {
             project_id: None,
             session_generation: None,
             enabled: true,
@@ -1480,6 +1661,9 @@ fn run_sync_for_root(state: &AppState, root: &Path, direction: &str) -> ContentS
             last_synced_at: None,
             requires_scope_confirmation: false,
         });
+        view.status = ContentSyncStatus::Checking;
+        view.message = Some("此项目已有同步任务正在运行，请等待完成或停止后重试。".to_string());
+        return view;
     };
     run_sync_for_root_locked(state, root, direction)
 }
@@ -1518,6 +1702,7 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
     if direction == "overwriteRemote" {
         record.full_project_sync_confirmed = true;
     }
+    sync_progress("scanning", "正在扫描本地项目，计算变更文件。", None, None);
     let snapshot = match local_snapshot(root, &record.image_dir) {
         Ok(value) => value,
         Err(error) => return update_error(&mut registry, state, &key, error.message),
@@ -1527,6 +1712,7 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
         return update_git_error(&mut registry, state, &key, error);
     }
 
+    sync_progress("checking", "正在读取远端版本并比较两端内容。", None, None);
     let remote_fetch = match fetch_record_remote(
         &cache,
         record,
@@ -1697,6 +1883,12 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
         }
     }
     if !local_only.is_empty() {
+        if direction == "check" {
+            record.status = ContentSyncStatus::LocalPending;
+            record.message = Some("本地项目有待上传的改动，可点击立即上传变更。".to_string());
+            let view = view_from_record(record);
+            return persist_sync_view(state, &mut registry, view);
+        }
         let after = match local_snapshot(root, &record.image_dir) {
             Ok(snapshot) => snapshot,
             Err(error) => return update_error(&mut registry, state, &key, error.message),
@@ -1799,7 +1991,23 @@ fn finish_local_push(
     snapshot: Snapshot,
     registry: &mut SyncRegistry,
 ) -> ContentSyncView {
+    if let Err(error) = check_operation() {
+        return update_error(registry, state, &record.project_path, error.message);
+    }
     let remote_existed = record.remote_manifest_exists;
+    let known_remote_objects: BTreeSet<String> = if remote_existed {
+        read_manifest(cache)
+            .map(|manifest| manifest.files.into_values().collect())
+            .unwrap_or_default()
+    } else {
+        BTreeSet::new()
+    };
+    sync_progress(
+        "uploading",
+        "正在准备并上传本地变更。",
+        Some(0),
+        Some(snapshot.len()),
+    );
     let copied = match record.provider {
         ContentSyncProvider::Github => {
             copy_snapshot_to_cache(root, cache, &snapshot, &record.image_dir)
@@ -1823,6 +2031,7 @@ fn finish_local_push(
             &manifest,
             remote_existed,
             record.remote_etag.as_deref(),
+            &known_remote_objects,
         ),
     });
     if let Err(error) = published {
@@ -1873,6 +2082,8 @@ fn apply_remote(
         auth: false,
         offline: false,
     })?;
+    check_operation().map_err(operation_failure)?;
+    sync_progress("applying", "正在创建本地备份并应用远端文件。", None, None);
     let identity = state
         .project
         .read()
@@ -2356,6 +2567,7 @@ fn collect_scope(root: &Path, directory: &Path, paths: &mut BTreeSet<String>) ->
         })
         .filter_map(Result::ok)
     {
+        check_operation()?;
         if entry.file_type().is_symlink() || !entry.file_type().is_file() {
             continue;
         }
@@ -2384,6 +2596,7 @@ fn collect_scope(root: &Path, directory: &Path, paths: &mut BTreeSet<String>) ->
 fn snapshot_paths(root: &Path, paths: BTreeSet<String>) -> AppResult<Snapshot> {
     let mut snapshot = Snapshot::new();
     for relative in paths {
+        check_operation()?;
         let bytes = fs::read(root.join(&relative))
             .map_err(|error| AppError::io("读取同步文件失败", error))?;
         snapshot.insert(
@@ -2759,6 +2972,7 @@ fn fetch_record_remote(
 
 fn webdav_client(timeout: Duration) -> Result<reqwest::blocking::Client, GitFailure> {
     reqwest::blocking::Client::builder()
+        .connect_timeout(timeout.min(Duration::from_secs(8)))
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .user_agent("Hexo-Lite-Editor/1.0.6 WebDAV-Sync")
@@ -2777,7 +2991,9 @@ fn fetch_webdav_remote(
     credentials: &crate::platform::WebDavCredentials,
     timeout: Duration,
 ) -> Result<RemoteFetch, GitFailure> {
-    clear_plain_cache(cache)?;
+    check_operation().map_err(operation_failure)?;
+    fs::create_dir_all(cache).map_err(local_sync_failure("创建 WebDAV 缓存失败"))?;
+    let started = std::time::Instant::now();
     let client = webdav_client(timeout)?;
     let manifest_url = webdav_resource_url(endpoint, remote_dir, Some(MANIFEST))?;
     let response = client
@@ -2786,6 +3002,7 @@ fn fetch_webdav_remote(
         .send()
         .map_err(webdav_transport_failure)?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
+        let _ = fs::remove_file(cache.join(MANIFEST));
         let has_content =
             webdav_collection_has_content(&client, endpoint, remote_dir, credentials)?;
         return Ok(RemoteFetch {
@@ -2822,7 +3039,25 @@ fn fetch_webdav_remote(
         auth: false,
         offline: false,
     })?;
-    for (path, hash) in &manifest.files {
+    for (index, (path, hash)) in manifest.files.iter().enumerate() {
+        check_operation().map_err(operation_failure)?;
+        if started.elapsed() > timeout && timeout <= STARTUP_WEBDAV_TIMEOUT {
+            return Err(GitFailure {
+                message: "启动同步检查超时，请在内容同步中重试。".to_string(),
+                auth: false,
+                offline: true,
+            });
+        }
+        sync_progress(
+            "downloading",
+            &format!("正在读取远端文件：{path}"),
+            Some(index),
+            Some(manifest.files.len()),
+        );
+        let target = cache.join(path);
+        if fs::read(&target).is_ok_and(|bytes| hash_bytes(&bytes) == *hash) {
+            continue;
+        }
         let object_path = format!("{WEBDAV_OBJECTS}/{hash}");
         let file_url = webdav_resource_url(endpoint, remote_dir, Some(&object_path))?;
         let response = client
@@ -2837,7 +3072,13 @@ fn fetch_webdav_remote(
             ));
         }
         let bytes = read_webdav_body(response, MAX_SYNC_FILE_BYTES, path)?;
-        let target = cache.join(path);
+        if hash_bytes(&bytes) != *hash {
+            return Err(GitFailure {
+                message: format!("WebDAV 文件校验失败：{path}，请重新检查远端版本。"),
+                auth: false,
+                offline: false,
+            });
+        }
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(local_sync_failure("创建 WebDAV 缓存目录失败"))?;
         }
@@ -2891,6 +3132,8 @@ fn test_webdav_connection(
     remote_dir: &str,
     credentials: &crate::platform::WebDavCredentials,
 ) -> AppResult<()> {
+    check_operation()?;
+    sync_progress("checking", "正在验证 WebDAV 连接及读写权限。", None, None);
     let client = webdav_client(WEBDAV_TIMEOUT).map_err(git_failure_error)?;
     let collection_method = reqwest::Method::from_bytes(b"PROPFIND").expect("valid WebDAV method");
     let mut collection_url =
@@ -2919,6 +3162,7 @@ fn test_webdav_connection(
     let probe_url =
         webdav_resource_url(endpoint, remote_dir, Some(&probe_name)).map_err(git_failure_error)?;
     let probe_bytes = format!("hexo-lite-editor:{}", Uuid::new_v4()).into_bytes();
+    check_operation()?;
     let put_response = client
         .put(probe_url.clone())
         .basic_auth(&credentials.username, Some(&credentials.password))
@@ -2936,6 +3180,7 @@ fn test_webdav_connection(
     }
 
     let probe_result = (|| -> AppResult<()> {
+        check_operation()?;
         let get_response = client
             .get(probe_url.clone())
             .basic_auth(&credentials.username, Some(&credentials.password))
@@ -3038,13 +3283,14 @@ fn publish_webdav_remote(
     manifest: &SyncManifest,
     remote_existed: bool,
     previous_etag: Option<&str>,
+    known_remote_objects: &BTreeSet<String>,
 ) -> Result<(), GitFailure> {
     let credentials = webdav_credentials(endpoint).map_err(|_| GitFailure {
         message: "WebDAV 凭据缺失，请重新保存用户名和密码。".to_string(),
         auth: true,
         offline: false,
     })?;
-    publish_webdav_remote_with_credentials(
+    publish_webdav_remote_incremental(
         cache,
         endpoint,
         remote_dir,
@@ -3052,9 +3298,11 @@ fn publish_webdav_remote(
         remote_existed,
         previous_etag,
         &credentials,
+        known_remote_objects,
     )
 }
 
+#[cfg(test)]
 fn publish_webdav_remote_with_credentials(
     cache: &Path,
     endpoint: &str,
@@ -3064,6 +3312,30 @@ fn publish_webdav_remote_with_credentials(
     previous_etag: Option<&str>,
     credentials: &crate::platform::WebDavCredentials,
 ) -> Result<(), GitFailure> {
+    publish_webdav_remote_incremental(
+        cache,
+        endpoint,
+        remote_dir,
+        manifest,
+        remote_existed,
+        previous_etag,
+        credentials,
+        &BTreeSet::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn publish_webdav_remote_incremental(
+    cache: &Path,
+    endpoint: &str,
+    remote_dir: &str,
+    manifest: &SyncManifest,
+    remote_existed: bool,
+    previous_etag: Option<&str>,
+    credentials: &crate::platform::WebDavCredentials,
+    known_remote_objects: &BTreeSet<String>,
+) -> Result<(), GitFailure> {
+    check_operation().map_err(operation_failure)?;
     if remote_existed && previous_etag.is_none() {
         return Err(GitFailure {
             message: "WebDAV 服务器没有为同步清单提供 ETag，无法安全覆盖远端内容。".to_string(),
@@ -3081,7 +3353,18 @@ fn publish_webdav_remote_with_credentials(
             Some(Path::new(WEBDAV_OBJECTS)),
             credentials,
         )?;
-        for (path, hash) in &manifest.files {
+        let mut uploaded = known_remote_objects.clone();
+        for (index, (path, hash)) in manifest.files.iter().enumerate() {
+            check_operation().map_err(operation_failure)?;
+            sync_progress(
+                "uploading",
+                &format!("正在上传变更：{path}"),
+                Some(index),
+                Some(manifest.files.len()),
+            );
+            if !uploaded.insert(hash.clone()) {
+                continue;
+            }
             let bytes =
                 fs::read(cache.join(path)).map_err(local_sync_failure("读取待上传文件失败"))?;
             let object_path = format!("{WEBDAV_OBJECTS}/{hash}");
@@ -3106,6 +3389,13 @@ fn publish_webdav_remote_with_credentials(
             }
         }
     }
+    check_operation().map_err(operation_failure)?;
+    sync_progress(
+        "committing",
+        "文件传输完成，正在提交远端版本。",
+        Some(manifest.files.len()),
+        Some(manifest.files.len()),
+    );
     let manifest_bytes =
         fs::read(cache.join(MANIFEST)).map_err(local_sync_failure("读取待上传同步清单失败"))?;
     let mut request = client
@@ -3156,6 +3446,7 @@ fn ensure_webdav_collections(
     }
     let method = reqwest::Method::from_bytes(b"MKCOL").expect("valid WebDAV method");
     for length in 1..=segments.len() {
+        check_operation().map_err(operation_failure)?;
         let path = segments[..length].join("/");
         let response = client
             .request(method.clone(), webdav_resource_url(endpoint, &path, None)?)
@@ -3288,6 +3579,13 @@ fn git_output_with_timeout(
     interactive: bool,
     timeout: Duration,
 ) -> Result<Output, GitFailure> {
+    check_operation().map_err(operation_failure)?;
+    if args.first() == Some(&"fetch") {
+        sync_progress("checking", "正在获取 GitHub 远端版本。", None, None);
+    }
+    if args.first() == Some(&"push") {
+        sync_progress("uploading", "正在推送 GitHub 项目变更。", None, None);
+    }
     let mut command = crate::platform::silent_command("git");
     command
         .current_dir(root)
@@ -3310,27 +3608,43 @@ fn git_output_with_timeout(
         offline: false,
     })?;
     let stdout = child.stdout.take().map(|mut stream| {
+        let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             let _ = stream.read_to_end(&mut bytes);
-            bytes
-        })
+            let _ = sender.send(bytes);
+        });
+        receiver
     });
     let stderr = child.stderr.take().map(|mut stream| {
+        let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             let _ = stream.read_to_end(&mut bytes);
-            bytes
-        })
+            let _ = sender.send(bytes);
+        });
+        receiver
     });
-    match child.wait_timeout(timeout) {
+    let started = std::time::Instant::now();
+    let outcome = loop {
+        if let Err(error) = check_operation() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(operation_failure(error));
+        }
+        match child.wait_timeout(Duration::from_millis(100)) {
+            Ok(None) if started.elapsed() < timeout => continue,
+            result => break result,
+        }
+    };
+    match outcome {
         Ok(Some(status)) => Ok(Output {
             status,
             stdout: stdout
-                .and_then(|reader| reader.join().ok())
+                .and_then(|reader| reader.recv_timeout(Duration::from_secs(1)).ok())
                 .unwrap_or_default(),
             stderr: stderr
-                .and_then(|reader| reader.join().ok())
+                .and_then(|reader| reader.recv_timeout(Duration::from_secs(1)).ok())
                 .unwrap_or_default(),
         }),
         Ok(None) => {
@@ -3373,6 +3687,14 @@ fn classify_git_failure(message: String) -> GitFailure {
         } else {
             "GitHub 同步未完成，请检查网络、仓库权限或系统 Git 认证。".to_string()
         },
+    }
+}
+
+fn operation_failure(error: AppError) -> GitFailure {
+    GitFailure {
+        message: error.message,
+        auth: false,
+        offline: error.code == "sync_timeout",
     }
 }
 
@@ -3834,6 +4156,89 @@ mod tests {
         ))
     }
 
+    #[test]
+    fn webdav_reuses_verified_downloads_and_uploads_only_changed_objects() {
+        let server = TestWebDavServer::start();
+        let credentials = crate::platform::WebDavCredentials {
+            username: "writer".into(),
+            password: "secret".into(),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let upload = temp.path().join("upload");
+        let download = temp.path().join("download");
+        fs::create_dir_all(upload.join("source/_posts")).unwrap();
+        fs::write(upload.join("source/_posts/a.md"), "first").unwrap();
+        fs::write(upload.join("source/_posts/b.md"), "second").unwrap();
+        let snapshot = local_snapshot(&upload, "source/images").unwrap();
+        let first = SyncManifest {
+            schema_version: PROJECT_MANIFEST_SCHEMA,
+            image_dir: "source/images".into(),
+            files: hash_map(&snapshot),
+        };
+        write_manifest(&upload, &first).unwrap();
+        publish_webdav_remote_with_credentials(
+            &upload,
+            &server.endpoint,
+            "blog",
+            &first,
+            false,
+            None,
+            &credentials,
+        )
+        .unwrap();
+        let remote = fetch_webdav_remote(
+            &download,
+            &server.endpoint,
+            "blog",
+            &credentials,
+            WEBDAV_TIMEOUT,
+        )
+        .unwrap();
+        server.requests.lock().unwrap().clear();
+        fetch_webdav_remote(
+            &download,
+            &server.endpoint,
+            "blog",
+            &credentials,
+            WEBDAV_TIMEOUT,
+        )
+        .unwrap();
+        assert!(!server
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(method, path)| method == "GET" && path.contains(WEBDAV_OBJECTS)));
+        fs::write(upload.join("source/_posts/a.md"), "changed").unwrap();
+        let second = SyncManifest {
+            files: hash_map(&local_snapshot(&upload, "source/images").unwrap()),
+            ..first.clone()
+        };
+        write_manifest(&upload, &second).unwrap();
+        server.requests.lock().unwrap().clear();
+        publish_webdav_remote_incremental(
+            &upload,
+            &server.endpoint,
+            "blog",
+            &second,
+            true,
+            remote.etag.as_deref(),
+            &credentials,
+            &first.files.into_values().collect(),
+        )
+        .unwrap();
+        assert_eq!(
+            server
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(method, path)| method == "PUT" && path.contains(WEBDAV_OBJECTS))
+                .count(),
+            1
+        );
+    }
+
     fn real_webdav_credential_test_guard() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         let guard = LOCK
@@ -3855,6 +4260,7 @@ mod tests {
 
     struct TestWebDavServer {
         endpoint: String,
+        requests: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
         stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
         thread: Option<std::thread::JoinHandle<()>>,
     }
@@ -3888,12 +4294,19 @@ mod tests {
             let stop = Arc::new(AtomicBool::new(false));
             let files = Arc::new(Mutex::new(BTreeMap::<String, Vec<u8>>::new()));
             let stop_for_thread = stop.clone();
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let requests_for_thread = requests.clone();
             let thread = std::thread::spawn(move || {
                 while !stop_for_thread.load(std::sync::atomic::Ordering::SeqCst) {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
                             let _ = stream.set_nonblocking(false);
-                            handle_test_webdav_request(&mut stream, &files, behavior);
+                            handle_test_webdav_request(
+                                &mut stream,
+                                &files,
+                                &requests_for_thread,
+                                behavior,
+                            );
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             std::thread::sleep(Duration::from_millis(5));
@@ -3904,6 +4317,7 @@ mod tests {
             });
             Self {
                 endpoint: format!("http://{address}/dav"),
+                requests,
                 stop,
                 thread: Some(thread),
             }
@@ -3929,6 +4343,7 @@ mod tests {
     fn handle_test_webdav_request(
         stream: &mut std::net::TcpStream,
         files: &std::sync::Mutex<BTreeMap<String, Vec<u8>>>,
+        requests: &std::sync::Mutex<Vec<(String, String)>>,
         behavior: TestWebDavBehavior,
     ) {
         use std::io::{Read, Write};
@@ -3955,6 +4370,10 @@ mod tests {
             .split_whitespace();
         let method = request_line.next().unwrap_or_default();
         let path = request_line.next().unwrap_or_default().to_string();
+        requests
+            .lock()
+            .unwrap()
+            .push((method.to_string(), path.clone()));
         let content_length = headers
             .lines()
             .find_map(|line| {
@@ -4898,6 +5317,14 @@ mod tests {
         .unwrap();
         commit_and_push(&cache, DEFAULT_BRANCH).unwrap();
 
+        assert_eq!(
+            run_sync_for_root(&state, &project, "check").status,
+            ContentSyncStatus::RemoteAhead
+        );
+        assert_eq!(
+            fs::read_to_string(project.join("source/_posts/remote.md")).unwrap(),
+            "base remote"
+        );
         assert!(matches!(
             run_sync_for_root(&state, &project, "startup").status,
             ContentSyncStatus::Synced

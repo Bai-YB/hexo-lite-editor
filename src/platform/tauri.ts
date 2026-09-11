@@ -44,6 +44,8 @@ import type {
 import { localizeAppError } from "$shared/i18n/errorMessages";
 import { defaultConfig } from "$shared/types/app";
 import { browserMock } from "./browserMock";
+import type { ProjectFileEntry, ProjectFileSnapshot } from "$shared/types/app";
+import { appVersion } from "$shared/version";
 
 export const isTauri = () =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -202,6 +204,22 @@ export const platform = {
       directory
     });
   },
+  listProjectFiles(projectId: string, sessionGeneration: number, directory: string) {
+    if (isBrowserDemo()) return browserMock.listProjectFiles(directory);
+    return call<ProjectFileEntry[]>("list_project_files", { projectId, sessionGeneration, directory });
+  },
+  loadProjectFile(projectId: string, sessionGeneration: number, path: string) {
+    if (isBrowserDemo()) return browserMock.loadProjectFile(path);
+    return call<ProjectFileSnapshot>("load_project_file", { projectId, sessionGeneration, path });
+  },
+  saveProjectFile(snapshot: ProjectFileSnapshot, content: string) {
+    if (isBrowserDemo()) return browserMock.saveProjectFile(snapshot, content);
+    return call<ProjectFileSnapshot>("save_project_file", { projectId: snapshot.projectId, sessionGeneration: snapshot.sessionGeneration, path: snapshot.path, content, expectedHash: snapshot.contentHash });
+  },
+  revealProjectFile(projectId: string, sessionGeneration: number, path: string) {
+    if (isBrowserDemo()) return Promise.resolve();
+    return call<void>("reveal_project_file", { projectId, sessionGeneration, path });
+  },
   importEditorImages(
     projectId: string,
     sessionGeneration: number,
@@ -352,6 +370,14 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.runContentSync(direction);
     return call<ContentSyncView>("run_content_sync", { request: { projectId, sessionGeneration, direction } });
   },
+  cancelContentSync(projectId: string, sessionGeneration: number) {
+    if (isBrowserDemo()) return Promise.resolve(false);
+    return call<boolean>("cancel_content_sync", { projectId, sessionGeneration });
+  },
+  getContentSyncProgress(projectId: string) {
+    if (isBrowserDemo()) return Promise.resolve<ContentSyncEvent | null>(null);
+    return call<ContentSyncEvent | null>("get_content_sync_progress", { projectId });
+  },
   getContentSyncConflicts(projectId: string, sessionGeneration: number) {
     if (isBrowserDemo()) return browserMock.getContentSyncConflicts();
     return call<ContentSyncConflict[]>("get_content_sync_conflicts", { projectId, sessionGeneration });
@@ -480,7 +506,7 @@ export const platform = {
   runtimeInfo() {
     if (!isTauri()) {
       return Promise.resolve<RuntimeInfo>({
-        version: "1.0.6",
+        version: appVersion,
         operatingSystem: navigator.platform,
         architecture: "browser preview",
         webview: navigator.userAgent

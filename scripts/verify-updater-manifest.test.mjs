@@ -14,10 +14,10 @@ async function manifestFile(manifest) {
   return file;
 }
 
-function verify(file, platforms, tag) {
+function verify(file, platforms, tag, version = "1.2.3") {
   return spawnSync(
     process.execPath,
-    ["scripts/verify-updater-manifest.mjs", "--manifest", file, "--version", "1.2.3", ...platforms.flatMap((value) => ["--platform", value]), ...(tag ? ["--tag", tag] : [])],
+    ["scripts/verify-updater-manifest.mjs", "--manifest", file, "--version", version, ...platforms.flatMap((value) => ["--platform", value]), ...(tag ? ["--tag", tag] : [])],
     { cwd: process.cwd(), encoding: "utf8", stdio: "pipe" }
   );
 }
@@ -27,6 +27,13 @@ afterEach(async () => {
 });
 
 describe("updater manifest verification", () => {
+  it("accepts the four-part public release using its compatible internal version", async () => {
+    const file = await manifestFile({ version: "1.0.6+1", notes: "1.0.6.1", pub_date: "2026-09-11T00:00:00Z", platforms: {
+      "windows-x86_64": { url: "https://github.com/example/app/releases/download/v1.0.6.1/setup.exe", signature: "signed" }
+    } });
+    expect(verify(file, ["windows-x86_64"], "v1.0.6.1", "1.0.6+1").status).toBe(0);
+    expect(verify(file, ["windows-x86_64"], "v1.0.6.1", "1.0.6.1").status).toBe(1);
+  });
   it("rejects a repair release pointing at the original build", async () => {
     const manifest = { version: "1.2.3", notes: "Repair", pub_date: "2026-09-10T00:00:00Z", platforms: {
       "windows-x86_64": { url: "https://github.com/example/app/releases/download/v1.2.3/setup.exe", signature: "signature" }

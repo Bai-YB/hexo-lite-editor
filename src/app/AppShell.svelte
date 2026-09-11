@@ -28,12 +28,15 @@
     UpdateSnapshot
   } from "$shared/types/app";
   import { EditorSessionStore } from "$features/editor/EditorSessionStore";
+  import { FileSessionStore } from "$features/files/FileSessionStore";
   import type { SettingsController } from "$features/settings/controller";
   import { initI18n, t } from "$shared/i18n";
 
   const pageLoaders: Record<AppPage, () => Promise<{ default: any }>> = {
     editor: () => import("$features/editor/EditorPage.svelte"),
     imageBed: () => import("$features/image-bed/ImageBedPage.svelte"),
+    plugins: () => import("$features/plugins/PluginsPage.svelte"),
+    files: () => import("$features/files/FilesPage.svelte"),
     settings: () => import("$features/settings/SettingsPage.svelte"),
     about: () => import("$features/about/AboutPage.svelte")
   };
@@ -45,6 +48,10 @@
   let session: ProjectSessionView | null = null;
   let articles: ArticleSummary[] = [];
   const editorStore = new EditorSessionStore(platform.saveDocument);
+  const fileStore = new FileSessionStore(platform.saveProjectFile);
+  let filesDirty = false;
+  let activeFilePath = "";
+  let fileArticleOpenSequence = 0;
   let settingsController: SettingsController | null = null;
   let recentProjects: RecentProjectView[] = [];
   let dirty = false;
@@ -65,7 +72,8 @@
   let guardCompletion: ((accepted: boolean) => void) | null = null;
   let guardDescription = "";
   let guardBusy = false;
-  let guardSource: "editor" | "settings" | "both" = "editor";
+  type GuardSource = "editor" | "files" | "documents" | "settings" | "both";
+  let guardSource: GuardSource = "editor";
   let guardIsClosing = false;
   let allowWindowClose = false;
   let closeWindowState: CloseWindowState = { hasUnsavedChanges: false, isClosing: false };
@@ -93,6 +101,10 @@
     activeArticleId = state.snapshot?.articleId ?? null;
     externalChange = state.externalChange ?? null;
     if (!externalChange && !recoveryBusy) recoveryOpen = false;
+  });
+  const unsubscribeFiles = fileStore.subscribe((state) => {
+    filesDirty = state.dirty || state.saving;
+    activeFilePath = state.snapshot?.path ?? "";
   });
 
   $: pagePromise = pageLoaders[page]();
@@ -198,7 +210,7 @@
         }
         const settingsDirty = settingsController?.hasDirty() ?? false;
         const editorDirty = editorStore.hasDirty() || editorStore.getState().saving;
-        if (!editorDirty && !settingsDirty && !activeTask && !publishing) {
+        if (!editorDirty && !filesDirty && !settingsDirty && !activeTask && !publishing) {
           void platform.cleanupBeforeExit().catch(console.error);
           return;
         }
@@ -219,6 +231,7 @@
     clearTimeout(configTimer);
     clearTimeout(noticeTimer);
     unsubscribeEditor();
+    unsubscribeFiles();
     disposePluginWorkers();
   });
 
@@ -233,7 +246,7 @@
     const key = event.key.toLowerCase();
     const isAppShortcut = (event.shiftKey && key === "p")
       || (!event.shiftKey && ["s", "n", "o", ",", "\\"].includes(key))
-      || /^Digit[1-4]$/.test(event.code);
+      || /^Digit[1-6]$/.test(event.code);
     if ((guardAction || recoveryBusy || hasOpenModal()) && isAppShortcut) {
       event.preventDefault();
       event.stopPropagation();
@@ -251,6 +264,8 @@
         void settingsController?.save().catch((error) => showNotice(normalizeError(error).message, "error"));
       } else if (page === "editor") {
         void editorStore.save().catch((error) => showNotice(normalizeError(error).message, "error"));
+      } else if (page === "files") {
+        void fileStore.save().catch((error) => showNotice(normalizeError(error).message, "error"));
       }
     } else if (!event.shiftKey && key === "n" && page === "editor") {
       event.preventDefault();
@@ -267,9 +282,9 @@
     } else if (event.key === ",") {
       event.preventDefault();
       navigate("settings");
-    } else if (/^Digit[1-4]$/.test(event.code)) {
+    } else if (/^Digit[1-6]$/.test(event.code)) {
       event.preventDefault();
-      const pages: AppPage[] = ["editor", "imageBed", "settings", "about"];
+      const pages: AppPage[] = ["editor", "imageBed", "settings", "about", "plugins", "files"];
       navigate(pages[Number(event.code.slice(-1)) - 1]);
     }
   }
@@ -282,6 +297,10 @@
       return;
     }
     if (next === "settings") settingsInitialSection = settingsSection;
+    if (page === "files" && fileStore.hasDirty()) {
+      requestGuard("离开全部文件前，请保存或放弃当前文件的修改。", () => { page = next; }, "files");
+      return;
+    }
     if (page === "settings" && settingsController?.hasDirty()) {
       requestGuard("离开设置前需要保存或放弃本次设置修改。", () => { page = next; }, "settings");
       return;
@@ -290,6 +309,21 @@
       void editorStore.save().catch((error) => showNotice(normalizeError(error).message, "error"));
     }
     page = next;
+  }
+
+  function openArticleFromFiles(articleId: string) {
+    if (!session || recoveryBusy) return;
+    const project = { ...session };
+    const sequence = ++fileArticleOpenSequence;
+    requestGuard("打开博文前，请保存或放弃当前文章和项目文件的修改。", async () => {
+      try {
+        const token = editorStore.documentToken();
+        const snapshot = await platform.loadDocument(project.projectId, articleId, project.generation);
+        if (sequence !== fileArticleOpenSequence || page !== "files" || session?.projectId !== project.projectId || session.generation !== project.generation || editorStore.documentToken() !== token) return;
+        editorStore.load(snapshot);
+        page = "editor";
+      } catch (error) { showNotice(normalizeError(error).message, "error"); }
+    }, "documents");
   }
 
   function openProject() {
@@ -303,7 +337,7 @@
       showNotice("图片正在上传并更新地址，请等待完成后再切换博客。", "error");
       return;
     }
-    requestGuard("切换项目前需要处理当前文章或设置中的未保存内容。", async () => {
+    requestGuard("切换项目前需要处理文章、项目文件或设置中的未保存内容。", async () => {
       try {
         const result = await platform.pickProject();
         if (result) {
@@ -327,7 +361,7 @@
       showNotice("图片正在上传并更新地址，请等待完成后再切换博客。", "error");
       return;
     }
-    requestGuard("切换项目前需要处理当前文章或设置中的未保存内容。", async () => {
+    requestGuard("切换项目前需要处理文章、项目文件或设置中的未保存内容。", async () => {
       try {
         const result = await platform.openRecentProject(recentId);
         acceptProject(result.session, result.articles);
@@ -340,17 +374,23 @@
   }
 
   async function applyProjectRescan(project: import("$shared/types/app").ProjectRescanResult) {
+    let fileRefresh = Promise.resolve();
     try {
-      const result = await reconcileProjectRescan(project, {
+      const articleRefresh = reconcileProjectRescan(project, {
         store: editorStore,
         getSession: () => session,
         accept: (next) => {
           session = { ...session!, generation: next.generation };
           articles = next.articles;
           previewServer = null;
+          fileRefresh = fileStore.refresh({ ...session! }, (current, path) => platform.loadProjectFile(current.projectId, current.generation, path));
         },
         loadDocument: platform.loadDocument
       });
+      const [articleResult, fileResult] = await Promise.allSettled([articleRefresh, fileRefresh]);
+      if (fileResult.status === "rejected") showNotice(normalizeError(fileResult.reason).message, "error");
+      if (articleResult.status === "rejected") throw articleResult.reason;
+      const result = articleResult.value;
       if (result === "changed" || result === "deleted") showNotice("云端文章已变化，本地内容已保留。请先处理版本差异再保存。");
       else if (result === "refreshed") showNotice("远端内容已应用，文章列表已刷新。");
     } catch (error) { showNotice(normalizeError(error).message, "error"); }
@@ -446,7 +486,7 @@
     }
     return new Promise((resolve) => {
       guardCompletion = resolve;
-      requestGuard("应用云端内容前，请保存或放弃当前文章的修改。", () => { resolve(true); guardCompletion = null; });
+      requestGuard("同步前，请保存或放弃文章和项目文件的修改。", () => { resolve(true); guardCompletion = null; }, "documents");
     });
   }
 
@@ -455,6 +495,8 @@
     articles = nextArticles;
     const snapshot = editorStore.getState().snapshot;
     if (snapshot?.projectId !== nextSession.projectId || snapshot.sessionGeneration !== nextSession.generation) editorStore.clear();
+    const file = fileStore.getState().snapshot;
+    if (file?.projectId !== nextSession.projectId || file.sessionGeneration !== nextSession.generation) fileStore.clear();
     void platform.listRecentProjects().then((items) => (recentProjects = items));
     previewServer = null;
     if (nextSession.warnings.length) {
@@ -490,19 +532,15 @@
     const editorDirty = editorStore.hasDirty() || editorStore.getState().saving;
     closeWindowState = {
       ...closeWindowState,
-      hasUnsavedChanges: settingsDirty || editorDirty
+      hasUnsavedChanges: settingsDirty || editorDirty || filesDirty
     };
     if (!closeWindowState.hasUnsavedChanges) {
       void closeWindowNow();
       return;
     }
     if (guardAction && guardIsClosing) return;
-    guardDescription = settingsDirty && editorDirty
-      ? "当前文章和设置都有未保存修改。"
-      : settingsDirty
-        ? "设置中有未保存修改。"
-        : "当前文章有未保存修改。";
-    guardSource = settingsDirty && editorDirty ? "both" : settingsDirty ? "settings" : "editor";
+    guardDescription = "文章、项目文件或设置中有未保存修改。保存后再退出可避免丢失内容。";
+    guardSource = "both";
     guardIsClosing = true;
     guardAction = closeWindowNow;
   }
@@ -526,7 +564,7 @@
   function requestGuard(
     description: string,
     action: () => void | Promise<void>,
-    source: "editor" | "settings" | "both" = "editor"
+    source: GuardSource = "editor"
   ) {
     if (guardAction) return;
     const settingsDirty = settingsController?.hasDirty() ?? false;
@@ -534,8 +572,9 @@
     const hasDirty = source === "settings"
       ? settingsDirty
       : source === "both"
-        ? settingsDirty || editorDirty
-        : editorDirty;
+        ? settingsDirty || editorDirty || filesDirty
+        : source === "files" ? filesDirty
+          : source === "documents" ? editorDirty || filesDirty : editorDirty;
     if (!hasDirty) {
       void action();
       return;
@@ -558,7 +597,7 @@
     guardBusy = true;
     const action = guardAction;
     try {
-      if ((guardSource === "editor" || guardSource === "both") && externalChange) {
+      if (["editor", "documents", "both"].includes(guardSource) && externalChange) {
         guardCompletion?.(false);
         guardCompletion = null;
         guardAction = null;
@@ -571,7 +610,7 @@
         else await settingsController?.discard();
         if (settingsController?.hasDirty()) throw new Error("设置还有新的修改，请保存后继续。");
       }
-      if (guardSource === "editor" || guardSource === "both") {
+      if (["editor", "documents", "both"].includes(guardSource)) {
         if (choice === "save") await editorStore.saveUntilClean();
         else {
           await editorStore.waitForSave().catch(() => null);
@@ -579,7 +618,12 @@
           editorStore.discard();
         }
       }
-      if ((guardSource === "editor" || guardSource === "both") && (editorStore.getState().externalChange || editorStore.hasDirty())) throw new Error("文章仍有未处理的修改，请处理后继续。");
+      if (["editor", "documents", "both"].includes(guardSource) && (editorStore.getState().externalChange || editorStore.hasDirty())) throw new Error("文章仍有未处理的修改，请处理后继续。");
+      if (["files", "documents", "both"].includes(guardSource)) {
+        if (choice === "save") await fileStore.save();
+        else await fileStore.discard();
+        if (fileStore.hasDirty()) throw new Error("项目文件仍有未保存修改，请处理后继续。");
+      }
       guardAction = null;
       await action?.();
       if (!closeWindowState.isClosing) guardIsClosing = false;
@@ -603,6 +647,7 @@
     const token = editorStore.documentToken();
     try {
       if (externalChange) throw new Error("请先处理当前文章的版本差异再发布。");
+      await fileStore.save();
       await editorStore.saveUntilClean();
       if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error("当前项目或文章已变化，请重新发布。");
       const nextArticles = await platform.listArticles(project.projectId, project.generation);
@@ -610,6 +655,7 @@
       await editorStore.saveUntilClean();
       if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token) || editorStore.getState().externalChange) throw new Error("当前文章已变化，请处理后重新发布。");
       articles = nextArticles;
+      await fileStore.save();
       const task = await platform.startTask(project.projectId, "publish");
       publishTaskId = task.taskId;
       showNotice("正在后台清理缓存、重新生成并发布博客。" );
@@ -625,7 +671,7 @@
       return;
     }
     autoUpdateReady = null;
-    requestGuard("安装更新前需要保存或放弃未完成的文章和设置修改。", async () => {
+    requestGuard("安装更新前需要保存或放弃文章、项目文件和设置中的修改。", async () => {
       try { await platform.installUpdate(); }
       catch (error) { showNotice(normalizeError(error).message, "error"); }
     }, "both");
@@ -662,6 +708,7 @@
     try {
       if (pendingImageUploads > 0) throw new Error("请等待图片处理完成后再打开预览。");
       if (externalChange) throw new Error("请先处理当前文章的版本差异再预览。");
+      await fileStore.save();
       await editorStore.saveUntilClean();
       assertCurrent();
       if (!articleId) throw new Error("请先打开一篇文章。");
@@ -825,8 +872,8 @@
 
 <div class:is-maximized={maximized} class="app-window">
   <TitleBar
-    documentTitle={activeDocumentTitle}
-    {dirty}
+    documentTitle={page === "files" ? activeFilePath : activeDocumentTitle}
+    dirty={dirty || filesDirty}
     onRequestClose={requestClose}
     onMaximizedChange={(value) => (maximized = value)}
   />
@@ -848,6 +895,7 @@
             {config}
             {taskEvents}
             {editorStore}
+            {fileStore}
             {recentProjects}
             {previewServer}
             initialSection={settingsInitialSection}
@@ -855,6 +903,7 @@
             taskBusy={Boolean(activeTask) || publishing}
             {previewBusy}
             onOpenProject={openProject}
+            onOpenArticle={openArticleFromFiles}
             onOpenRecentProject={openRecent}
             onArticlesChange={(next: ArticleSummary[]) => (articles = next)}
             onConfigChange={updateConfig}

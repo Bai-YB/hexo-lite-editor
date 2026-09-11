@@ -11,7 +11,7 @@ on:
       version:
         description: "Version without the v prefix"
         required: true
-        default: "1.0.6"
+        default: "1.0.6.1"
 
 permissions:
   contents: write
@@ -51,15 +51,17 @@ jobs:
 
       - name: Resolve version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
-            tag="$GITHUB_REF_NAME"
-            TAG="$tag" VERSION="$version" node -e 'if (!new RegExp("^v" + process.env.VERSION.replaceAll(".", "\\.") + "(?:-r[1-9][0-9]*)?$").test(process.env.TAG)) throw new Error("Tag does not match package version")'
-          else
-            version="${{ inputs.version || '1.0.6' }}"
-            tag="v$version"
+          version="$(node scripts/release-version.mjs version)"
+          runtime_version="$(node scripts/release-version.mjs runtimeVersion)"
+          tag="$(node scripts/release-version.mjs tag)"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Release tag does not match package version" >&2; exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "${{ inputs.version }}" != "$version" ]]; then
+            echo "Requested release does not match package version" >&2; exit 1
           fi
           echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RUNTIME_VERSION=$runtime_version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Frontend checks
@@ -151,7 +153,7 @@ jobs:
           done
           windows_signature="$windows_asset.sig"
           node scripts/generate-latest-json.mjs \
-            --version "$version" \
+            --version "$RUNTIME_VERSION" \
             --tag "$tag" \
             --repository "$GITHUB_REPOSITORY" \
             --notes "$notes" \
@@ -162,7 +164,7 @@ jobs:
             --output "release-artifacts/$version/latest.json"
           node scripts/verify-updater-manifest.mjs \
             --manifest "release-artifacts/$version/latest.json" \
-            --version "$version" \
+            --version "$RUNTIME_VERSION" \
             --tag "$tag" \
             --platform windows-x86_64 \
             --platform darwin-x86_64 \
@@ -179,7 +181,7 @@ jobs:
           gh release download "$tag" --pattern latest.json --dir "release-artifacts/$version/updater-verify" --clobber
           node scripts/verify-updater-manifest.mjs \
             --manifest "release-artifacts/$version/updater-verify/latest.json" \
-            --version "$version" \
+            --version "$RUNTIME_VERSION" \
             --tag "$tag" \
             --platform windows-x86_64 \
             --platform darwin-x86_64 \

@@ -1,4 +1,24 @@
-export type AppPage = "editor" | "imageBed" | "settings" | "about";
+export type AppPage = "editor" | "imageBed" | "plugins" | "files" | "settings" | "about";
+
+export interface ProjectFileEntry {
+  path: string;
+  name: string;
+  kind: "file" | "directory";
+  extension?: string;
+  size?: number;
+  modifiedAt?: string;
+  editable: boolean;
+}
+
+export interface ProjectFileSnapshot {
+  projectId: string;
+  sessionGeneration: number;
+  path: string;
+  content: string;
+  contentHash: string;
+  editable: boolean;
+  readOnlyReason?: string;
+}
 export type ImageBedProvider = "local" | "cloudflare-imgbed" | `plugin:${string}`;
 export type ThemeMode = "light" | "dark" | "system";
 export type AppLanguage = "system" | "zh-CN" | "en-US";
@@ -420,6 +440,8 @@ export interface ContentSyncEvent {
   phase: "checking" | "waiting" | "attention" | "failed" | "completed" | string;
   status: ContentSyncStatus;
   message?: string;
+  completedFiles?: number;
+  totalFiles?: number;
 }
 
 export interface ContentSyncCandidate {

@@ -7,7 +7,7 @@
   import SettingsHeader from "./SettingsHeader.svelte";
   import SettingsNavigation from "./SettingsNavigation.svelte";
   import CloudflareImageBedSettings from "./CloudflareImageBedSettings.svelte";
-  import PluginManagerPage from "$features/plugins/PluginManagerPage.svelte";
+  import { syncStatusLabel } from "$features/editor/syncStatusLabel";
   import { defaultConfig } from "$shared/types/app";
   import { normalizeError, platform } from "$platform/tauri";
   import { shortcutLabel } from "$platform/os";
@@ -59,6 +59,13 @@
   let credentialRequest = 0;
   let syncRevision = 0;
   let unlistenSync: (() => void) | null = null;
+  let unlistenSyncPhase: (() => void) | null = null;
+  let syncProgress: import("$shared/types/app").ContentSyncEvent | null = null;
+  let syncStopping = false;
+  let backgroundSyncBusy = false;
+  let syncStartedAt = 0;
+  let syncElapsed = 0;
+  let syncTimer: ReturnType<typeof setInterval> | null = null;
   let syncError = "";
   let credential: CredentialStatus = { configured: false };
   let legacyCredentialAvailable = false;
@@ -91,6 +98,7 @@
   let webDavTestedEndpoint = "";
   let webDavTestedRemoteDir = "";
   let webDavConnectionError = "";
+  let webDavConnectionOpen = false;
 
   $: dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   $: currentSection = sections.find((section) => section.id === activeSection) ?? sections[0];
@@ -100,6 +108,7 @@
   $: webDavTestMatches = Boolean(webDavPreflight)
     && webDavEndpoint.trim().replace(/\/$/, "") === webDavTestedEndpoint
     && webDavRemoteDir.trim().replace(/^\/+|\/+$/g, "") === webDavTestedRemoteDir;
+  $: if (syncStatus.status === "authRequired" && syncStatus.provider === "webdav") webDavConnectionOpen = true;
   $: dirtySections = {
     general: JSON.stringify(draft.general) !== JSON.stringify(saved.general),
     editing: JSON.stringify([draft.appearance, draft.editor, draft.articleList]) !== JSON.stringify([saved.appearance, saved.editor, saved.articleList]),
@@ -114,7 +123,6 @@
     activeSection = initialSection ?? (sections.some((section) => section.id === stored) ? stored! : "general");
     onRegisterSettingsController({ save: saveDraft, discard, hasDirty: () => dirty || saving });
     void refreshCredential();
-    void refreshSync();
     void platform.onContentSyncStatus((status) => {
       if (!session || disposed || status.projectId !== session.projectId || status.sessionGeneration !== session.generation) return;
       syncRevision += 1;
@@ -122,11 +130,27 @@
       if (!syncBusy) void refreshSyncConflicts().catch((error) => { if (!disposed) syncError = normalizeError(error).message; });
     }).then((unlisten) => { if (disposed) unlisten(); else unlistenSync = unlisten; })
       .catch((error) => { if (!disposed) onNotice(normalizeError(error).message); });
+    void platform.onContentSyncPhase((event) => {
+      if (!session || disposed || event.projectId !== session.projectId || event.sessionGeneration !== session.generation) return;
+      if (["completed", "operationFinished", "failed", "attention", "waiting"].includes(event.phase)) {
+        if (backgroundSyncBusy) {
+          backgroundSyncBusy = false; endSync();
+          if (syncStatus.status === "conflict") void refreshSyncConflicts().catch((error) => { if (!disposed) syncError = normalizeError(error).message; });
+        }
+        syncProgress = null; return;
+      }
+      if (!syncBusy) { beginSync(); backgroundSyncBusy = true; }
+      syncProgress = event;
+    }).then((unlisten) => { if (disposed) unlisten(); else { unlistenSyncPhase = unlisten; void refreshSync(); } })
+      .catch((error) => { if (!disposed) syncError = normalizeError(error).message; });
+    syncTimer = setInterval(() => { if (syncBusy) syncElapsed = Math.floor((Date.now() - syncStartedAt) / 1000); }, 1000);
   });
 
   onDestroy(() => {
     disposed = true;
     unlistenSync?.();
+    unlistenSyncPhase?.();
+    if (syncTimer) clearInterval(syncTimer);
     if (dirty) onThemePreview(saved.appearance.themeMode);
     onRegisterSettingsController(null);
   });
@@ -143,6 +167,25 @@
     return sameProject(identity) && session?.generation === identity.generation;
   }
 
+  function beginSync(message = "正在准备同步操作。") {
+    syncBusy = true;
+    syncStopping = false;
+    syncError = "";
+    syncStartedAt = Date.now();
+    syncElapsed = 0;
+    syncProgress = { phase: "preparing", status: "checking", message };
+  }
+
+  function endSync() { syncBusy = false; syncStopping = false; syncProgress = null; }
+
+  async function stopSync() {
+    if (!session || !syncBusy || syncStopping) return;
+    syncStopping = true;
+    try {
+      await platform.cancelContentSync(session.projectId, session.generation);
+    } catch (error) { syncError = normalizeError(error).message; syncStopping = false; }
+  }
+
   async function refreshSync() {
     if (!session) {
       syncCandidate = null;
@@ -154,7 +197,9 @@
     try {
       const detection = await platform.detectContentSync(identity.projectId, identity.generation);
       const status = await platform.getContentSyncStatus(identity.projectId, identity.generation);
+      const activeProgress = await platform.getContentSyncProgress(identity.projectId);
       if (!sameSession(identity)) return;
+      if (activeProgress && activeProgress.sessionGeneration === identity.generation && !syncBusy) { beginSync(); backgroundSyncBusy = true; syncProgress = activeProgress; }
       syncCandidates = detection.candidates;
       if (revision === syncRevision) syncStatus = status;
       syncProvider = syncStatus.enabled ? syncStatus.provider : syncProvider;
@@ -177,10 +222,12 @@
     if (!session || syncBusy) return;
     if (syncStatus.enabled && initialChoice) { await runSync(initialChoice); return; }
     if (syncProvider === "github" && !syncCandidate) return;
-    syncBusy = true;
+    const identity = { ...session };
+    beginSync();
     try {
+      let result: import("$shared/types/app").ContentSyncView;
       if (syncProvider === "github" && syncCandidate) {
-        syncStatus = await platform.enableContentSync({
+        result = await platform.enableContentSync({
           projectId: session.projectId,
           sessionGeneration: session.generation,
           repository: syncCandidate.repository,
@@ -189,7 +236,7 @@
           confirmPublic: syncCandidate.visibility !== "public" || publicAcknowledged
         });
       } else {
-        syncStatus = await platform.enableWebDavContentSync({
+        result = await platform.enableWebDavContentSync({
           projectId: session.projectId,
           sessionGeneration: session.generation,
           endpoint: webDavEndpoint,
@@ -197,26 +244,34 @@
           initialChoice
         });
       }
+      if (!sameProject(identity)) return;
+      syncStatus = result;
+      if (syncStatus.enabled) webDavConnectionOpen = false;
       onNotice(syncStatus.message || "内容同步设置已更新。");
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      syncError = normalizeError(error).message; onNotice(syncError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
   async function preflightSync() {
     if (!session || syncBusy || (syncProvider === "github" && !syncCandidate)) return;
-    syncBusy = true;
+    const identity = { ...session };
+    const branch = syncBranch;
+    const repository = syncCandidate?.repository;
+    beginSync();
     try {
       if (syncProvider === "github" && syncCandidate) {
-        syncPreflight = await platform.preflightContentSync(session.projectId, session.generation, syncCandidate.repository, syncBranch);
+        const result = await platform.preflightContentSync(identity.projectId, identity.generation, syncCandidate.repository, branch);
+        if (!sameSession(identity) || syncBranch !== branch || syncCandidate?.repository !== repository) return;
+        syncPreflight = result;
         syncCandidate = syncPreflight.candidate;
       }
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      syncError = normalizeError(error).message; onNotice(syncError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
@@ -225,8 +280,11 @@
       webDavCredential = { configured: false };
       return;
     }
+    const endpoint = webDavEndpoint;
     try {
-      webDavCredential = await platform.webDavCredentialStatus(webDavEndpoint);
+      const result = await platform.webDavCredentialStatus(endpoint);
+      if (disposed || webDavEndpoint !== endpoint) return;
+      webDavCredential = result;
       if (!webDavUsername && webDavCredential.username) webDavUsername = webDavCredential.username;
     }
     catch { webDavCredential = { configured: false }; }
@@ -234,17 +292,22 @@
 
   async function testWebDavConnection() {
     if (!session || syncBusy || !webDavEndpoint.trim() || !webDavRemoteDir.trim() || !webDavUsername.trim()) return;
-    syncBusy = true;
+    const identity = { ...session };
+    const submitted = { endpoint: webDavEndpoint, remoteDir: webDavRemoteDir, username: webDavUsername, password: webDavPassword };
+    beginSync();
     webDavConnectionError = "";
     try {
       const result = await platform.testWebDavContentSync({
         projectId: session.projectId,
         sessionGeneration: session.generation,
-        endpoint: webDavEndpoint,
-        remoteDir: webDavRemoteDir,
-        username: webDavUsername,
-        password: webDavPassword || undefined
+        ...submitted, password: submitted.password || undefined
       });
+      if (!sameSession(identity)) return;
+      if (webDavEndpoint !== submitted.endpoint || webDavRemoteDir !== submitted.remoteDir || webDavUsername !== submitted.username || webDavPassword !== submitted.password) {
+        webDavPreflight = null; webDavTestedAt = "";
+        webDavConnectionError = "测试期间连接信息已修改，请重新测试当前输入。";
+        return;
+      }
       webDavEndpoint = result.preflight.endpoint;
       webDavRemoteDir = result.preflight.remoteDir;
       webDavPreflight = result.preflight;
@@ -262,33 +325,36 @@
       webDavTestedAt = "";
       onNotice(webDavConnectionError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
   async function applyWebDavConnection() {
     if (!session || syncBusy || !webDavTestMatches) return;
-    syncBusy = true;
+    const identity = { ...session };
+    beginSync();
     webDavConnectionError = "";
     try {
-      syncStatus = await platform.updateWebDavContentSync({
+      const result = await platform.updateWebDavContentSync({
         projectId: session.projectId,
         sessionGeneration: session.generation,
         endpoint: webDavEndpoint,
         remoteDir: webDavRemoteDir
       });
+      if (!sameSession(identity)) return;
+      syncStatus = result;
       onNotice(syncStatus.message || "WebDAV 连接设置已应用。");
     } catch (error) {
       webDavConnectionError = normalizeError(error).message;
       onNotice(webDavConnectionError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
   async function deleteWebDavCredential() {
     if (syncBusy || !webDavEndpoint.trim()) return;
-    syncBusy = true;
+    beginSync();
     try {
       webDavCredential = await platform.webDavCredentialDelete(webDavEndpoint);
       webDavPreflight = null;
@@ -296,9 +362,9 @@
       webDavConnectionError = "";
       onNotice("WebDAV 凭据已删除。");
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      syncError = normalizeError(error).message; onNotice(syncError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
@@ -319,7 +385,7 @@
     if (!session || syncBusy || syncConflicts.some((item) => !conflictChoices[item.path])) return;
     const identity = { ...session };
     if (!await onBeforeSync() || !sameSession(identity) || syncBusy) return;
-    syncBusy = true;
+    beginSync();
     syncError = "";
     try {
       const result = await platform.resolveContentSyncConflicts(identity.projectId, identity.generation, conflictChoices);
@@ -332,7 +398,7 @@
       syncError = normalizeError(error).message;
       onNotice(syncError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
@@ -340,7 +406,7 @@
     if (!session || syncBusy) return;
     const identity = { ...session };
     if (!await onBeforeSync() || !sameSession(identity) || syncBusy) return;
-    syncBusy = true;
+    beginSync();
     syncError = "";
     try {
       const result = await platform.runContentSync(identity.projectId, identity.generation, direction);
@@ -352,7 +418,7 @@
       syncError = normalizeError(error).message;
       onNotice(syncError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
@@ -368,27 +434,27 @@
 
   async function disableSync() {
     if (!session || syncBusy) return;
-    syncBusy = true;
+    beginSync();
     try {
       syncStatus = await platform.disableContentSync(session.projectId, session.generation);
       onNotice("内容同步已关闭，本地文章不会被删除。");
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      syncError = normalizeError(error).message; onNotice(syncError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
   async function reconnectSync() {
     if (!session || syncBusy) return;
-    syncBusy = true;
+    beginSync();
     try {
       syncStatus = await platform.reconnectContentSync(session.projectId, session.generation);
       onNotice(syncStatus.message || "系统 Git 认证检查完成。");
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      syncError = normalizeError(error).message; onNotice(syncError);
     } finally {
-      syncBusy = false;
+      endSync();
     }
   }
 
@@ -658,7 +724,6 @@
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-13">{$ui("文章列表封面")}</label><span id="setting-field-13-hint">{$ui("在文章标题左侧显示缩略图。")}</span></div><label class="switch"><input id="setting-field-13" aria-describedby="setting-field-13-hint" type="checkbox" checked={draft.articleList.showCover} on:change={(event) => change({ ...draft, articleList: { showCover: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
       {:else if activeSection === "images"}
-        <PluginManagerPage {onNotice} selectedProvider={draft.imageBed.defaultProvider} onProviderChange={(provider) => change({ ...draft, imageBed: { ...draft.imageBed, defaultProvider: provider as AppConfigV3["imageBed"]["defaultProvider"] } })} />
         <div class="settings-block">
           <div class="settings-block-heading"><h3>{$ui("图片工作流")}</h3><p>{$ui("决定导入、粘贴和拖入图片时的目标。")}</p></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-14">{$ui("默认来源")}</label><span id="setting-field-14-hint">{$ui("本地项目目录、Cloudflare-ImgBed 或已启用的插件图床。")}</span></div><select id="setting-field-14" aria-describedby="setting-field-14-hint" class="select compact-control" value={draft.imageBed.defaultProvider} on:change={(event) => change({ ...draft, imageBed: { ...draft.imageBed, defaultProvider: event.currentTarget.value as AppConfigV3["imageBed"]["defaultProvider"] } })}><option value="local">{$ui("本地图片")}</option><option value="cloudflare-imgbed">Cloudflare-ImgBed</option>{#if draft.imageBed.defaultProvider.startsWith("plugin:")}<option value={draft.imageBed.defaultProvider}>{$ui("插件图床")}</option>{/if}</select></div>
@@ -693,15 +758,33 @@
           {#if !session}
             <p class="muted-line">{$ui("请先打开一个 Hexo 项目。")}</p>
           {:else}
+            <ol class="sync-workflow" aria-label={$ui("同步步骤")}>
+              <li class:active={!syncStatus.enabled}>{$ui("1. 连接并检查")}</li>
+              <li class:active={syncStatus.enabled && !syncStatus.lastSyncedAt}>{$ui("2. 选择首次同步方向")}</li>
+              <li class:active={Boolean(syncStatus.lastSyncedAt)}>{$ui("3. 自动上传后续保存")}</li>
+            </ol>
+            <p class="muted-line">{$ui("连接测试只检查权限。首次上传需要确认方向；之后保存的改动会在 30 秒后自动同步，也可手动立即上传。")}</p>
+            {#if syncError}<p class="sync-error" role="alert">{syncError}</p>{/if}
+            {#if syncBusy}
+              <div class="sync-progress" role="status" aria-live="polite">
+                <strong>{syncStopping ? $ui("正在停止同步...") : syncProgress?.message || $ui("正在准备同步操作。")}</strong>
+                {#if syncProgress?.totalFiles != null && syncProgress.totalFiles > 0}
+                  <progress max={syncProgress.totalFiles} value={syncProgress.completedFiles ?? 0} aria-label={$ui("同步文件进度")}></progress>
+                  <span>{syncProgress.completedFiles ?? 0} / {syncProgress.totalFiles} {$ui("个文件")}</span>
+                {/if}
+                <span>{$ui("已用时")} {syncElapsed} s · {$ui("单次网络请求最长等待 30 秒")}</span>
+                <button class="button" type="button" disabled={syncStopping} on:click={stopSync}>{syncStopping ? $ui("等待当前请求结束") : $ui("停止同步")}</button>
+              </div>
+            {/if}
             {#if !syncStatus.enabled}
-              <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-19">{$ui("同步方式")}</label><span id="setting-field-19-hint">{$ui("选择 GitHub 或任意兼容 WebDAV 的服务器。")}</span></div><select id="setting-field-19" aria-describedby="setting-field-19-hint" aria-label={$ui("同步方式")} class="select compact-control" bind:value={syncProvider} on:change={() => { syncPreflight = null; webDavPreflight = null; }}><option value="github">GitHub</option><option value="webdav">WebDAV</option></select></div>
+              <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-19">{$ui("同步方式")}</label><span id="setting-field-19-hint">{$ui("选择 GitHub 或任意兼容 WebDAV 的服务器。")}</span></div><select id="setting-field-19" aria-describedby="setting-field-19-hint" aria-label={$ui("同步方式")} class="select compact-control" disabled={syncBusy} bind:value={syncProvider} on:change={() => { syncPreflight = null; webDavPreflight = null; }}><option value="github">GitHub</option><option value="webdav">WebDAV</option></select></div>
             {/if}
             {#if !syncStatus.enabled && syncProvider === "github"}
               {#if !syncCandidates.length}
                 <p class="muted-line">{$ui("没有检测到 GitHub Pages 或 GitHub deploy 仓库。你仍可改用 WebDAV。")}</p>
               {:else}
                 {#if syncCandidates.length > 1}
-                  <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-20">{$ui("目标仓库")}</label><span id="setting-field-20-hint">{$ui("检测到多个 Git deploy 仓库，请明确选择。")}</span></div><select id="setting-field-20" aria-describedby="setting-field-20-hint" aria-label={$ui("目标仓库")} class="select compact-control" value={syncCandidate?.repository ?? ""} on:change={(event) => { syncCandidate = syncCandidates.find((item) => item.repository === event.currentTarget.value) ?? null; syncPreflight = null; publicAcknowledged = false; }}><option value="" disabled>{$ui("请选择仓库")}</option>{#each syncCandidates as candidate}<option value={candidate.repository}>{candidate.repository}</option>{/each}</select></div>
+                  <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-20">{$ui("目标仓库")}</label><span id="setting-field-20-hint">{$ui("检测到多个 Git deploy 仓库，请明确选择。")}</span></div><select id="setting-field-20" aria-describedby="setting-field-20-hint" aria-label={$ui("目标仓库")} class="select compact-control" disabled={syncBusy} value={syncCandidate?.repository ?? ""} on:change={(event) => { syncCandidate = syncCandidates.find((item) => item.repository === event.currentTarget.value) ?? null; syncPreflight = null; publicAcknowledged = false; }}><option value="" disabled>{$ui("请选择仓库")}</option>{#each syncCandidates as candidate}<option value={candidate.repository}>{candidate.repository}</option>{/each}</select></div>
                 {/if}
                 {#if !syncCandidate}
                   <p class="muted-line">{$ui("选择目标仓库后才能预检和启用内容同步。")}</p>
@@ -714,11 +797,13 @@
                 {/if}
               {/if}
             {:else if syncProvider === "webdav"}
+              <details class="sync-connection-details" open={!syncStatus.enabled || webDavConnectionOpen} on:toggle={(event) => { if (syncStatus.enabled) webDavConnectionOpen = event.currentTarget.open; }}>
+                <summary>{$ui("WebDAV 连接设置")}{#if syncStatus.enabled}<span>{$ui("点击修改服务器或凭据")}</span>{/if}</summary>
               <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-22">{$ui("服务器地址")}</label><span id="setting-field-22-hint">{$ui("启用后仍可修改；更换地址必须重新测试并明确应用。")}</span></div><input id="setting-field-22" aria-describedby="setting-field-22-hint" aria-label={$ui("WebDAV 服务器地址")} class="input compact-control" type="url" placeholder="https://dav.example.com/dav" value={webDavEndpoint} disabled={syncBusy} on:input={(event) => { webDavEndpoint = event.currentTarget.value; webDavCredential = { configured: false }; webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} on:blur={refreshWebDavCredential} /></div>
               <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-23">{$ui("远端目录")}</label><span id="setting-field-23-hint">{$ui("在该目录中保存完整项目源文件；依赖、生成目录、凭据和私钥不会上传。")}</span></div><input id="setting-field-23" aria-describedby="setting-field-23-hint" aria-label={$ui("WebDAV 远端目录")} class="input compact-control" value={webDavRemoteDir} disabled={syncBusy} on:input={(event) => { webDavRemoteDir = event.currentTarget.value; webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
               <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-24">{$ui("用户名")}</label><span id="setting-field-24-hint">{$ui("可回显已保存用户名，完整密码永远不会返回前端。")}</span></div><input id="setting-field-24" aria-describedby="setting-field-24-hint" aria-label={$ui("WebDAV 用户名")} class="input compact-control" autocomplete="username" bind:value={webDavUsername} disabled={syncBusy} on:input={() => { webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
               <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-25">{$ui("密码")}</label><span id="setting-field-25-hint">{webDavCredential.configured ? $ui("留空沿用系统凭据库中的密码；填写内容用于测试成功后才会覆盖旧密码。") : $ui("请输入密码；只有真实连接和读写测试通过后才会保存。")}</span></div><input id="setting-field-25" aria-describedby="setting-field-25-hint" aria-label={$ui("WebDAV 密码")} class="input compact-control" type="password" autocomplete="current-password" bind:value={webDavPassword} disabled={syncBusy} on:input={() => { webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
-              {#if syncStatus.enabled && syncStatus.provider === "webdav"}<div class="sync-summary"><strong>{$ui("当前已应用连接")}</strong><span>{syncStatus.endpoint}/{syncStatus.remoteDir}</span><span>{$ui("同步状态：")}{syncStatus.status} · {syncStatus.message || ""}</span></div>{/if}
+              {#if syncStatus.enabled && syncStatus.provider === "webdav"}<div class="sync-summary"><strong>{$ui("当前已应用连接")}</strong><span>{syncStatus.endpoint}/{syncStatus.remoteDir}</span><span>{$ui("同步状态：")}{$ui(syncStatusLabel(syncStatus))} · {syncStatus.message || ""}</span></div>{/if}
               {#if webDavConnectionDirty}<p class="sync-warning" role="status">{$ui("服务器地址或远端目录已修改，尚未应用。请重新测试后点击“应用连接设置”。")}</p>{/if}
               {#if syncStatus.status === "authRequired"}<p class="sync-warning" role="alert">{$ui("当前凭据无法认证。请直接修改用户名或密码，然后重新测试。")}</p>{/if}
               {#if webDavConnectionError}<p class="sync-error" role="alert">{webDavConnectionError}</p>{/if}
@@ -729,16 +814,17 @@
               {:else}
                 <div class="button-row"><button class="button primary" type="button" disabled={syncBusy || !webDavTestMatches || !webDavPreflight || (webDavPreflight.remoteExists && !webDavPreflight.remoteManifestValid)} on:click={() => configureSync()}>{$ui("确认启用 WebDAV")}</button></div>
               {/if}
+              </details>
             {/if}
             {#if syncStatus.enabled}
-              {#if syncError}<p class="sync-error" role="alert">{syncError}</p>{/if}
               <fieldset class="sync-decisions" disabled={syncBusy || webDavConnectionDirty}>
               <div class="sync-summary"><strong>{syncStatus.provider === "webdav" ? $ui("WebDAV 项目同步") : $ui("GitHub 项目同步")}</strong><span>{syncStatus.provider === "webdav" ? `${syncStatus.endpoint}/${syncStatus.remoteDir}` : `${syncStatus.repository} · ${syncStatus.branch}`}</span></div>
-              <div class="sync-status-row"><span class={`sync-status ${syncStatus.status}`}>{syncStatus.status}</span><span>{syncStatus.message || ""}</span></div>
+              <div class="sync-status-row"><span class={`sync-status ${syncStatus.status}`}>{$ui(syncStatusLabel(syncStatus))}</span><span>{syncStatus.message || ""}</span></div>
               {#if syncStatus.requiresScopeConfirmation}
                 <p class="sync-warning" role="alert">{$ui("同步范围已升级为完整项目。确认后，草稿、主题和 Hexo 配置也会上传到当前 GitHub 分支。")}</p>
                 <div class="button-row"><button class="button danger" type="button" disabled={syncBusy} on:click={() => (pendingSyncOverwrite = "overwriteRemote")}>{$ui("确认同步完整项目")}</button><button class="button danger" type="button" disabled={syncBusy} on:click={disableSync}>{$ui("关闭同步")}</button></div>
               {:else if syncStatus.status === "localPending" && !syncStatus.lastSyncedAt}
+                <p class="sync-warning" role="status">{$ui("连接已启用。选择“上传本地内容”开始首次同步，或使用远端已有内容初始化本机。")}</p>
                 <div class="button-row"><button class="button primary" type="button" disabled={syncBusy} on:click={() => (pendingInitialChoice = "local")}>{$ui("上传本地内容")}</button><button class="button" type="button" disabled={syncBusy} on:click={() => (pendingInitialChoice = "remote")}>{$ui("使用远端内容")}</button></div>
               {:else if syncStatus.status === "remoteAhead"}
                 <p class="sync-warning" role="alert">{$ui("云端存在较新的项目版本。选择任一方向前都会再次读取最新云端状态；覆盖本地时会先创建备份。")}</p>
@@ -760,7 +846,7 @@
                 </div>
                 <div class="button-row"><button class="button primary" type="button" disabled={syncBusy || !syncConflicts.length || syncConflicts.some((item) => !conflictChoices[item.path])} on:click={submitConflictChoices}>{$ui("提交冲突选择")}</button><button class="button" type="button" on:click={() => session && platform.openContentSyncBackups(session.projectId, session.generation)}>{$ui("打开备份目录")}</button></div>
               {:else}
-                <div class="button-row"><button class="button primary" type="button" disabled={syncBusy} on:click={() => runSync("auto")}>{$ui("立即同步")}</button>{#if syncStatus.status === "authRequired" && syncProvider === "github"}<button class="button" type="button" disabled={syncBusy} on:click={reconnectSync}>{$ui("重新认证")}</button>{/if}<button class="button danger" type="button" disabled={syncBusy} on:click={disableSync}>{$ui("关闭同步")}</button></div>
+                <div class="button-row"><button class="button primary" type="button" disabled={syncBusy} on:click={() => runSync("auto")}>{["error", "offline", "authRequired"].includes(syncStatus.status) ? $ui("重试同步") : $ui("立即上传变更")}</button>{#if syncStatus.status === "authRequired" && syncProvider === "github"}<button class="button" type="button" disabled={syncBusy} on:click={reconnectSync}>{$ui("重新认证")}</button>{/if}<button class="button danger" type="button" disabled={syncBusy} on:click={disableSync}>{$ui("关闭同步")}</button></div>
               {/if}
               {#if syncStatus.lastSyncedAt}<small class="muted-line">{$ui("上次同步：")}{new Date(syncStatus.lastSyncedAt).toLocaleString()}</small>{/if}
               </fieldset>
@@ -822,4 +908,13 @@
 <style>
   .setting-title { font-weight: 600; cursor: pointer; }
   .sync-decisions { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .sync-workflow { display: flex; gap: 16px; padding: 0; list-style: none; flex-wrap: wrap; color: var(--text-muted); font-size: 12px; }
+  .sync-workflow .active { color: var(--text); font-weight: 600; }
+  .sync-progress { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; margin-block: 12px; overflow-wrap: anywhere; }
+  .sync-progress progress { width: 100%; }
+  .sync-progress span { font-size: 12px; color: var(--text-muted); }
+  .sync-progress .button { justify-self: start; }
+  .sync-connection-details { margin-block: 12px; }
+  .sync-connection-details > summary { padding-block: 10px; cursor: pointer; font-weight: 600; }
+  .sync-connection-details > summary span { margin-left: 12px; font-weight: 400; font-size: 12px; color: var(--text-muted); }
 </style>

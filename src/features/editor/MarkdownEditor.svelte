@@ -6,6 +6,7 @@
   import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
   import { EditorState, StateEffect, type ChangeDesc, type Extension } from "@codemirror/state";
   import { externalEditorChange, resolvedImageHistory } from "./imageHistory";
+  import { SCROLL_ANCHOR_INSET } from "./preview/sourceScrollSync";
   import { tags } from "@lezer/highlight";
   import {
     EditorView,
@@ -34,7 +35,8 @@
   export let imageUrlReplacements: Record<string, string> = {};
   export let onChange: (value: string, changes: ChangeDesc) => void = () => {};
   export let onSelectionChange: (from: number, to: number) => void = () => {};
-  export let onScroll: (scrollTop: number, scrollHeight: number, clientHeight: number) => void = () => {};
+  export let onScroll: (scrollTop: number, scrollHeight: number, clientHeight: number, anchorLine?: number) => void = () => {};
+  export let onScrollInteraction: () => void = () => {};
   export let onImageFiles: (files: File[]) => void = () => {};
   export let onSave: () => void = () => {};
   export let onNewArticle: () => void = () => {};
@@ -43,6 +45,8 @@
   let view: EditorView | null = null;
   let externalContent = content;
   let viewDocumentInstance = documentInstance;
+  let scrollFrame = 0;
+  let scrollTargetSequence = 0;
 
   // 组件实例级常量：样式值全部走 CSS var，主题切换无需重建；
   // reconfigure 时引用同一实例，生成的高亮 class 不抖动。
@@ -121,6 +125,7 @@
         ...searchKeymap
       ]),
       EditorView.updateListener.of((update) => {
+        if (update.geometryChanged || update.docChanged) scheduleScrollReport();
         if (update.docChanged) {
           externalContent = update.state.doc.toString();
           onChange(externalContent, update.changes);
@@ -254,20 +259,69 @@
     });
     view.scrollDOM.scrollTop = scrollTop;
     view.scrollDOM.addEventListener("scroll", handleScroll, { passive: true });
+    for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) {
+      view.scrollDOM.addEventListener(event, claimScroll, { passive: true });
+    }
+    scheduleScrollReport();
   });
 
   onDestroy(() => {
+    scrollTargetSequence += 1;
     view?.scrollDOM.removeEventListener("scroll", handleScroll);
+    for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) {
+      view?.scrollDOM.removeEventListener(event, claimScroll);
+    }
+    cancelAnimationFrame(scrollFrame);
     view?.destroy();
+    view = null;
   });
+
+  function claimScroll() { scrollTargetSequence += 1; onScrollInteraction(); }
+
+  function scheduleScrollReport() {
+    cancelAnimationFrame(scrollFrame);
+    scrollFrame = requestAnimationFrame(handleScroll);
+  }
 
   function handleScroll() {
     if (view) {
-      onScroll(view.scrollDOM.scrollTop, view.scrollDOM.scrollHeight, view.scrollDOM.clientHeight);
+      onScroll(view.scrollDOM.scrollTop, view.scrollDOM.scrollHeight, view.scrollDOM.clientHeight, sourceLineAtScroll());
     }
   }
 
+  /** Include progress inside a wrapped source line so tall paragraphs stay aligned. */
+  export function sourceLineAtScroll(): number {
+    if (!view || view.scrollDOM.scrollTop <= 0) return 1;
+    const y = Math.max(0, view.scrollDOM.scrollTop + SCROLL_ANCHOR_INSET - view.documentPadding.top);
+    const block = view.lineBlockAtHeight(y);
+    const line = view.state.doc.lineAt(block.from).number;
+    return line + Math.min(1, Math.max(0, (y - block.top) / Math.max(1, block.height)));
+  }
+
+  /** Source lines are one-based and may include progress within a wrapped line. */
+  export function scrollToLine(line: number) {
+    if (!view) return;
+    const targetView = view;
+    const targetDocument = view.state.doc;
+    const sequence = ++scrollTargetSequence;
+    const safeLine = Math.max(1, Math.min(line, view.state.doc.lines + 1));
+    const whole = Math.min(Math.floor(safeLine), view.state.doc.lines);
+    const pos = view.state.doc.line(whole).from;
+    // CodeMirror must first render the destination viewport; offscreen wrapped
+    // lines have estimated heights and cannot be positioned with scrollTop alone.
+    view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: SCROLL_ANCHOR_INSET }) });
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (view !== targetView || sequence !== scrollTargetSequence || view.state.doc !== targetDocument) return;
+      view.lineBlockAtHeight(0); // Flush the newly rendered viewport's measurements.
+      const block = view.lineBlockAt(pos);
+      view.scrollDOM.scrollTop = Math.max(0,
+        view.documentPadding.top + block.top + block.height * (safeLine - whole) - SCROLL_ANCHOR_INSET);
+      handleScroll();
+    }));
+  }
+
   $: if (view && documentInstance !== viewDocumentInstance) {
+    scrollTargetSequence += 1;
     viewDocumentInstance = documentInstance;
     externalContent = content;
     view.setState(EditorState.create({

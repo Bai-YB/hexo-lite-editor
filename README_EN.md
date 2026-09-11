@@ -10,10 +10,10 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe"><strong>Download setup</strong></a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip">Portable ZIP</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_macos-universal.dmg">macOS</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6-r1">v1.0.6 Fix Release</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64-setup.exe"><strong>Download setup</strong></a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64-portable.zip">Portable ZIP</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_macos-universal.dmg">macOS</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.1">v1.0.6.1</a>
   </p>
 </div>
 
@@ -24,6 +24,8 @@
 ## Features
 
 - Edit posts and drafts with Markdown, common HTML, and live preview.
+- Align editor and preview by source content, including images, code blocks and long paragraphs.
+- Browse All files to edit friend links, YAML, JSON and theme configuration with disk-change checks; manage plugins from their own navigation entry.
 - Hide the preview to give the editor all space outside the post list.
 - Manage images under `source/` or connect Cloudflare-ImgBed; pasted and dropped images appear locally while uploading in the background.
 - Publishing always saves, cleans, generates, and deploys to prevent stale output; the background preview server can be stopped at any time.
@@ -51,18 +53,18 @@ The WebDAV endpoint, directory, and username remain editable after sync is enabl
 
 ## Install
 
-`v1.0.6-r1` is a fix build for Windows 10/11 x64 and universal macOS. The application version remains **1.0.6**. If you already use the original 1.0.6, download and reinstall this build manually; an identical version number does not trigger automatic updates.
+`v1.0.6.1` supports Windows 10/11 x64 and universal macOS. The displayed version is **1.0.6.1**; the internal Tauri-compatible version is `1.0.6+1`. Both 1.0.6 and 1.0.6-r1 can recognize this update.
 
-This build fixes article saving and image insertion, project sync consistency, settings drafts, and conflict recovery. The original `v1.0.6` release is preserved. See the [fix and validation record](docs/fix-validation-1.0.6-r1.md) for the changes and verification scope.
+This release improves background synchronization, source-based preview scrolling, independent plugin navigation and project file editing. Sync displays stages, file progress and a stop action. Opening a blog enters the local workspace before checking the cloud. See the [1.0.6.1 validation record](docs/validation-1.0.6.1.md).
 
 | Package | Use |
 | --- | --- |
-| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe) | Recommended; install with the setup wizard |
-| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip) | Extract and run |
-| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64.msi) | Managed or bulk deployment |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_macos-universal.dmg) | Universal for Intel and Apple Silicon |
+| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64-setup.exe) | Recommended; install with the setup wizard |
+| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64-portable.zip) | Extract and run |
+| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64.msi) | Managed or bulk deployment |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_macos-universal.dmg) | Universal for Intel and Apple Silicon |
 
-The Windows packages do not have a commercial code-signing certificate, so SmartScreen may show “Unknown publisher.” Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/SHA256SUMS.txt) and [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/SHA256SUMS-macos.txt). Starting with v1.0.6, the app downloads later Tauri signature-verified updates automatically and asks before installation.
+The Windows packages do not have a commercial code-signing certificate, so SmartScreen may show “Unknown publisher.” Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/SHA256SUMS.txt) and [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/SHA256SUMS-macos.txt). Starting with v1.0.6, the app downloads later Tauri signature-verified updates automatically and asks before installation.
 
 ## Usage
 
@@ -70,6 +72,10 @@ The Windows packages do not have a commercial code-signing certificate, so Smart
 2. Select a post or draft on the left and edit it.
 3. Check the live preview, or open browser preview when you need the actual theme.
 4. Save and choose **Publish**, or run generate and deploy separately from the advanced menu.
+
+Open friend links and theme files in **All files** (Ctrl+6), and plugins with Ctrl+5. Project files use explicit saving (Ctrl+S), with unsaved-change prompts when switching files, leaving the workspace or quitting.
+
+For the first sync, check the connection, enable it and confirm the direction. Later saves upload after 30 seconds, or use **Upload changes now**. Stopping waits for the current network request, with a 30-second timeout per request. Completed remote commits remain in place.
 
 ## Notes
 

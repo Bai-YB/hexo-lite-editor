@@ -1,4 +1,6 @@
 import { defaultConfig } from "$shared/types/app";
+import { appVersion } from "$shared/version";
+import type { ProjectFileEntry, ProjectFileSnapshot } from "$shared/types/app";
 import type {
   AcquireCloudflareImgbedTokenRequest,
   AcquireCloudflareImgbedTokenResult,
@@ -183,7 +185,40 @@ function emit(event: TaskEvent) {
   taskHandlers.forEach((handler) => handler(event));
 }
 
+const projectFiles = new Map<string, string>([
+  ["_config.yml", "title: Quiet Notes\nlanguage: zh-CN\n"],
+  ["source/_data/link.yml", "- name: Hexo\n  link: https://hexo.io\n"],
+  ["source/about/index.md", "---\ntitle: About\n---\n\nAbout this blog.\n"],
+  ["themes/quiet/_config.yml", "menu:\n  Home: /\n"],
+  [".gitignore", "node_modules/\npublic/\n"],
+  ["source/images/example.png", ""]
+]);
+const mockFileHash = (content: string) => `demo:${content}`;
+
 export const browserMock = {
+  async listProjectFiles(directory: string): Promise<ProjectFileEntry[]> {
+    const entries = new Map<string, ProjectFileEntry>();
+    const allPaths = [...projectFiles.keys(), ...articles.map(article => article.relativePath)];
+    const prefix = directory ? `${directory}/` : "";
+    for (const path of allPaths) {
+      if (!path.startsWith(prefix)) continue;
+      const remainder = path.slice(prefix.length);
+      const name = remainder.split("/")[0];
+      const isDir = remainder.includes("/");
+      entries.set(name, { path: `${prefix}${name}`, name, kind: isDir ? "directory" : "file", editable: !isDir && !path.endsWith(".png"), size: projectFiles.get(path)?.length ?? 0 });
+    }
+    return [...entries.values()].sort((a, b) => Number(a.kind !== "directory") - Number(b.kind !== "directory") || a.name.localeCompare(b.name));
+  },
+  async loadProjectFile(path: string): Promise<ProjectFileSnapshot> {
+    const content = projectFiles.get(path);
+    if (content === undefined) throw new Error("File not found");
+    return { projectId: session.projectId, sessionGeneration: session.generation, path, content, contentHash: mockFileHash(content), editable: !path.endsWith(".png"), readOnlyReason: path.endsWith(".png") ? "这是二进制文件，无法作为文本编辑。" : undefined };
+  },
+  async saveProjectFile(snapshot: ProjectFileSnapshot, content: string): Promise<ProjectFileSnapshot> {
+    if (mockFileHash(projectFiles.get(snapshot.path) ?? "") !== snapshot.contentHash) throw { code: "file_changed", message: "文件已在外部修改。当前编辑已保留，请比较磁盘内容后重试。" };
+    projectFiles.set(snapshot.path, content);
+    return this.loadProjectFile(snapshot.path);
+  },
   loadConfig: async () => ({ config: structuredClone(config), warnings: [] }),
   saveConfig: async (next: AppConfigV3) => (config = structuredClone(next)),
   resetConfig: async () => (config = structuredClone(defaultConfig)),
@@ -333,11 +368,11 @@ export const browserMock = {
     if (item) item.directory = request.targetDirectory;
   },
   downloadCloudflareAsset: async (_assetId: string) => [],
-  getUpdateSnapshot: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: "1.0.6", status: "idle" }),
+  getUpdateSnapshot: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: appVersion, status: "idle" }),
   checkUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => demoFlag("updateAvailable")
-    ? ({ currentVersion: "1.0.6", latestVersion: "1.0.7", status: "available", releaseNotes: "Update available" })
-    : ({ currentVersion: "1.0.6", status: "upToDate" }),
-  downloadUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: "1.0.6", latestVersion: "1.0.7", status: "downloaded", downloadedBytes: 1024, totalBytes: 1024 }),
+    ? ({ currentVersion: appVersion, latestVersion: "1.0.7", status: "available", releaseNotes: "Update available" })
+    : ({ currentVersion: appVersion, status: "upToDate" }),
+  downloadUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: appVersion, latestVersion: "1.0.7", status: "downloaded", downloadedBytes: 1024, totalBytes: 1024 }),
   installUpdate: async () => undefined,
   listPlugins: async () => structuredClone(mockPlugins),
   chooseAndInstallPlugin: async () => structuredClone(mockPlugins),

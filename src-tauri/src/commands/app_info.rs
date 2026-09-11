@@ -17,7 +17,7 @@ pub fn runtime_info(app: AppHandle) -> RuntimeInfo {
         _ => "WebKitGTK / Tauri WebView",
     };
     RuntimeInfo {
-        version: app.package_info().version.to_string(),
+        version: crate::app::version::display_version(&app.package_info().version.to_string()),
         operating_system: std::env::consts::OS.to_string(),
         architecture: std::env::consts::ARCH.to_string(),
         webview: webview.to_string(),

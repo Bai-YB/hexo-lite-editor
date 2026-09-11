@@ -9,7 +9,7 @@ on:
       version:
         description: "Version without the v prefix"
         required: true
-        default: "1.0.6"
+        default: "1.0.6.1"
 
 permissions:
   contents: write
@@ -46,12 +46,12 @@ jobs:
       - name: Resolve version
         shell: pwsh
         run: |
+          $release = node scripts/release-version.mjs | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = $release.version
           if ($env:GITHUB_REF -like "refs/tags/v*") {
-            $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
-            if ($env:GITHUB_REF_NAME -notmatch ('^v' + [regex]::Escape($version) + '(?:-r[1-9][0-9]*)?$')) { throw "Release tag does not match package version" }
-          } else {
-            $version = "${{ inputs.version }}"
-          }
+            if ($env:GITHUB_REF_NAME -ne $release.tag) { throw "Release tag does not match package version" }
+          } elseif ("${{ inputs.version }}" -ne $version) { throw "Requested release does not match package version" }
           "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Install dependencies

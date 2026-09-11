@@ -14,10 +14,13 @@ vi.mock("$platform/tauri", () => ({
     credentialLegacyAvailable: vi.fn(async () => false),
     detectContentSync: vi.fn(async () => ({ candidates: [], requiresSelection: false })),
     getContentSyncStatus: vi.fn(),
+    getContentSyncProgress: vi.fn(async () => null),
     getContentSyncConflicts: vi.fn(async () => [{ path: "source/_posts/post.md", kind: "markdown", localText: "local", remoteText: "remote" }]),
     webDavCredentialStatus: vi.fn(async () => ({ configured: true, username: "writer" })),
+    testWebDavContentSync: vi.fn(),
     resolveContentSyncConflicts: vi.fn(async () => ({ enabled: true, provider: "webdav", status: "synced", conflicts: [] })),
-    runContentSync: vi.fn(), onContentSyncStatus: vi.fn(async () => () => {}), listPlugins: vi.fn(async () => [])
+    runContentSync: vi.fn(), cancelContentSync: vi.fn(async () => true),
+    onContentSyncPhase: vi.fn(async () => () => {}), onContentSyncStatus: vi.fn(async () => () => {}), listPlugins: vi.fn(async () => [])
   }
 }));
 
@@ -35,6 +38,45 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("settings interaction recovery", () => {
+  it("does not replace a newer WebDAV form with a late connection test", async () => {
+    const status: ContentSyncView = { enabled: false, provider: "webdav", status: "off", conflicts: [] };
+    vi.mocked(platform.getContentSyncStatus).mockResolvedValue(status);
+    let finish!: (value: import("$shared/types/app").WebDavConnectionTestResult) => void;
+    vi.mocked(platform.testWebDavContentSync).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync" });
+    await waitFor(() => expect(platform.getContentSyncStatus).toHaveBeenCalled());
+    await fireEvent.change(view.getByLabelText("同步方式"), { target: { value: "webdav" } });
+    await fireEvent.input(view.getByLabelText("WebDAV 服务器地址"), { target: { value: "https://old.example/dav" } });
+    await fireEvent.input(view.getByLabelText("WebDAV 用户名"), { target: { value: "writer" } });
+    await fireEvent.input(view.getByLabelText("WebDAV 密码"), { target: { value: "old-password" } });
+    await fireEvent.click(view.getByRole("button", { name: "保存并测试连接" }));
+    await fireEvent.input(view.getByLabelText("WebDAV 服务器地址"), { target: { value: "https://new.example/dav" } });
+    finish({ username: "writer", testedAt: "2026-09-11", sync: status, preflight: { endpoint: "https://old.example/dav", remoteDir: "hexo-lite-content", fileCount: 1, totalBytes: 4, remoteFileCount: 0, remoteTotalBytes: 0, localOnlyCount: 1, remoteOnlyCount: 0, differentCount: 0, remoteExists: false, remoteManifestValid: false } });
+    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("请重新测试当前输入"));
+    expect((view.getByLabelText("WebDAV 服务器地址") as HTMLInputElement).value).toBe("https://new.example/dav");
+    expect(view.queryByText("WebDAV 真实连接和预检通过")).toBeNull();
+  });
+  it("shows real file progress, rejects duplicate upload, and keeps cancellation pending until the operation finishes", async () => {
+    let finish!: (status: ContentSyncView) => void;
+    const status: ContentSyncView = { enabled: true, provider: "github", status: "synced", conflicts: [], lastSyncedAt: "2026-09-10T00:00:00Z" };
+    vi.mocked(platform.getContentSyncStatus).mockResolvedValue(status);
+    vi.mocked(platform.runContentSync).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync" });
+    await waitFor(() => expect(view.getByRole("button", { name: "立即上传变更" })).toBeTruthy());
+    await fireEvent.click(view.getByRole("button", { name: "立即上传变更" }));
+    await waitFor(() => expect(platform.runContentSync).toHaveBeenCalledOnce());
+    const handler = vi.mocked(platform.onContentSyncPhase).mock.calls[0][0];
+    handler({ projectId: "project", sessionGeneration: 1, phase: "uploading", status: "checking", message: "upload source/links.yml", completedFiles: 2, totalFiles: 6 });
+    await tick();
+    expect(view.getByRole("progressbar").getAttribute("value")).toBe("2");
+    expect((view.getByRole("button", { name: "立即上传变更" }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(view.getByRole("button", { name: "停止同步" }));
+    expect(platform.cancelContentSync).toHaveBeenCalledWith("project", 1);
+    expect(view.getByText("正在停止同步...")).toBeTruthy();
+    finish({ ...status, status: "error", message: "stopped" });
+    await waitFor(() => expect(view.getByRole("button", { name: "重试同步" })).toBeTruthy());
+    await waitFor(() => expect(view.queryByRole("progressbar")).toBeNull());
+  });
   it.each(["success", "failure"])("waits for an in-flight %s before discarding to the actual saved settings", async (outcome) => {
     let resolve!: (config: AppConfigV3) => void;
     let reject!: (error: Error) => void;

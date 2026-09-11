@@ -48,11 +48,20 @@ pub fn pick_project(
     let path = selection
         .into_path()
         .map_err(|error| AppError::invalid(error.to_string()))?;
-    open_project_path(&state, &path).map(Some)
+    let result = open_project_path(&state, &path)?;
+    super::sync::schedule_sync_after_open(
+        app,
+        result.session.project_id.clone(),
+        result.session.generation,
+    );
+    Ok(Some(result))
 }
 
 #[tauri::command]
-pub fn reopen_recent_project(state: State<'_, AppState>) -> AppResult<Option<OpenProjectResult>> {
+pub fn reopen_recent_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<Option<OpenProjectResult>> {
     let records = load_recent_records(&state)?;
     let Some(record) = records
         .into_iter()
@@ -61,7 +70,14 @@ pub fn reopen_recent_project(state: State<'_, AppState>) -> AppResult<Option<Ope
         return Ok(None);
     };
     match open_project_path(&state, &record.path) {
-        Ok(project) => Ok(Some(project)),
+        Ok(project) => {
+            super::sync::schedule_sync_after_open(
+                app,
+                project.session.project_id.clone(),
+                project.session.generation,
+            );
+            Ok(Some(project))
+        }
         Err(error) if error.recoverable => Ok(None),
         Err(error) => Err(error),
     }
@@ -84,6 +100,7 @@ pub fn list_recent_projects(state: State<'_, AppState>) -> AppResult<Vec<RecentP
 #[tauri::command]
 pub fn open_recent_project(
     recent_id: String,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<OpenProjectResult> {
     let record = load_recent_records(&state)?
@@ -97,7 +114,13 @@ pub fn open_recent_project(
             true,
         ));
     }
-    open_project_path(&state, &record.path)
+    let result = open_project_path(&state, &record.path)?;
+    super::sync::schedule_sync_after_open(
+        app,
+        result.session.project_id.clone(),
+        result.session.generation,
+    );
+    Ok(result)
 }
 
 #[tauri::command]

@@ -9,11 +9,12 @@
   import { updateViewModel } from "$features/update/updateViewModel";
   import UpdateProgressBar from "$features/update/UpdateProgressBar.svelte";
   import { translate } from "$shared/i18n";
+  import { appVersion } from "$shared/version";
 
   export let onNotice: (message: string) => void = () => {};
   export let onInstallUpdate: () => void = () => {};
 
-  let version = "1.0.6";
+  let version = appVersion;
   let update: UpdateSnapshot | null = null;
   let checking = false;
   let downloading = false;
@@ -24,7 +25,7 @@
     let receivedEvent = false;
     void Promise.all([platform.runtimeInfo(), platform.getUpdateSnapshot()])
       .then(([runtime, snapshot]) => { if (!disposed) { version = runtime.version; if (!receivedEvent) update = snapshot; } })
-      .catch(() => { version = "1.0.6"; });
+      .catch(() => { version = appVersion; });
     void platform.onUpdateSnapshot((snapshot) => { receivedEvent = true; if (!disposed) update = snapshot; }).then((value) => { if (disposed) value(); else unlisten = value; });
     return () => { disposed = true; unlisten?.(); };
   });

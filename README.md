@@ -10,10 +10,10 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe"><strong>下载安装版</strong></a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip">便携版</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_macos-universal.dmg">macOS</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6-r1">v1.0.6 修复版</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64-setup.exe"><strong>下载安装版</strong></a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64-portable.zip">便携版</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_macos-universal.dmg">macOS</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.1">v1.0.6.1</a>
   </p>
 </div>
 
@@ -24,6 +24,8 @@
 ## 功能
 
 - 编辑文章和草稿，支持 Markdown、常用 HTML 与即时预览。
+- 编辑器与即时预览按内容位置双向跟随，兼顾图片、代码块和长段落。
+- 在“全部文件”中按目录编辑友链、YAML、JSON 和主题配置，保存前检测磁盘变化；插件拥有独立导航入口。
 - 隐藏预览后，编辑器自动使用文章列表之外的全部空间。
 - 管理 `source/` 下的图片，也可连接 Cloudflare-ImgBed；粘贴和拖放会先本地显示，再在后台完成上传。
 - 发布固定执行保存、clean、generate 和 deploy，避免部署旧缓存；浏览器预览可随时关闭后台服务。
@@ -51,18 +53,18 @@ WebDAV 地址、目录和用户名在启用后仍可修改。新凭据通过目�
 
 ## 安装
 
-`v1.0.6-r1` 为应用版本 1.0.6 的修复构建，提供 Windows 10/11 x64 和 macOS 通用版本。已安装原 1.0.6 的用户请手动重新安装，相同版本号不会触发自动更新。
+`v1.0.6.1` 提供 Windows 10/11 x64 和 macOS 通用版本。界面版本为 **1.0.6.1**，内部使用兼容 Tauri 的 `1.0.6+1`，原 1.0.6 和 1.0.6-r1 可以识别这一更新。
 
-本次重点修正文章保存与图片插入、项目同步的一致性、设置草稿和冲突恢复；原 `v1.0.6` 发布保留。逐项改动与验证范围见 [修复记录](docs/fix-validation-1.0.6-r1.md)。
+本次改进后台同步、内容定位滚动、独立插件页和项目文件编辑。同步显示阶段、文件进度与停止入口；打开博客后先进入本地工作区，再后台检查云端。逐项改动与验证范围见 [1.0.6.1 验证记录](docs/validation-1.0.6.1.md)。
 
 | 安装包 | 用途 |
 | --- | --- |
-| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-setup.exe) | 推荐；按向导安装 |
-| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64-portable.zip) | 解压后直接运行 |
-| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_windows-x64.msi) | 企业或批量部署 |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/Hexo-Lite-Editor_1.0.6_macos-universal.dmg) | Intel 与 Apple Silicon 通用 |
+| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64-setup.exe) | 推荐；按向导安装 |
+| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64-portable.zip) | 解压后直接运行 |
+| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_windows-x64.msi) | 企业或批量部署 |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/Hexo-Lite-Editor_1.0.6.1_macos-universal.dmg) | Intel 与 Apple Silicon 通用 |
 
-Windows 安装包尚未使用商业代码签名证书，SmartScreen 可能显示“未知发布者”。校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/SHA256SUMS.txt) 和 [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6-r1/SHA256SUMS-macos.txt)。从 v1.0.6 起，应用会自动下载经过 Tauri 签名验证的后续更新，并在安装前请求确认。
+Windows 安装包尚未使用商业代码签名证书，SmartScreen 可能显示“未知发布者”。校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/SHA256SUMS.txt) 和 [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.1/SHA256SUMS-macos.txt)。从 v1.0.6 起，应用会自动下载经过 Tauri 签名验证的后续更新，并在安装前请求确认。
 
 ## 使用
 
@@ -70,6 +72,10 @@ Windows 安装包尚未使用商业代码签名证书，SmartScreen 可能显示
 2. 从左侧选择文章或草稿，在编辑器中修改内容。
 3. 使用即时预览检查正文，需要主题效果时打开浏览器预览。
 4. 保存后点击“发布”，或在高级菜单中单独运行生成与部署。
+
+友链和主题文件可从“全部文件”（Ctrl+6）打开，插件管理使用 Ctrl+5。项目文件需要主动保存（Ctrl+S），切换文件、离开工作区和退出时会提示处理未保存内容。
+
+首次同步依次完成连接检查、启用与方向确认。后续保存会在 30 秒后自动上传，也可选择“立即上传变更”。停止会等待当前网络请求结束，单个请求最多等待 30 秒；已完成的远端提交不会撤回。
 
 ## 说明
 

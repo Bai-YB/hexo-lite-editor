@@ -2,7 +2,7 @@ import type { TranslationTree } from "../types";
 
 export const enUS: TranslationTree = {
   common: { confirm: "Confirm", cancel: "Cancel", save: "Save", delete: "Delete", retry: "Retry", close: "Close" },
-  navigation: { label: "Main navigation", editor: "Editor", imageBed: "Images", settings: "Settings", about: "About" },
+  navigation: { label: "Main navigation", editor: "Editor", imageBed: "Images", plugins: "Plugins", files: "All files", settings: "Settings", about: "About" },
   window: { minimize: "Minimize", maximize: "Maximize", restore: "Restore", close: "Close", unsaved: "Unsaved changes" },
   loading: { workspace: "Initializing desktop workspace", page: "Loading page" },
   settings: {

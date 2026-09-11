@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ui } from "$shared/i18n/ui";
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import {
     RefreshCw,
@@ -55,6 +55,7 @@
   import type { PluginView } from "$shared/plugins/types";
   import { articleFileName, localDateTime } from "./editorChanges";
   import { syncStatusLabel } from "./syncStatusLabel";
+  import { collectPreviewAnchors, previewTopForSourceLine, sourceLineForPreviewTop, ScrollSyncOwner, SCROLL_ANCHOR_INSET, type SourceAnchor } from "./preview/sourceScrollSync";
 
   export let session: ProjectSessionView | null;
   export let articles: ArticleSummary[] = [];
@@ -123,6 +124,10 @@
   let editorScrollTop = 0;
   let previewScrollSync = true;
   let markdownPreview: HTMLElement;
+  let markdownEditor: MarkdownEditor | undefined;
+  let previewAnchors: SourceAnchor[] = [];
+  let scrollSourceLine = 1;
+  const scrollOwner = new ScrollSyncOwner();
   const editorScrollByArticle = new Map<string, number>();
   const previewScrollByArticle = new Map<string, number>();
   let componentAlive = true;
@@ -259,7 +264,8 @@
   $: previewHtml = renderSafeMarkdown(
     editorState.content,
     previewImageResults,
-    previewImagesPending
+    previewImagesPending,
+    true
   );
   $: availableCategories = [...new Set(articles.flatMap((article) => article.categories))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   $: availableTags = [...new Set(articles.flatMap((article) => article.tags))].sort((a, b) => a.localeCompare(b, "zh-CN"));
@@ -337,6 +343,7 @@
         || snapshot.sessionGeneration !== expectedGeneration
       ) return;
       activeArticleId = article.articleId;
+      scrollOwner.claim("editor");
       editorScrollTop = editorScrollByArticle.get(article.articleId) ?? 0;
       store.load(snapshot);
       resumePendingImageUploads(snapshot.content, article.articleId);
@@ -344,7 +351,7 @@
       previewImagesPending = false;
       lastValidatedImageKey = "";
       requestAnimationFrame(() => {
-        if (markdownPreview) markdownPreview.scrollTop = previewScrollByArticle.get(article.articleId) ?? 0;
+        if (markdownPreview && !previewScrollSync) markdownPreview.scrollTop = previewScrollByArticle.get(article.articleId) ?? 0;
       });
     } catch (error) {
       if (componentAlive && sequence === articleLoadSequence && session?.projectId === expectedProjectId && session.generation === expectedGeneration) {
@@ -735,20 +742,79 @@
     }
   }
 
-  function recordEditorScroll(value: number, scrollHeight: number, clientHeight: number) {
+  function recordEditorScroll(value: number, _scrollHeight: number, _clientHeight: number, line = 1) {
     editorScrollTop = value;
     if (activeArticleId) editorScrollByArticle.set(activeArticleId, value);
-    if (previewScrollSync && markdownPreview) {
-      const editorRange = Math.max(1, scrollHeight - clientHeight);
-      const previewRange = Math.max(0, markdownPreview.scrollHeight - markdownPreview.clientHeight);
-      markdownPreview.scrollTop = (value / editorRange) * previewRange;
+    if (scrollOwner.canDrive("editor")) {
+      scrollSourceLine = line;
+      alignPreviewToSource();
     }
   }
 
   function recordPreviewScroll() {
     if (activeArticleId && markdownPreview) {
       previewScrollByArticle.set(activeArticleId, markdownPreview.scrollTop);
+      if (previewScrollSync && scrollOwner.canDrive("preview") && previewAnchors.length) {
+        scrollSourceLine = sourceLineForPreviewTop(previewAnchors, markdownPreview.scrollTop + SCROLL_ANCHOR_INSET);
+        markdownEditor?.scrollToLine(scrollSourceLine);
+      }
     }
+  }
+
+  function alignPreviewToSource() {
+    if (!previewScrollSync || !markdownPreview?.isConnected || !previewAnchors.length) return;
+    const target = scrollSourceLine <= previewAnchors[0].line && editorScrollTop === 0
+      ? 0 : Math.max(0, previewTopForSourceLine(previewAnchors, scrollSourceLine) - SCROLL_ANCHOR_INSET);
+    if (Math.abs(markdownPreview.scrollTop - target) > 0.5) markdownPreview.scrollTop = target;
+  }
+
+  function togglePreviewScrollSync() {
+    previewScrollSync = !previewScrollSync;
+    if (previewScrollSync) {
+      scrollOwner.claim("editor");
+      scrollSourceLine = markdownEditor?.sourceLineAtScroll() ?? 1;
+      alignPreviewToSource();
+    }
+  }
+
+  function observePreviewLayout(node: HTMLElement, _html: string) {
+    let frame = 0;
+    let alive = true;
+    const rebuild = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!alive || !node.isConnected) return;
+        previewAnchors = collectPreviewAnchors(node);
+        if (scrollOwner.canDrive("editor")) scrollSourceLine = markdownEditor?.sourceLineAtScroll() ?? scrollSourceLine;
+        // Preserve the source location when images, fonts or pane widths change.
+        alignPreviewToSource();
+      });
+    };
+    const resize = new ResizeObserver(rebuild);
+    const observeBlocks = () => {
+      resize.disconnect();
+      resize.observe(node);
+      node.querySelectorAll<HTMLElement>("[data-source-line], img").forEach((element) => resize.observe(element));
+      rebuild();
+    };
+    const mutation = new MutationObserver(observeBlocks);
+    mutation.observe(node, { childList: true, subtree: true });
+    const claim = () => scrollOwner.claim("preview");
+    for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) node.addEventListener(event, claim, { passive: true });
+    node.addEventListener("load", rebuild, true);
+    observeBlocks();
+    return {
+      update() { void tick().then(() => { if (alive) observeBlocks(); }); },
+      destroy() {
+        alive = false;
+        cancelAnimationFrame(frame);
+        resize.disconnect();
+        mutation.disconnect();
+        node.removeEventListener("load", rebuild, true);
+        for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) node.removeEventListener(event, claim);
+        previewAnchors = [];
+      }
+    };
   }
 
   function startArticleResize(event: PointerEvent) {
@@ -1125,6 +1191,7 @@
             <ErrorState message={failedArticle ? `无法读取“${failedArticle.title}”：${loadError}` : loadError}><button class="button" type="button" disabled={!failedArticle} on:click={() => failedArticle && openArticle(failedArticle)}>{$ui("重试")}</button>{#if editorState.snapshot}<button class="button" type="button" on:click={() => { loadError = ""; failedArticle = null; }}>{$ui("返回当前文章")}</button>{/if}</ErrorState>
           {:else if editorState.snapshot}
             <MarkdownEditor
+              bind:this={markdownEditor}
               content={editorState.content}
               documentInstance={editorState.documentInstance}
               imageUrlReplacements={editorState.imageUrlReplacements}
@@ -1140,6 +1207,7 @@
               onChange={(content, changes) => store.update(content, changes)}
               onSelectionChange={(from, to) => store.setSelection(from, to)}
               onScroll={recordEditorScroll}
+              onScrollInteraction={() => scrollOwner.claim("editor")}
               onImageFiles={(files) => void handleImageFiles(files)}
               onSave={saveCurrent}
               onNewArticle={openCreateDialog}
@@ -1173,8 +1241,9 @@
                 class="icon-button small"
                 type="button"
                 aria-pressed={previewScrollSync}
+                disabled={previewMode !== "quick"}
                 title={previewScrollSync ? $ui("关闭编辑器与预览同步滚动") : $ui("开启编辑器与预览同步滚动")}
-                on:click={() => (previewScrollSync = !previewScrollSync)}
+                on:click={togglePreviewScrollSync}
               >
                 {#if previewScrollSync}<Link2 size={14} />{:else}<Unlink2 size={14} />{/if}
               </button>
@@ -1184,8 +1253,9 @@
             {:else if previewMode === "theme"}
               <HexoThemePreview running={previewServer?.state === "running"} busy={previewBusy || themePreviewBusy} onOpen={() => void openThemePreview()} onReload={() => void openThemePreview()} />
             {:else}
-              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-              <article class="markdown-preview" bind:this={markdownPreview} on:scroll={recordPreviewScroll} on:click={handlePreviewInteraction} on:keydown={handlePreviewInteraction} on:error|capture={handlePreviewImageError}>{@html previewHtml}</article>
+              <!-- Keyboard users need to focus the independently scrollable preview. -->
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
+              <article class="markdown-preview" bind:this={markdownPreview} use:observePreviewLayout={previewHtml} tabindex="0" aria-label={$ui("文章预览")} on:scroll={recordPreviewScroll} on:click={handlePreviewInteraction} on:keydown={handlePreviewInteraction} on:error|capture={handlePreviewImageError}>{@html previewHtml}</article>
             {/if}
           </section>
         {/if}

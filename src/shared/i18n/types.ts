@@ -11,6 +11,8 @@ export interface TranslationTree {
     label: string;
     editor: string;
     imageBed: string;
+    plugins: string;
+    files: string;
     settings: string;
     about: string;
   };
