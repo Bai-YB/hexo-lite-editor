@@ -18,9 +18,18 @@
 - `pnpm test:e2e`：46 项通过，覆盖同步进度/停止、源码锚点滚动、独立插件导航、全部文件树、保存/冲突/离开保护、发布前保存和原有编辑器回归。
 - Rust `cargo clippy --all-targets --all-features -- -D warnings`：通过。
 - Rust `cargo test --all-targets --all-features`：100 项通过；文件命令新增测试 4 项通过，覆盖 canonical 路径、别名防护、隐藏备份、外部修改 CAS。
-- `node --test` 的版本映射和更新清单测试：6 项通过。
+- `pnpm exec vitest run scripts/release-version.test.mjs scripts/verify-updater-manifest.test.mjs`：版本映射和更新清单测试 6 项通过。
 - 视觉复核：`output/playwright/1061-visual/` 采集 1360×860 与 1120×720、浅色/深色及英文插件/文件页；确认轮在 `confirmed/`，检查水平溢出、按钮可见性、对比度和窄窗口插件布局。所有页面无水平溢出；WebDAV 首次上传按钮在 1120×720 首屏可见。
 
 ## 边界
 
 自动化浏览器使用本地 demo fixture，验证交互状态而非真实用户云端凭据。Rust 测试包含 loopback WebDAV、ETag/hash 增量和取消流程；需要外部 WebDAV 账号的测试在未配置凭据时跳过。未在本机执行 Apple 公证、商业代码签名或真实 Tauri 安装升级；GitHub Actions 会在对应平台构建、签名并上传资产后，再生成和验证三平台 `latest.json`。
+
+## 2026-09-12 发布前复核
+
+- 插件设置取消、Esc 和遮罩关闭先保护未保存输入；读取插件列表失败可直接重试。工具栏在窄窗口保持可操作。
+- 预览 HTML 更新立即废弃旧坐标，只接受当前布局的测量结果，避免切换文章时沿用旧内容锚点。
+- 停止同步请求绑定创建任务时的会话代次，旧会话不能取消新会话的任务。
+- 最终产品代码通过 `pnpm check`（0 errors / 0 warnings）、`pnpm build`、137 项原有前端单测、46 项浏览器回归、Rust clippy 及 102 项 Rust 测试；新增插件配置保护和列表重试测试 2 项单独通过。
+- 自动构建按同一源码提交生成 Windows 和 macOS 资产；发布前核对两端 manifest 的源码提交，并下载验证安装包、SHA256 清单和 updater 签名引用。
+- 发布完成后可移除 `src-tauri/target`、`node_modules`、`.svelte-kit`、`build`、`.playwright-cli`、测试输出和旧验证下载。源码、锁文件、工作流、文档及当前版本安装包保留。重新开发执行 `pnpm install --frozen-lockfile`，构建缓存由工具自动生成。
