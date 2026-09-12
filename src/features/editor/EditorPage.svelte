@@ -126,6 +126,9 @@
   let markdownPreview: HTMLElement;
   let markdownEditor: MarkdownEditor | undefined;
   let previewAnchors: SourceAnchor[] = [];
+  // Incremented whenever the preview DOM is replaced or remeasured.  Scroll
+  // alignment must never consume coordinates collected from the previous DOM.
+  let previewLayoutSequence = 0;
   let scrollSourceLine = 1;
   const scrollOwner = new ScrollSyncOwner();
   const editorScrollByArticle = new Map<string, number>();
@@ -780,11 +783,17 @@
   function observePreviewLayout(node: HTMLElement, _html: string) {
     let frame = 0;
     let alive = true;
+    let layoutSequence = ++previewLayoutSequence;
     const rebuild = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        if (!alive || !node.isConnected) return;
-        previewAnchors = collectPreviewAnchors(node);
+        if (!alive || !node.isConnected || layoutSequence !== previewLayoutSequence) return;
+        const nextAnchors = collectPreviewAnchors(node);
+        // A DOM replacement can briefly produce no markers while Svelte is
+        // committing the new HTML. Keep the old coordinates out of the
+        // synchronizer during that window, then align once the new layout is
+        // measured.
+        previewAnchors = nextAnchors;
         if (scrollOwner.canDrive("editor")) scrollSourceLine = markdownEditor?.sourceLineAtScroll() ?? scrollSourceLine;
         // Preserve the source location when images, fonts or pane widths change.
         alignPreviewToSource();
@@ -804,9 +813,18 @@
     node.addEventListener("load", rebuild, true);
     observeBlocks();
     return {
-      update() { void tick().then(() => { if (alive) observeBlocks(); }); },
+      update() {
+        // Invalidate anchors synchronously.  Otherwise an editor geometry
+        // event between the HTML update and the next tick can map against the
+        // previous article/content and visibly jump to the wrong section.
+        layoutSequence = ++previewLayoutSequence;
+        cancelAnimationFrame(frame);
+        previewAnchors = [];
+        void tick().then(() => { if (alive && layoutSequence === previewLayoutSequence) observeBlocks(); });
+      },
       destroy() {
         alive = false;
+        ++previewLayoutSequence;
         cancelAnimationFrame(frame);
         resize.disconnect();
         mutation.disconnect();
