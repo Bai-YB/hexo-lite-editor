@@ -81,7 +81,7 @@ where
                     true,
                 ));
             }
-            operations.insert(key.clone(), cancelled.clone());
+            operations.insert(key.clone(), (generation, cancelled.clone()));
         }
         let progress_app = app.clone();
         let progress_id = project_id.clone();
@@ -175,14 +175,16 @@ pub fn cancel_content_sync(
     session_generation: u64,
     state: tauri::State<'_, AppState>,
 ) -> AppResult<bool> {
-    let _ = session_generation;
     // Never wait for the project write lock: a rescan may hold it while cancellation is requested.
     let key = project_id;
     let operations = state
         .sync_operations
         .lock()
         .map_err(|_| AppError::invalid("同步任务列表不可用。"))?;
-    if let Some(cancelled) = operations.get(&key) {
+    if let Some((generation, cancelled)) = operations.get(&key) {
+        if *generation != session_generation {
+            return Ok(false);
+        }
         cancelled.store(true, Ordering::Relaxed);
         return Ok(true);
     }
@@ -247,6 +249,8 @@ mod tests {
         assert_eq!(progress.completed_files, Some(1));
         let state = app.state::<AppState>();
         let _project_write_lock = state.project.write().unwrap();
+        // A stale window/session must not be able to stop this operation.
+        assert!(!cancel_content_sync("sync-worker".into(), 2, app.state::<AppState>()).unwrap());
         assert!(cancel_content_sync("sync-worker".into(), 1, app.state::<AppState>()).unwrap());
         assert_eq!(worker.join().unwrap().unwrap_err().code, "sync_cancelled");
         assert!(state.sync_operations.lock().unwrap().is_empty());

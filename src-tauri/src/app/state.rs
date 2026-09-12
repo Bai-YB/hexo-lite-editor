@@ -114,7 +114,10 @@ pub struct AppState {
     pub project_file_locks: Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
     pub pending_sync_rescans: Mutex<HashMap<PathBuf, ProjectRescanResult>>,
     pub sync_schedules: Mutex<HashMap<String, (Uuid, oneshot::Sender<()>)>>,
-    pub sync_operations: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Active content-sync operations keyed by project id.  Keep the session
+    /// generation alongside the cancellation token so a stale window cannot
+    /// cancel a newer project session that reused the same project id.
+    pub sync_operations: Mutex<HashMap<String, (u64, Arc<AtomicBool>)>>,
     pub sync_operation_progress: Mutex<HashMap<String, crate::commands::ContentSyncEvent>>,
     pub task_cancellations: Mutex<HashMap<String, oneshot::Sender<()>>>,
     pub preview: Mutex<Option<PreviewRuntime>>,
