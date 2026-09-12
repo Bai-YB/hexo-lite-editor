@@ -74,7 +74,7 @@
   }
 
   async function install() {
-    if (busy) return;
+    if (busy || loading) return;
     busy = true;
     try { plugins = await platform.chooseAndInstallPlugin(); }
     catch (error) { onNotice(normalizeError(error).message); }
@@ -153,7 +153,7 @@
 </script>
 
 <div class="settings-block plugin-manager">
-  <div class="settings-block-heading"><div><h3>{$ui("插件")}</h3><p>{$ui("插件在隔离 Worker 中运行，所有 Host API 请求都需要声明权限。")}</p></div><div class="plugin-toolbar"><button class="button" type="button" disabled={busy || loading} on:click={() => void refresh()}>{$ui("刷新")}</button><button class="button" type="button" disabled={busy} on:click={install}>{$ui("安装插件")}</button></div></div>
+  <div class="settings-block-heading"><div><h3>{$ui("插件")}</h3><p>{$ui("插件在隔离 Worker 中运行，所有 Host API 请求都需要声明权限。")}</p></div><div class="plugin-toolbar"><button class="button" type="button" disabled={busy || loading} on:click={() => void refresh()}>{$ui("刷新")}</button><button class="button" type="button" disabled={busy || loading} on:click={install}>{$ui("安装插件")}</button></div></div>
   {#if loading}<p class="muted-line">{$ui("正在读取插件…")}</p>{:else if loadError}<div class="plugin-load-error" role="alert"><span>{loadError}</span><button class="button" type="button" disabled={busy} on:click={() => void refresh()}>{$ui("重试")}</button></div>{:else if !plugins.length}<p class="muted-line">{$ui("尚未安装插件。将插件目录安装到应用配置目录后会显示在这里。")}</p>{:else}
     <div class="recent-project-list">{#each plugins as plugin (plugin.manifest.id)}
       <div class="recent-project-row plugin-row"><div class="plugin-identity"><strong>{plugin.manifest.name}</strong><span>{plugin.manifest.id} · {plugin.manifest.version}</span></div>
@@ -216,10 +216,15 @@
 
 <style>
   .plugin-manager { padding: 0; }
+  .plugin-manager .settings-block-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
   .plugin-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
   .plugin-load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border-subtle)); }
   .plugin-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; padding: 16px; border: 1px solid var(--border-subtle); }
   .plugin-identity { flex: 1 1 240px; overflow-wrap: anywhere; }
   .plugin-actions { display: flex; flex-wrap: wrap; gap: 6px; }
   .plugin-actions .button { white-space: nowrap; }
+  @media (max-width: 640px) {
+    .plugin-manager .settings-block-heading { flex-direction: column; }
+    .plugin-toolbar { width: 100%; }
+  }
 </style>
