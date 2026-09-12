@@ -9,7 +9,7 @@ const directories = [];
 const commit = "0123456789abcdef0123456789abcdef01234567";
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 
-async function fixture({ mismatch = "" } = {}) {
+async function fixture({ mismatch = "", bom = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "hlex-windows-release-"));
   directories.push(directory);
   const installer = join(directory, "setup.exe");
@@ -17,7 +17,7 @@ async function fixture({ mismatch = "" } = {}) {
   await writeFile(installer, "installer");
   await writeFile(signature, "signature");
   const manifest = join(directory, "release-manifest.json");
-  await writeFile(manifest, JSON.stringify({
+  await writeFile(manifest, `${bom ? "\uFEFF" : ""}${JSON.stringify({
     version: mismatch === "version" ? "1.0.6" : "1.0.6.1",
     runtimeVersion: mismatch === "runtimeVersion" ? "1.0.6" : "1.0.6+1",
     platform: "windows",
@@ -27,7 +27,7 @@ async function fixture({ mismatch = "" } = {}) {
       { name: "setup.exe", size: 9, sha256: digest("installer") },
       { name: "setup.exe.sig", size: 9, sha256: digest("signature") }
     ]
-  }));
+  })}`);
   return { directory, manifest, installer, signature };
 }
 
@@ -40,8 +40,8 @@ afterEach(async () => {
 });
 
 describe("Windows release pairing verification", () => {
-  it("accepts matching manifest and signed updater assets", async () => {
-    expect(verify(await fixture()).status).toBe(0);
+  it.each([false, true])("accepts matching manifest and signed updater assets (BOM: %s)", async (bom) => {
+    expect(verify(await fixture({ bom })).status).toBe(0);
   });
   it.each(["version", "runtimeVersion", "commit"])("rejects a stale %s manifest", async (mismatch) => {
     expect(verify(await fixture({ mismatch })).status).toBe(1);

@@ -19,7 +19,7 @@ const manifestPath = required("--manifest");
 const expectedVersion = required("--version");
 const expectedRuntimeVersion = required("--runtime-version");
 const expectedSourceCommit = required("--source-commit");
-const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+const manifest = JSON.parse((await readFile(manifestPath, "utf8")).replace(/^\uFEFF/, ""));
 
 if (manifest.version !== expectedVersion) throw new Error(`Windows manifest version ${manifest.version ?? "<missing>"} does not match ${expectedVersion}`);
 if (manifest.runtimeVersion !== expectedRuntimeVersion) throw new Error(`Windows manifest runtime version ${manifest.runtimeVersion ?? "<missing>"} does not match ${expectedRuntimeVersion}`);
