@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-windows-${{ inputs.version && format('v{0}', inputs.version) || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: windows-latest
@@ -142,22 +146,32 @@ jobs:
             throw "Missing release notes: $notes"
           }
           $releaseDirectory = "release-artifacts/$env:RELEASE_VERSION"
-          $assets = @(
+          $binaryAssets = @(
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-portable.zip"
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-setup.exe"
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64-setup.exe.sig"
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64.msi"
             "$releaseDirectory/Hexo-Lite-Editor_$($env:RELEASE_VERSION)_windows-x64.msi.sig"
-            "$releaseDirectory/release-manifest.json"
-            "$releaseDirectory/SHA256SUMS.txt"
           )
+          $checksumAsset = "$releaseDirectory/SHA256SUMS.txt"
+          $manifestAsset = "$releaseDirectory/release-manifest.json"
           if (gh release view $tag 2>$null) {
             gh release edit $tag --draft --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            gh release upload $tag @assets --clobber
+            gh release upload $tag @binaryAssets --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag $checksumAsset --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            # Upload the manifest last. macOS uses it as the atomic pairing marker
+            # for the Windows updater binary and signature.
+            gh release upload $tag $manifestAsset --clobber
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } else {
             $tagArgument = if ($env:GITHUB_REF -like "refs/tags/v*") { @("--verify-tag") } else { @("--target", $env:GITHUB_SHA) }
-            gh release create $tag @assets @tagArgument --draft --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes
+            gh release create $tag @binaryAssets @tagArgument --draft --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag $checksumAsset --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag $manifestAsset --clobber
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

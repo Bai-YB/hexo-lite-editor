@@ -16,6 +16,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-macos-${{ inputs.version && format('v{0}', inputs.version) || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-14
@@ -138,12 +142,22 @@ jobs:
 
           mkdir -p "release-artifacts/$version/windows-updater"
           windows_installer_name="Hexo-Lite-Editor_${version}_windows-x64-setup.exe"
+          windows_manifest_name="release-manifest.json"
           for attempt in {1..30}; do
             rm -f "release-artifacts/$version/windows-updater/"*
-            gh release download "$tag" --pattern "$windows_installer_name" --pattern "$windows_installer_name.sig" --dir "release-artifacts/$version/windows-updater" --clobber 2>/dev/null || true
+            gh release download "$tag" --pattern "$windows_installer_name" --pattern "$windows_installer_name.sig" --pattern "$windows_manifest_name" --dir "release-artifacts/$version/windows-updater" --clobber 2>/dev/null || true
             windows_asset="release-artifacts/$version/windows-updater/$windows_installer_name"
-            if [[ -n "$windows_asset" && -f "$windows_asset.sig" ]]; then
-              break
+            windows_manifest="release-artifacts/$version/windows-updater/$windows_manifest_name"
+            if [[ -f "$windows_asset" && -f "$windows_asset.sig" && -f "$windows_manifest" ]]; then
+              if node scripts/verify-windows-release.mjs \
+                --manifest "$windows_manifest" \
+                --version "$version" \
+                --runtime-version "$RUNTIME_VERSION" \
+                --source-commit "$(git rev-parse HEAD)" \
+                --installer "$windows_asset" \
+                --signature "$windows_asset.sig"; then
+                break
+              fi
             fi
             if [[ "$attempt" == 30 ]]; then
               echo "::error title=Windows updater missing::Timed out waiting for the Windows signed updater assets."
