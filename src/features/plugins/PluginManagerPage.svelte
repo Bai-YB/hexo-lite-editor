@@ -13,22 +13,29 @@
 
   let plugins: PluginView[] = [];
   let loading = true;
+  let loadError = "";
   let pendingEnable: PluginView | null = null;
   let pendingUninstall: PluginView | null = null;
   let preserveSettings = true;
   let editing: PluginView | null = null;
   let settingsSchema: Record<string, unknown> | null = null;
   let settings: Record<string, unknown> = {};
+  let initialSettings: Record<string, unknown> = {};
+  let confirmSettingsDiscard = false;
   let busy = false;
   let fieldErrors: Record<string, string> = {};
   let settingsError = "";
+  $: settingsDirty = Boolean(editing) && JSON.stringify(settings) !== JSON.stringify(initialSettings);
   $: if (!loading) reconcilePluginWorkers(plugins);
 
   onMount(() => void refresh());
 
   async function refresh() {
+    if (busy) return;
+    loadError = "";
+    loading = true;
     try { plugins = await platform.listPlugins(); }
-    catch (error) { onNotice(normalizeError(error).message); }
+    catch (error) { loadError = normalizeError(error).message; onNotice(loadError); }
     finally { loading = false; }
   }
 
@@ -83,8 +90,10 @@
         platform.getPluginSettings(plugin.manifest.id)
       ]);
       settings = initializeSettings(settingsSchema, settings);
+      initialSettings = structuredClone(settings);
       fieldErrors = {};
       settingsError = "";
+      confirmSettingsDiscard = false;
       editing = plugin;
     } catch (error) { onNotice(normalizeError(error).message); }
     finally { busy = false; }
@@ -102,7 +111,9 @@
         if (!validation?.ok) throw new Error(validation?.message || "插件配置无效。");
       }
       await platform.savePluginSettings(plugin.manifest.id, settings);
+      initialSettings = structuredClone(settings);
       editing = null;
+      confirmSettingsDiscard = false;
       onNotice("插件设置已保存。");
     }
     catch (error) { settingsError = normalizeError(error).message; }
@@ -127,11 +138,23 @@
   function schemaProperties(): Array<[string, Record<string, unknown>]> {
     return settingFields(settingsSchema);
   }
+
+  function requestSettingsClose() {
+    if (busy) return;
+    if (settingsDirty) { confirmSettingsDiscard = true; return; }
+    editing = null;
+  }
+
+  function discardSettings() {
+    if (busy) return;
+    confirmSettingsDiscard = false;
+    editing = null;
+  }
 </script>
 
 <div class="settings-block plugin-manager">
-  <div class="settings-block-heading"><h3>{$ui("插件")}</h3><p>{$ui("插件在隔离 Worker 中运行，所有 Host API 请求都需要声明权限。")}</p><button class="button" type="button" disabled={busy} on:click={install}>{$ui("安装插件")}</button></div>
-  {#if loading}<p class="muted-line">{$ui("正在读取插件…")}</p>{:else if !plugins.length}<p class="muted-line">{$ui("尚未安装插件。将插件目录安装到应用配置目录后会显示在这里。")}</p>{:else}
+  <div class="settings-block-heading"><div><h3>{$ui("插件")}</h3><p>{$ui("插件在隔离 Worker 中运行，所有 Host API 请求都需要声明权限。")}</p></div><div class="plugin-toolbar"><button class="button" type="button" disabled={busy || loading} on:click={() => void refresh()}>{$ui("刷新")}</button><button class="button" type="button" disabled={busy} on:click={install}>{$ui("安装插件")}</button></div></div>
+  {#if loading}<p class="muted-line">{$ui("正在读取插件…")}</p>{:else if loadError}<div class="plugin-load-error" role="alert"><span>{loadError}</span><button class="button" type="button" disabled={busy} on:click={() => void refresh()}>{$ui("重试")}</button></div>{:else if !plugins.length}<p class="muted-line">{$ui("尚未安装插件。将插件目录安装到应用配置目录后会显示在这里。")}</p>{:else}
     <div class="recent-project-list">{#each plugins as plugin (plugin.manifest.id)}
       <div class="recent-project-row plugin-row"><div class="plugin-identity"><strong>{plugin.manifest.name}</strong><span>{plugin.manifest.id} · {plugin.manifest.version}</span></div>
         <div class="plugin-actions">
@@ -154,7 +177,7 @@
 {/if}
 
 {#if editing}
-  <ModalDialog title={$ui("{p0} 设置", { p0: editing.manifest.name })} onClose={() => { if (!busy) editing = null; }}>
+  <ModalDialog title={$ui("{p0} 设置", { p0: editing.manifest.name })} onClose={requestSettingsClose}>
     {#if settingsError}<p class="form-error" role="alert">{settingsError}</p>{/if}
     {#if schemaProperties().length}
       <div class="modal-form">{#each schemaProperties() as [key, schema]}
@@ -173,7 +196,13 @@
       {/each}</div>
     {:else}<p class="muted-line">{$ui("此插件没有可编辑的设置。")}</p>{/if}
     {#if !editing.enabled}<p class="muted-line">{$ui("可先保存配置，启用插件后再测试连接。")}</p>{/if}
-    <svelte:fragment slot="actions"><button class="button" type="button" disabled={busy || !editing.enabled} on:click={testSettings}>{$ui("测试连接")}</button><button class="button" type="button" disabled={busy} on:click={() => (editing = null)}>{$ui("取消")}</button><button class="button primary" type="button" disabled={busy} on:click={saveSettings}>{$ui("保存")}</button></svelte:fragment>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={busy || !editing.enabled} on:click={testSettings}>{$ui("测试连接")}</button><button class="button" type="button" disabled={busy} on:click={requestSettingsClose}>{$ui("取消")}</button><button class="button primary" type="button" disabled={busy} on:click={saveSettings}>{$ui("保存")}</button></svelte:fragment>
+  </ModalDialog>
+{/if}
+
+{#if confirmSettingsDiscard}
+  <ModalDialog title={$ui("放弃插件设置？")} description={$ui("当前设置尚未保存，关闭后输入内容将丢失。")} onClose={() => (confirmSettingsDiscard = false)}>
+    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (confirmSettingsDiscard = false)}>{$ui("继续编辑")}</button><button class="button danger" type="button" data-autofocus on:click={discardSettings}>{$ui("放弃修改")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
@@ -187,6 +216,8 @@
 
 <style>
   .plugin-manager { padding: 0; }
+  .plugin-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+  .plugin-load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border-subtle)); }
   .plugin-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; padding: 16px; border: 1px solid var(--border-subtle); }
   .plugin-identity { flex: 1 1 240px; overflow-wrap: anywhere; }
   .plugin-actions { display: flex; flex-wrap: wrap; gap: 6px; }
