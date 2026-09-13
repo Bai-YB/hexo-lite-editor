@@ -1,0 +1,139 @@
+﻿name: Finalize release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version"
+        required: true
+        default: "1.0.6.1"
+      source_commit:
+        description: "Commit used to build the uploaded artifacts"
+        required: true
+        default: "02d7e7f5ee78634c73be1ef40c2b7121fc52cff6"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
+    steps:
+      - name: Checkout build source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify and finalize release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || exit 1
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || exit 1
+          [[ "$(node scripts/release-version.mjs version)" == "$VERSION" ]] || exit 1
+          runtime_version="$(node scripts/release-version.mjs runtimeVersion)"
+          repo="$GITHUB_REPOSITORY"
+          tag="v$VERSION"
+          work="$RUNNER_TEMP/release-$VERSION"
+          mkdir -p "$work/download" "$work/remote"
+          release_json="$work/release.json"
+          gh release view "$tag" --repo "$repo" --json isDraft,targetCommitish,assets > "$release_json"
+          node --input-type=module - "$release_json" "$VERSION" "$SOURCE_COMMIT" "$tag" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const [releasePath, version, source, tag] = process.argv.slice(2);
+          const release = JSON.parse(readFileSync(releasePath, 'utf8'));
+          if (!release.isDraft) throw new Error(`${tag} is already published`);
+          const expected = [
+            `Hexo-Lite-Editor_${version}_windows-x64-portable.zip`,
+            `Hexo-Lite-Editor_${version}_windows-x64-setup.exe`,
+            `Hexo-Lite-Editor_${version}_windows-x64-setup.exe.sig`,
+            `Hexo-Lite-Editor_${version}_windows-x64.msi`,
+            `Hexo-Lite-Editor_${version}_windows-x64.msi.sig`,
+            `Hexo-Lite-Editor_${version}_macos-universal.dmg`,
+            `Hexo-Lite-Editor_${version}_macos-universal.app.zip`,
+            `Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz`,
+            `Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz.sig`,
+            'release-manifest.json', 'release-manifest-macos.json',
+            'SHA256SUMS.txt', 'SHA256SUMS-macos.txt', 'latest.json'
+          ];
+          const names = new Set((release.assets ?? []).map((a) => a.name));
+          for (const name of expected) if (!names.has(name)) throw new Error(`Missing release asset: ${name}`);
+          if (names.size !== expected.length) throw new Error(`Unexpected release asset count: ${names.size}`);
+          if (release.targetCommitish && release.targetCommitish !== 'main' && release.targetCommitish !== source) {
+            throw new Error(`Release target ${release.targetCommitish} does not match source ${source}`);
+          }
+          NODE
+          tag_type="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.type')"
+          tag_sha="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')"
+          if [[ "$tag_type" == tag ]]; then
+            tag_sha="$(gh api "repos/$repo/git/tags/$tag_sha" --jq '.object.sha')"
+          fi
+          [[ "$tag_sha" == "$SOURCE_COMMIT" ]] || { echo "Tag $tag points to $tag_sha, expected $SOURCE_COMMIT" >&2; exit 1; }
+          gh release download "$tag" --repo "$repo" --dir "$work/download"
+          node --input-type=module - "$work/download" "$VERSION" "$SOURCE_COMMIT" "$runtime_version" <<'NODE'
+          import { readFile, stat } from 'node:fs/promises';
+          import { createHash } from 'node:crypto';
+          import { join, basename } from 'node:path';
+          const [dir, version, source, runtime] = process.argv.slice(2);
+          const readJson = async (name) => JSON.parse((await readFile(join(dir, name), 'utf8')).replace(/^\uFEFF/, ''));
+          const win = await readJson('release-manifest.json');
+          const mac = await readJson('release-manifest-macos.json');
+          for (const [label, manifest] of [['Windows', win], ['macOS', mac]]) {
+            if (manifest.version !== version || manifest.sourceCommit !== source) throw new Error(`${label} manifest version/source mismatch`);
+          }
+          if (win.runtimeVersion !== runtime || mac.runtimeVersion !== runtime) throw new Error('Unexpected runtime version');
+          const sums = (await readFile(join(dir, 'SHA256SUMS.txt'), 'utf8')).trim().split(/\r?\n/);
+          const macSums = (await readFile(join(dir, 'SHA256SUMS-macos.txt'), 'utf8')).trim().split(/\r?\n/);
+          const entries = new Map();
+          for (const line of [...sums, ...macSums]) {
+            const match = /^([0-9a-f]{64})\s+\*?(.+)$/i.exec(line.trim());
+            if (!match) throw new Error('Invalid checksum line');
+            const [, hash, name] = match;
+            if (name === 'latest.json') continue;
+            if (basename(name) !== name || entries.has(name)) throw new Error(`Invalid checksum entry: ${name}`);
+            entries.set(name, hash.toLowerCase());
+          }
+          const files = [...(win.assets ?? []).map((a) => a.name), ...(mac.assets ?? []), 'release-manifest.json', 'release-manifest-macos.json'];
+          if (win.assets?.length !== 5 || mac.assets?.length !== 4 || entries.size !== 11 || new Set(files).size !== 11) throw new Error('Incomplete manifests or checksums');
+          for (const name of files) {
+            if (basename(name) !== name) throw new Error(`Invalid manifest asset: ${name}`);
+            const path = join(dir, name); const info = await stat(path);
+            const hash = createHash('sha256').update(await readFile(path)).digest('hex');
+            if (entries.get(name) !== hash) throw new Error(`Checksum mismatch: ${name}`);
+            const manifest = win.assets?.find((a) => a.name === name);
+            if (manifest && (manifest.size !== info.size || manifest.sha256 !== hash)) throw new Error(`Windows manifest mismatch: ${name}`);
+          }
+          NODE
+          notes=".github/release-notes/$tag.md"
+          [[ -f "$notes" ]] || { echo "Missing release notes $notes" >&2; exit 1; }
+          node scripts/generate-latest-json.mjs \
+            --version "$runtime_version" --tag "$tag" --repository "$repo" --notes "$notes" \
+            --windows-asset "$work/download/Hexo-Lite-Editor_${VERSION}_windows-x64-setup.exe" \
+            --windows-signature "$work/download/Hexo-Lite-Editor_${VERSION}_windows-x64-setup.exe.sig" \
+            --macos-asset "$work/download/Hexo-Lite-Editor_${VERSION}_macos-universal.app.tar.gz" \
+            --macos-signature "$work/download/Hexo-Lite-Editor_${VERSION}_macos-universal.app.tar.gz.sig" \
+            --output "$work/latest.json"
+          node scripts/verify-updater-manifest.mjs --manifest "$work/latest.json" --version "$runtime_version" --tag "$tag" \
+            --platform windows-x86_64 --platform darwin-x86_64 --platform darwin-aarch64
+          awk '!/latest\.json\r?$/' "$work/download/SHA256SUMS-macos.txt" > "$work/SHA256SUMS-macos.txt"
+          sha256sum "$work/latest.json" | sed "s#$work/latest.json#latest.json#" >> "$work/SHA256SUMS-macos.txt"
+          gh release upload "$tag" --repo "$repo" "$work/latest.json#latest.json" "$work/SHA256SUMS-macos.txt#SHA256SUMS-macos.txt" --clobber
+          gh release download "$tag" --repo "$repo" --pattern latest.json --pattern SHA256SUMS-macos.txt --dir "$work/remote" --clobber
+          cmp "$work/latest.json" "$work/remote/latest.json"
+          cmp "$work/SHA256SUMS-macos.txt" "$work/remote/SHA256SUMS-macos.txt"
+          gh release edit "$tag" --repo "$repo" --draft=false --latest --title "Hexo Lite Editor $VERSION" --notes-file "$notes"
