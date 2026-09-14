@@ -11,7 +11,7 @@
 - `pnpm check`：0 errors、0 warnings。
 - `pnpm test`：29 个测试文件、157 项通过。
 - `pnpm build`：生产构建成功；`pnpm audit --prod`：未发现已知漏洞。
-- 浏览器：首轮 49 项中 47 项通过，两个旧定位器与页面过渡问题已修复；对应两项及新增窄窗口测试 3/3 通过。最终云端执行全量 50 项。
+- `pnpm test:e2e`：53 项全部通过（2 个 worker）；修正重复导航名称的定位器，并为并行环境的启动和模拟下载保留合理等待时间。
 - `cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings`：通过。
 - `cargo test --all-targets --all-features`：115 项通过，包含 44 项同步测试。
 - impeccable detector：运行一次，结果为空。
