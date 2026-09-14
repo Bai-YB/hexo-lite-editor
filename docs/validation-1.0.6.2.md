@@ -21,6 +21,15 @@
 
 源码和标签推送后由 GitHub Actions 在 Windows/macOS 构建。两平台必须对应同一提交并全部成功，finalize 才下载资产校验 SHA256、manifest、tag SHA、更新包真实大小及 Minisign 签名，再上传三平台 latest.json 并正式发布。构建中的草稿不改变现有最新版本。
 
+## 正式发布结果（2026-09-14）
+
+- [v1.0.6.2 Release](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.2) 已于 04:54:21 UTC 发布为 Latest，14 个资产均已上传。
+- 构建源码：`47bc15bb3e833ece80651c589b09569d4ebdf865`，标签与 Windows/macOS manifest 一致。
+- [CI](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34806818794)、[Windows](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34806821740)、[macOS](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34806821724) 全部成功；Windows 便携包、EXE 与 MSI 烟测成功。
+- [Finalize](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34807697195) 校验全部资产、11 项 SHA256、更新包大小、Windows/macOS Minisign 签名后发布。发布后再次核对公开资产 digest、两端 manifest、三平台清单和大小，一致。
+- 云端回归修正了浏览器模拟更新器重复检查重置已下载状态的问题，并使启动检查和离场动画期间的测试定位确定；原生更新器已有操作锁和已下载包保留逻辑。
+- 本目录约 7.2 GB 缓存和构建产物已识别。自动执行审核以 `blocked by policy` 拒绝递归删除，包括经绝对路径验证后的单目录删除；尚未清理。源码、Git 历史、文档和用户资料均保留。
+
 ## 实际边界
 
 - 浏览器使用 demo fixture 验证界面，Rust 使用本地双 Git 仓库和 loopback WebDAV 验证真实传输；依赖外部账号的测试无凭据时不访问用户服务器。
