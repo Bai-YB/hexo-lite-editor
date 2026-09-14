@@ -131,6 +131,7 @@ fn application_remaining_invoke_handler(
         commands::preflight_content_sync,
         commands::preflight_webdav_content_sync,
         commands::get_content_sync_status,
+        commands::get_content_sync_summary,
         commands::get_content_sync_conflicts,
         commands::enable_content_sync,
         commands::enable_webdav_content_sync,

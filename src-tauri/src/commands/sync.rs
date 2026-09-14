@@ -49,8 +49,7 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 const STARTUP_GIT_TIMEOUT: Duration = Duration::from_secs(3);
 const WEBDAV_TIMEOUT: Duration = Duration::from_secs(30);
 const STARTUP_WEBDAV_TIMEOUT: Duration = Duration::from_secs(3);
-const REMOTE_AHEAD_MESSAGE: &str =
-    "云端项目在同步期间再次更新，请重新选择使用云端或用本机覆盖云端。";
+const REMOTE_AHEAD_MESSAGE: &str = "云端在同步期间再次更新，请重新检查并合并云端变更。";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +139,27 @@ pub struct ContentSyncPreflight {
     pub different_count: usize,
     pub remote_branch_exists: bool,
     pub remote_manifest_valid: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentSyncCategory {
+    pub id: String,
+    pub file_count: usize,
+    pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentSyncSummary {
+    pub file_count: usize,
+    pub total_bytes: u64,
+    // Logical source bytes since the last successful sync, before network compression.
+    pub pending_file_count: usize,
+    pub pending_bytes: u64,
+    pub deleted_file_count: usize,
+    pub baseline_available: bool,
+    pub categories: Vec<ContentSyncCategory>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -265,6 +285,8 @@ pub struct RunContentSyncRequest {
     pub session_generation: u64,
     #[serde(default = "default_auto")]
     pub direction: String,
+    #[serde(default)]
+    pub confirm_scope: bool,
 }
 
 fn default_auto() -> String {
@@ -816,6 +838,126 @@ fn webdav_preflight_for_credentials(
 }
 
 #[tauri::command]
+pub async fn get_content_sync_summary(
+    project_id: String,
+    session_generation: u64,
+    app: tauri::AppHandle,
+) -> AppResult<ContentSyncSummary> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let root = project_root(&state, &project_id, session_generation)?;
+        let registry = load_registry(&state)?;
+        let record = registry
+            .records
+            .iter()
+            .find(|item| item.project_path == path_key(&root));
+        let config = load_config(&state)?.config;
+        validate_sync_image_dir(&config.image_bed.local_image_dir)?;
+        let mut paths = BTreeSet::new();
+        collect_scope(&root, &root, &mut paths)?;
+        // Summary scans run off the UI thread and retain hashes/sizes only.
+        let files = paths
+            .into_iter()
+            .map(|path| {
+                let bytes = fs::read(root.join(&path))
+                    .map_err(|error| AppError::io("读取同步文件失败", error))?;
+                Ok((path, hash_bytes(&bytes), bytes.len() as u64))
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        // Reject stale results if a project switch happened during the scan.
+        project_root(&state, &project_id, session_generation)?;
+        Ok(summarize_files(
+            files
+                .iter()
+                .map(|(path, hash, bytes)| (path.as_str(), hash.as_str(), *bytes)),
+            record,
+        ))
+    })
+    .await
+    .map_err(|error| AppError::invalid(format!("扫描同步范围失败：{error}")))?
+}
+
+fn summarize_files<'a>(
+    files: impl Iterator<Item = (&'a str, &'a str, u64)>,
+    record: Option<&SyncRecord>,
+) -> ContentSyncSummary {
+    let empty = BTreeMap::new();
+    let base = record.map(|record| &record.base_files).unwrap_or(&empty);
+    let mut categories = ["articles", "site", "themes", "assets"]
+        .into_iter()
+        .map(|id| ContentSyncCategory {
+            id: id.into(),
+            file_count: 0,
+            total_bytes: 0,
+        })
+        .collect::<Vec<_>>();
+    let mut pending_file_count = 0;
+    let mut pending_bytes = 0;
+    let mut paths = BTreeSet::new();
+    for (path, hash, bytes) in files {
+        paths.insert(path);
+        let category = if path.starts_with("themes/") {
+            2
+        } else if (path.starts_with("source/_posts/") || path.starts_with("source/_drafts/"))
+            && path.to_ascii_lowercase().ends_with(".md")
+        {
+            0
+        } else if matches!(
+            Path::new(path)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some(
+                "png"
+                    | "jpg"
+                    | "jpeg"
+                    | "gif"
+                    | "webp"
+                    | "avif"
+                    | "svg"
+                    | "ico"
+                    | "mp3"
+                    | "mp4"
+                    | "webm"
+                    | "pdf"
+                    | "woff"
+                    | "woff2"
+                    | "ttf"
+                    | "zip"
+            )
+        ) {
+            3
+        } else {
+            1
+        };
+        categories[category].file_count += 1;
+        categories[category].total_bytes += bytes;
+        if base.get(path).map(String::as_str) != Some(hash) {
+            pending_file_count += 1;
+            pending_bytes += bytes;
+        }
+    }
+    ContentSyncSummary {
+        file_count: paths.len(),
+        total_bytes: categories.iter().map(|category| category.total_bytes).sum(),
+        pending_file_count,
+        pending_bytes,
+        deleted_file_count: base
+            .keys()
+            .filter(|path| !paths.contains(path.as_str()))
+            .count(),
+        baseline_available: record.is_some_and(has_sync_baseline),
+        categories,
+    }
+}
+
+fn has_sync_baseline(record: &SyncRecord) -> bool {
+    record.last_synced_at.is_some() || !record.base_files.is_empty()
+}
+
+#[tauri::command]
 pub fn get_content_sync_status(
     project_id: String,
     session_generation: u64,
@@ -947,7 +1089,8 @@ fn enable_content_sync_blocking(
     registry.records.push(record);
     save_registry(state, &mut registry)?;
 
-    if let Some(choice) = request.initial_choice.as_deref() {
+    {
+        let choice = request.initial_choice.as_deref().unwrap_or("auto");
         let before = local_snapshot(&root, &config.image_bed.local_image_dir)
             .ok()
             .map(|value| hash_map(&value));
@@ -958,7 +1101,7 @@ fn enable_content_sync_blocking(
             ContentSyncStatus::Checking,
             None,
         );
-        let view = run_sync_for_root_locked(state, &root, choice);
+        let view = run_sync_for_root_locked(state, &root, choice, false);
         emit_rescan_if_changed(
             &app,
             state,
@@ -975,14 +1118,8 @@ fn enable_content_sync_blocking(
             view.status.clone(),
             view.message.clone(),
         );
-        return Ok(view);
+        Ok(view)
     }
-    Ok(registry
-        .records
-        .iter()
-        .find(|item| item.project_path == key)
-        .map(view_from_record)
-        .unwrap_or_else(off_view))
 }
 
 #[tauri::command]
@@ -1071,7 +1208,8 @@ fn enable_webdav_content_sync_blocking(
     registry.records.retain(|item| item.project_path != key);
     registry.records.push(record);
     save_registry(state, &mut registry)?;
-    if let Some(choice) = request.initial_choice.as_deref() {
+    {
+        let choice = request.initial_choice.as_deref().unwrap_or("auto");
         let before = local_snapshot(&root, &config.image_bed.local_image_dir)
             .ok()
             .map(|value| hash_map(&value));
@@ -1082,7 +1220,7 @@ fn enable_webdav_content_sync_blocking(
             ContentSyncStatus::Checking,
             None,
         );
-        let view = run_sync_for_root_locked(state, &root, choice);
+        let view = run_sync_for_root_locked(state, &root, choice, false);
         emit_rescan_if_changed(
             &app,
             state,
@@ -1099,14 +1237,8 @@ fn enable_webdav_content_sync_blocking(
             view.status.clone(),
             view.message.clone(),
         );
-        return Ok(view);
+        Ok(view)
     }
-    Ok(registry
-        .records
-        .iter()
-        .find(|item| item.project_path == key)
-        .map(view_from_record)
-        .unwrap_or_else(off_view))
 }
 
 #[tauri::command]
@@ -1187,7 +1319,8 @@ fn run_content_sync_blocking(
         ContentSyncStatus::Checking,
         None,
     );
-    let view = run_sync_for_root(state, &root, &request.direction);
+    let view =
+        run_sync_for_root_with_scope(state, &root, &request.direction, request.confirm_scope);
     emit_sync_status(&app, identity.as_ref(), &view);
     emit_sync_phase(
         &app,
@@ -1622,6 +1755,15 @@ fn project_root(state: &AppState, project_id: &str, generation: u64) -> AppResul
 }
 
 fn run_sync_for_root(state: &AppState, root: &Path, direction: &str) -> ContentSyncView {
+    run_sync_for_root_with_scope(state, root, direction, false)
+}
+
+fn run_sync_for_root_with_scope(
+    state: &AppState,
+    root: &Path,
+    direction: &str,
+    confirm_scope: bool,
+) -> ContentSyncView {
     let key = path_key(root);
     let sync_lock = match state.content_sync_lock(&key) {
         Ok(lock) => lock,
@@ -1642,7 +1784,7 @@ fn run_sync_for_root(state: &AppState, root: &Path, direction: &str) -> ContentS
                 }
             }
         };
-        return run_sync_for_root_locked(state, root, direction);
+        return run_sync_for_root_locked(state, root, direction, confirm_scope);
     }
     let Ok(_guard) = sync_lock.try_lock() else {
         let mut view = current_view_for_root(state, root).unwrap_or_else(|| ContentSyncView {
@@ -1665,10 +1807,15 @@ fn run_sync_for_root(state: &AppState, root: &Path, direction: &str) -> ContentS
         view.message = Some("此项目已有同步任务正在运行，请等待完成或停止后重试。".to_string());
         return view;
     };
-    run_sync_for_root_locked(state, root, direction)
+    run_sync_for_root_locked(state, root, direction, confirm_scope)
 }
 
-fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> ContentSyncView {
+fn run_sync_for_root_locked(
+    state: &AppState,
+    root: &Path,
+    direction: &str,
+    confirm_scope: bool,
+) -> ContentSyncView {
     let key = path_key(root);
     if let Err(error) = recover_pending_transaction(state, root) {
         return error_view(error.message);
@@ -1692,14 +1839,17 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
     let requires_scope_confirmation = record.provider == ContentSyncProvider::Github
         && record.visibility != "private"
         && !record.full_project_sync_confirmed;
-    if requires_scope_confirmation && !matches!(direction, "overwriteLocal" | "overwriteRemote") {
+    if requires_scope_confirmation
+        && !confirm_scope
+        && !matches!(direction, "overwriteLocal" | "overwriteRemote")
+    {
         record.status = ContentSyncStatus::LocalPending;
         record.message =
             Some("项目同步范围已扩展到草稿、主题和配置；请确认后再首次上传完整项目。".to_string());
         let view = view_from_record(record);
         return persist_sync_view(state, &mut registry, view);
     }
-    if direction == "overwriteRemote" {
+    if direction == "overwriteRemote" || confirm_scope {
         record.full_project_sync_confirmed = true;
     }
     sync_progress("scanning", "正在扫描本地项目，计算变更文件。", None, None);
@@ -1734,7 +1884,7 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
     record.remote_etag = remote_fetch.etag.clone();
     record.remote_manifest_exists = remote_fetch.exists;
     if !remote_fetch.exists {
-        if !matches!(direction, "local" | "overwriteRemote") {
+        if !matches!(direction, "auto" | "local" | "remote" | "overwriteRemote") {
             record.status = ContentSyncStatus::LocalPending;
             record.message = Some(match record.provider {
                 ContentSyncProvider::Github => {
@@ -1801,27 +1951,14 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
         return persist_sync_view(state, &mut registry, view);
     }
 
-    if record.base_files.is_empty() {
-        if direction == "remote" {
-            let local_base =
-                overwrite_base_for_manifest(&snapshot, &remote, record, manifest.schema_version);
-            if let Err(error) = apply_remote(state, root, &cache, &snapshot, &remote, &local_base) {
-                return update_error(&mut registry, state, &key, error.message);
-            }
-            record.base_files = hash_map(&remote);
-            record.status = ContentSyncStatus::Synced;
-            record.message = Some("已使用远端内容初始化本地项目。".to_string());
-            record.last_synced_at = Some(Local::now().to_rfc3339());
-        } else if direction == "local" {
-            return finish_local_push(state, root, &cache, record.clone(), snapshot, &mut registry);
-        } else {
-            record.status = ContentSyncStatus::LocalPending;
-            record.message = Some("远端分支已有内容，请选择使用远端或上传本地。".to_string());
-        }
+    // Successful empty snapshots are baselines too. Initial manual sync uses
+    // the same comparison to preserve the union and report same-path conflicts.
+    if !has_sync_baseline(record) && matches!(direction, "push" | "check" | "startup") {
+        record.status = ContentSyncStatus::RemoteAhead;
+        record.message = Some("首次连接需要合并两端文件，请点击合并并同步。".to_string());
         let view = view_from_record(record);
         return persist_sync_view(state, &mut registry, view);
     }
-
     let base = &record.base_files;
     let mut conflicts = Vec::new();
     let mut remote_only = BTreeSet::new();
@@ -1855,10 +1992,12 @@ fn run_sync_for_root_locked(state: &AppState, root: &Path, direction: &str) -> C
         let view = view_from_record(record);
         return persist_sync_view(state, &mut registry, view);
     }
-    if !matches!(direction, "startup" | "remote") && !remote_only.is_empty() {
+    // Foreground `auto` merges remote-only changes. Background checks/pushes only
+    // report that the remote is ahead so they never mutate the editor silently.
+    if matches!(direction, "push" | "check") && !remote_only.is_empty() {
         record.status = ContentSyncStatus::RemoteAhead;
         record.message =
-            Some("云端项目有更新，请选择使用云端最新版本，或确认用本机项目覆盖云端。".to_string());
+            Some("云端有更新，请点击合并云端变更。两端修改不同文件时会自动保留。".to_string());
         let view = view_from_record(record);
         return persist_sync_view(state, &mut registry, view);
     }
@@ -2002,12 +2141,7 @@ fn finish_local_push(
     } else {
         BTreeSet::new()
     };
-    sync_progress(
-        "uploading",
-        "正在准备并上传本地变更。",
-        Some(0),
-        Some(snapshot.len()),
-    );
+    sync_progress("preparing", "正在准备本地变更。", None, None);
     let copied = match record.provider {
         ContentSyncProvider::Github => {
             copy_snapshot_to_cache(root, cache, &snapshot, &record.image_dir)
@@ -2047,12 +2181,8 @@ fn finish_local_push(
         ContentSyncProvider::Webdav => "本地项目已上传到 WebDAV 远端目录。".to_string(),
     });
     record.last_synced_at = Some(Local::now().to_rfc3339());
-    if local_snapshot(root, &record.image_dir)
-        .is_ok_and(|current| hash_map(&current) != record.base_files)
-    {
-        record.status = ContentSyncStatus::LocalPending;
-        record.message = Some("此版本已同步；写作期间保存的新内容仍在等待下一轮同步。".to_string());
-    }
+    let current = local_snapshot(root, &record.image_dir);
+    verify_local_after_upload(&mut record, current);
     let view = view_from_record(&record);
     if let Some(stored) = registry
         .records
@@ -2062,6 +2192,24 @@ fn finish_local_push(
         *stored = record;
     }
     persist_sync_view(state, registry, view)
+}
+
+fn verify_local_after_upload(record: &mut SyncRecord, current: AppResult<Snapshot>) {
+    match current {
+        Ok(current) if hash_map(&current) != record.base_files => {
+            record.status = ContentSyncStatus::LocalPending;
+            record.message =
+                Some("此版本已同步；写作期间保存的新内容仍在等待下一轮同步。".to_string());
+        }
+        Err(error) => {
+            record.status = ContentSyncStatus::LocalPending;
+            record.message = Some(format!(
+                "已上传，无法确认本地最新状态：{} 请重试同步检查。",
+                error.message
+            ));
+        }
+        Ok(_) => {}
+    }
 }
 
 fn apply_remote(
@@ -2083,6 +2231,10 @@ fn apply_remote(
         offline: false,
     })?;
     check_operation().map_err(operation_failure)?;
+    // Reject file/directory shape changes before creating a transaction. The
+    // existing recovery format records files, not directories, so attempting
+    // such a conversion cannot yet be rolled back safely after an I/O failure.
+    validate_remote_file_shapes(root, remote)?;
     sync_progress("applying", "正在创建本地备份并应用远端文件。", None, None);
     let identity = state
         .project
@@ -2297,6 +2449,7 @@ fn apply_remote_operations(
     remote: &Snapshot,
     base: &BTreeMap<String, String>,
 ) -> Result<(), GitFailure> {
+    validate_remote_file_shapes(root, remote)?;
     for path in remote.keys() {
         let target = root.join(path);
         ensure_safe_apply_target(root, &target)?;
@@ -2326,6 +2479,26 @@ fn apply_remote_operations(
                     offline: false,
                 })?;
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_remote_file_shapes(root: &Path, remote: &Snapshot) -> Result<(), GitFailure> {
+    for path in remote.keys() {
+        let target = root.join(path);
+        if target.is_dir()
+            || target
+                .ancestors()
+                .skip(1)
+                .take_while(|ancestor| *ancestor != root)
+                .any(Path::is_file)
+        {
+            return Err(GitFailure {
+                message: format!("文件与文件夹同名，无法安全应用云端变更：{path}。本地文件未修改，请先重命名对应文件或文件夹后重试。"),
+                auth: false,
+                offline: false,
+            });
         }
     }
     Ok(())
@@ -2565,20 +2738,29 @@ fn collect_scope(root: &Path, directory: &Path, paths: &mut BTreeSet<String>) ->
                 .replace('\\', "/");
             !entry.file_type().is_dir() || !is_excluded_sync_directory(&relative)
         })
-        .filter_map(Result::ok)
     {
         check_operation()?;
+        let entry = entry.map_err(|error| {
+            AppError::new(
+                "sync_scan_failed",
+                format!("扫描同步文件失败：{error}"),
+                true,
+            )
+        })?;
         if entry.file_type().is_symlink() || !entry.file_type().is_file() {
             continue;
         }
-        let metadata =
-            fs::metadata(entry.path()).map_err(|error| AppError::io("读取同步文件失败", error))?;
         let relative = entry
             .path()
             .strip_prefix(root)
             .map_err(|_| AppError::new("sync_path_escape", "同步文件不属于当前项目。", false))?
             .to_string_lossy()
             .replace('\\', "/");
+        if relative == MANIFEST || is_excluded_sync_path(&relative) {
+            continue;
+        }
+        let metadata =
+            fs::metadata(entry.path()).map_err(|error| AppError::io("读取同步文件失败", error))?;
         if metadata.len() > MAX_SYNC_FILE_BYTES {
             return Err(AppError::new(
                 "sync_file_too_large",
@@ -2586,9 +2768,7 @@ fn collect_scope(root: &Path, directory: &Path, paths: &mut BTreeSet<String>) ->
                 true,
             ));
         }
-        if relative != MANIFEST && !is_excluded_sync_path(&relative) {
-            paths.insert(relative);
-        }
+        paths.insert(relative);
     }
     Ok(())
 }
@@ -2792,27 +2972,9 @@ fn copy_snapshot_to_cache(
     _root: &Path,
     cache: &Path,
     snapshot: &Snapshot,
-    image_dir: &str,
+    _image_dir: &str,
 ) -> Result<(), GitFailure> {
-    let _ = image_dir;
-    let _ = git_output(cache, &["rm", "-rf", "--ignore-unmatch", "."], false)?;
-    git(cache, &["clean", "-fdx"], false)?;
-    for path in snapshot.keys() {
-        let target = cache.join(path);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| GitFailure {
-                message: format!("创建缓存目录失败：{error}"),
-                auth: false,
-                offline: false,
-            })?;
-        }
-        fs::write(target, &snapshot[path].bytes).map_err(|error| GitFailure {
-            message: format!("写入同步缓存失败：{error}"),
-            auth: false,
-            offline: false,
-        })?;
-    }
-    Ok(())
+    copy_snapshot_incrementally(cache, snapshot)
 }
 
 fn copy_snapshot_to_plain_cache(
@@ -2820,33 +2982,90 @@ fn copy_snapshot_to_plain_cache(
     cache: &Path,
     snapshot: &Snapshot,
 ) -> Result<(), GitFailure> {
-    clear_plain_cache(cache)?;
-    for path in snapshot.keys() {
-        let target = cache.join(path);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(local_sync_failure("创建 WebDAV 缓存目录失败"))?;
+    copy_snapshot_incrementally(cache, snapshot)
+}
+
+fn copy_snapshot_incrementally(cache: &Path, snapshot: &Snapshot) -> Result<(), GitFailure> {
+    fs::create_dir_all(cache).map_err(local_sync_failure("创建同步缓存失败"))?;
+    // Only remove files owned by the previous verified sync manifest. Keep
+    // repository metadata, transaction journals and unrelated cache entries.
+    if let Some(previous) = read_manifest(cache) {
+        validate_manifest_paths(
+            &previous.files,
+            &previous.image_dir,
+            previous.schema_version,
+        )
+        .map_err(operation_failure)?;
+        for path in previous
+            .files
+            .keys()
+            .filter(|path| !snapshot.contains_key(*path))
+        {
+            check_operation().map_err(operation_failure)?;
+            let target = cache.join(path);
+            ensure_safe_apply_target(cache, &target)?;
+            match fs::remove_file(&target) {
+                Ok(()) => (),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => {
+                    return Err(local_sync_failure("清理已删除同步文件失败")(
+                        error,
+                    ))
+                }
+            }
+            // Only prune empty parents of a removed manifest-owned file.
+            // Unrelated files stop removal; never recurse over cache contents.
+            if let Some(parent) = target.parent() {
+                prune_empty_cache_parents(cache, parent)?;
+            }
         }
-        fs::write(target, &snapshot[path].bytes)
-            .map_err(local_sync_failure("写入 WebDAV 同步缓存失败"))?;
+    }
+    for (path, item) in snapshot {
+        check_operation().map_err(operation_failure)?;
+        let target = cache.join(path);
+        ensure_safe_apply_target(cache, &target)?;
+        if target.is_dir() {
+            return Err(GitFailure {
+                message: format!("同步缓存存在同名文件夹且包含未跟踪内容：{path}。请保留这些文件并重新建立同步缓存后重试。"),
+                auth: false,
+                offline: false,
+            });
+        }
+        if fs::read(&target).is_ok_and(|bytes| hash_bytes(&bytes) == item.hash) {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(local_sync_failure("创建同步缓存目录失败"))?;
+        }
+        atomic_write(&target, &item.bytes).map_err(operation_failure)?;
     }
     Ok(())
 }
 
-fn clear_plain_cache(cache: &Path) -> Result<(), GitFailure> {
-    if cache.exists() {
-        for entry in fs::read_dir(cache).map_err(local_sync_failure("读取同步缓存失败"))? {
-            let entry = entry.map_err(local_sync_failure("读取同步缓存失败"))?;
-            let kind = entry
-                .file_type()
-                .map_err(local_sync_failure("读取同步缓存失败"))?;
-            if kind.is_dir() {
-                fs::remove_dir_all(entry.path()).map_err(local_sync_failure("清理同步缓存失败"))?;
-            } else {
-                fs::remove_file(entry.path()).map_err(local_sync_failure("清理同步缓存失败"))?;
+fn prune_empty_cache_parents(cache: &Path, parent: &Path) -> Result<(), GitFailure> {
+    let mut current = parent;
+    while current != cache && current.starts_with(cache) {
+        ensure_safe_apply_target(cache, current)?;
+        match fs::remove_dir(current) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+                ) =>
+            {
+                break
+            }
+            Err(error) => {
+                return Err(local_sync_failure("清理空同步缓存目录失败")(
+                    error,
+                ))
             }
         }
-    } else {
-        fs::create_dir_all(cache).map_err(local_sync_failure("创建同步缓存失败"))?;
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
     }
     Ok(())
 }
@@ -2873,7 +3092,22 @@ fn write_manifest(cache: &Path, manifest: &SyncManifest) -> Result<(), GitFailur
 }
 
 fn commit_and_push(cache: &Path, branch: &str) -> Result<(), GitFailure> {
-    git(cache, &["add", "-A"], false)?;
+    // Stage tracked deletions and manifest-owned files; never publish unrelated
+    // untracked entries left in the cache by an interrupted operation.
+    git(cache, &["add", "--update"], false)?;
+    git(cache, &["add", "--force", "--", MANIFEST], false)?;
+    if let Some(manifest) = read_manifest(cache) {
+        let paths = manifest
+            .files
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        for chunk in paths.chunks(32) {
+            let mut args = vec!["add", "--force", "--"];
+            args.extend_from_slice(chunk);
+            git(cache, &args, false)?;
+        }
+    }
     let status = git_output(cache, &["diff", "--cached", "--quiet"], false)?;
     if status.status.success() {
         return Ok(());
@@ -2913,6 +3147,16 @@ fn ensure_cache(cache: &Path, repository: &str) -> Result<(), GitFailure> {
     if !cache.join(".git").is_dir() {
         git(cache, &["init"], false)?;
     }
+    // Source snapshots and their manifest use exact bytes on every platform.
+    // Global autocrlf and project attributes must not rewrite those bytes.
+    git(cache, &["config", "core.autocrlf", "false"], false)?;
+    fs::create_dir_all(cache.join(".git/info"))
+        .map_err(local_sync_failure("创建同步 Git 配置失败"))?;
+    fs::write(
+        cache.join(".git/info/attributes"),
+        "* -text -filter -ident\n",
+    )
+    .map_err(local_sync_failure("配置同步文件原始字节失败"))?;
     let remote = git_output(cache, &["remote", "get-url", "origin"], false)?;
     if !remote.status.success() {
         git(cache, &["remote", "add", "origin", repository], false)?;
@@ -3345,7 +3589,9 @@ fn publish_webdav_remote_incremental(
     }
     let client = webdav_client(WEBDAV_TIMEOUT)?;
     ensure_webdav_collections(&client, endpoint, remote_dir, None, credentials)?;
-    if !manifest.files.is_empty() {
+    let objects = pending_webdav_objects(manifest, known_remote_objects);
+    let total_objects = objects.len();
+    if !objects.is_empty() {
         ensure_webdav_collections(
             &client,
             endpoint,
@@ -3353,18 +3599,14 @@ fn publish_webdav_remote_incremental(
             Some(Path::new(WEBDAV_OBJECTS)),
             credentials,
         )?;
-        let mut uploaded = known_remote_objects.clone();
-        for (index, (path, hash)) in manifest.files.iter().enumerate() {
+        for (index, (hash, path)) in objects.iter().enumerate() {
             check_operation().map_err(operation_failure)?;
             sync_progress(
                 "uploading",
                 &format!("正在上传变更：{path}"),
                 Some(index),
-                Some(manifest.files.len()),
+                Some(total_objects),
             );
-            if !uploaded.insert(hash.clone()) {
-                continue;
-            }
             let bytes =
                 fs::read(cache.join(path)).map_err(local_sync_failure("读取待上传文件失败"))?;
             let object_path = format!("{WEBDAV_OBJECTS}/{hash}");
@@ -3387,14 +3629,20 @@ fn publish_webdav_remote_incremental(
                     &format!("上传 WebDAV 文件失败：{path}"),
                 ));
             }
+            sync_progress(
+                "uploading",
+                &format!("已上传变更：{path}"),
+                Some(index + 1),
+                Some(total_objects),
+            );
         }
     }
     check_operation().map_err(operation_failure)?;
     sync_progress(
         "committing",
         "文件传输完成，正在提交远端版本。",
-        Some(manifest.files.len()),
-        Some(manifest.files.len()),
+        Some(total_objects),
+        Some(total_objects),
     );
     let manifest_bytes =
         fs::read(cache.join(MANIFEST)).map_err(local_sync_failure("读取待上传同步清单失败"))?;
@@ -3425,6 +3673,18 @@ fn publish_webdav_remote_incremental(
         ));
     }
     Ok(())
+}
+
+fn pending_webdav_objects<'a>(
+    manifest: &'a SyncManifest,
+    known: &BTreeSet<String>,
+) -> BTreeMap<&'a str, &'a str> {
+    manifest
+        .files
+        .iter()
+        .filter(|(_, hash)| !known.contains(*hash))
+        .map(|(path, hash)| (hash.as_str(), path.as_str()))
+        .collect()
 }
 
 fn ensure_webdav_collections(
@@ -3536,7 +3796,9 @@ fn fetch_remote_branch_with_timeout(
     branch: &str,
     timeout: Duration,
 ) -> Result<bool, GitFailure> {
-    let refspec = format!("refs/heads/{branch}:refs/remotes/origin/{branch}");
+    // A shallow fetch cannot always prove ancestry when another machine pushed.
+    // Refresh the local tracking ref; the actual push still requires fast-forward.
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
     let output = git_output_with_timeout(
         cache,
         &["fetch", "--depth", "1", "origin", &refspec],
@@ -5403,7 +5665,7 @@ mod tests {
         assert_eq!(pages_before, pages_after);
     }
 
-    fn git_test_init_bare(remote: &Path) {
+    pub(super) fn git_test_init_bare(remote: &Path) {
         assert!(Command::new("git")
             .args(["init", "--bare"])
             .arg(remote)

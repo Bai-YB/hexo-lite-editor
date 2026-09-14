@@ -468,6 +468,8 @@ fn default_log_storage_mb() -> u16 {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateConfig {
     pub check_on_start: bool,
+    #[serde(default)]
+    pub auto_download: bool,
 }
 
 impl Default for AppConfigV3 {
@@ -527,6 +529,7 @@ impl Default for AppConfigV3 {
             },
             update: UpdateConfig {
                 check_on_start: true,
+                auto_download: false,
             },
         }
     }
@@ -819,6 +822,7 @@ pub enum UpdateStatus {
     UpToDate,
     Available,
     Downloading,
+    Verifying,
     Downloaded,
     Installing,
     Error,
@@ -828,6 +832,7 @@ pub enum UpdateStatus {
 pub enum UpdateErrorStage {
     Check,
     Download,
+    Verify,
     Install,
 }
 #[derive(Debug, Clone, Serialize)]

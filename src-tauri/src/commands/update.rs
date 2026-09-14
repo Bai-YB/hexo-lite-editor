@@ -10,6 +10,7 @@ const UPDATE_CHECK_RETRY_DELAY_MS: u64 = 750;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DownloadEvent {
     Chunk { bytes: u64, total: Option<u64> },
+    Verifying,
     Finished,
     Failed,
 }
@@ -19,7 +20,14 @@ fn apply_download_event(snapshot: &mut UpdateSnapshot, event: DownloadEvent) {
         DownloadEvent::Chunk { bytes, total } => {
             snapshot.status = UpdateStatus::Downloading;
             snapshot.downloaded_bytes = Some(snapshot.downloaded_bytes.unwrap_or(0) + bytes);
-            snapshot.total_bytes = total;
+            snapshot.total_bytes = total.filter(|total| *total > 0).or(snapshot.total_bytes);
+            if snapshot.downloaded_bytes > snapshot.total_bytes {
+                snapshot.total_bytes = None;
+            }
+        }
+        DownloadEvent::Verifying => {
+            snapshot.status = UpdateStatus::Verifying;
+            snapshot.total_bytes = snapshot.downloaded_bytes;
         }
         DownloadEvent::Finished => {
             snapshot.status = UpdateStatus::Downloaded;
@@ -28,10 +36,28 @@ fn apply_download_event(snapshot: &mut UpdateSnapshot, event: DownloadEvent) {
             }
         }
         DownloadEvent::Failed => {
+            snapshot.error_stage = Some(if snapshot.status == UpdateStatus::Verifying {
+                UpdateErrorStage::Verify
+            } else {
+                UpdateErrorStage::Download
+            });
             snapshot.status = UpdateStatus::Error;
-            snapshot.error_stage = Some(UpdateErrorStage::Download);
         }
     }
+}
+
+fn manifest_asset_size(manifest: &serde_json::Value, asset_url: &str) -> Option<u64> {
+    // Match the exact updater asset selected by Tauri, including universal macOS builds.
+    manifest
+        .get("platforms")?
+        .as_object()?
+        .values()
+        .find_map(|entry| {
+            if entry.get("url")?.as_str()? != asset_url {
+                return None;
+            }
+            entry.get("size")?.as_u64().filter(|size| *size > 0)
+        })
 }
 
 fn initial(app: &AppHandle) -> UpdateSnapshot {
@@ -162,6 +188,8 @@ pub async fn check_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
             snapshot.release_notes = update.body.clone();
             snapshot.release_date = update.date.map(|date| date.to_string());
             snapshot.asset_download_url = Some(update.download_url.to_string());
+            snapshot.total_bytes =
+                manifest_asset_size(&update.raw_json, update.download_url.as_str());
             store(&app, snapshot.clone());
             Ok(snapshot)
         }
@@ -219,9 +247,14 @@ pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
     snapshot.release_notes = update.body.clone();
     snapshot.release_date = update.date.map(|date| date.to_string());
     snapshot.asset_download_url = Some(update.download_url.to_string());
+    snapshot.total_bytes = manifest_asset_size(&update.raw_json, update.download_url.as_str());
+    store(&app, snapshot.clone());
     let progress_app = app.clone();
     let progress_snapshot = std::sync::Arc::new(std::sync::Mutex::new(snapshot));
     let progress_state = progress_snapshot.clone();
+    let verify_app = app.clone();
+    let verify_state = progress_snapshot.clone();
+    let mut last_emit = std::time::Instant::now();
     let bytes = update
         .download(
             move |chunk, total| {
@@ -233,10 +266,18 @@ pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
                             total,
                         },
                     );
-                    store(&progress_app, value.clone());
+                    if last_emit.elapsed() >= std::time::Duration::from_millis(120) {
+                        store(&progress_app, value.clone());
+                        last_emit = std::time::Instant::now();
+                    }
                 }
             },
-            || {},
+            move || {
+                if let Ok(mut value) = verify_state.lock() {
+                    apply_download_event(&mut value, DownloadEvent::Verifying);
+                    store(&verify_app, value.clone());
+                }
+            },
         )
         .await
         .map_err(|error| {
@@ -245,7 +286,11 @@ pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
                 .map(|value| value.clone())
                 .unwrap_or_else(|_| initial(&app));
             apply_download_event(&mut current, DownloadEvent::Failed);
-            failure(&app, current, UpdateErrorStage::Download, error)
+            let stage = current
+                .error_stage
+                .clone()
+                .unwrap_or(UpdateErrorStage::Download);
+            failure(&app, current, stage, error)
         })?;
 
     let mut final_snapshot = progress_snapshot
@@ -382,5 +427,65 @@ mod tests {
             describe_update_check_error("HTTP 404 latest.json not found")
                 .contains("缺少 latest.json")
         );
+    }
+
+    #[test]
+    fn manifest_size_matches_the_exact_selected_asset() {
+        let manifest = serde_json::json!({ "platforms": {
+            "windows-x86_64": { "url": "https://example.com/app.exe", "size": 200 },
+            "darwin-aarch64": { "url": "https://example.com/app.tar.gz", "size": 300 }
+        }});
+        assert_eq!(
+            manifest_asset_size(&manifest, "https://example.com/app.exe"),
+            Some(200)
+        );
+        assert_eq!(
+            manifest_asset_size(&manifest, "https://example.com/other.exe"),
+            None
+        );
+        assert_eq!(
+            manifest_asset_size(&serde_json::json!({}), "https://example.com/app.exe"),
+            None
+        );
+    }
+
+    #[test]
+    fn missing_content_length_uses_size_until_actual_bytes_exceed_it() {
+        let mut value = snapshot();
+        value.total_bytes = Some(100);
+        apply_download_event(
+            &mut value,
+            DownloadEvent::Chunk {
+                bytes: 40,
+                total: None,
+            },
+        );
+        assert_eq!(value.total_bytes, Some(100));
+        apply_download_event(
+            &mut value,
+            DownloadEvent::Chunk {
+                bytes: 70,
+                total: None,
+            },
+        );
+        assert_eq!(value.total_bytes, None);
+        apply_download_event(&mut value, DownloadEvent::Verifying);
+        assert_eq!(value.total_bytes, Some(110));
+        assert_eq!(value.status, UpdateStatus::Verifying);
+        apply_download_event(&mut value, DownloadEvent::Failed);
+        assert_eq!(value.error_stage, Some(UpdateErrorStage::Verify));
+    }
+
+    #[test]
+    fn old_update_settings_keep_download_manual() {
+        let old: crate::domain::UpdateConfig =
+            serde_json::from_value(serde_json::json!({ "checkOnStart": true })).unwrap();
+        assert!(old.check_on_start);
+        assert!(!old.auto_download);
+        let enabled: crate::domain::UpdateConfig = serde_json::from_value(
+            serde_json::json!({ "checkOnStart": true, "autoDownload": true }),
+        )
+        .unwrap();
+        assert!(enabled.auto_download);
     }
 }

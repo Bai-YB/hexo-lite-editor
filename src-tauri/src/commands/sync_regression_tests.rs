@@ -11,6 +11,389 @@ fn record(root: &Path) -> SyncRecord {
     .unwrap()
 }
 
+fn write_fixture(root: &Path, path: &str, content: &str) {
+    let target = root.join(path);
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    fs::write(target, content).unwrap();
+}
+
+fn register_fixture(state: &AppState, root: &Path, remote: &Path) {
+    let mut item = record(root);
+    item.repository = remote.to_string_lossy().into_owned();
+    save_registry(
+        state,
+        &mut SyncRegistry {
+            records: vec![item],
+            baseline: vec![],
+        },
+    )
+    .unwrap();
+}
+
+#[test]
+fn first_sync_reports_same_path_conflicts_then_preserves_unique_files() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let a = temp.path().join("a");
+    let b = temp.path().join("b");
+    let remote = temp.path().join("remote.git");
+    super::tests::git_test_init_bare(&remote);
+    let state_a = AppState::new(&temp.path().join("state-a"));
+    let state_b = AppState::new(&temp.path().join("state-b"));
+    write_fixture(&a, "_config.yml", "from A");
+    write_fixture(&a, "source/_posts/a.md", "article A");
+    write_fixture(&b, "_config.yml", "from B");
+    write_fixture(&b, "source/_redirects", "redirect B");
+    register_fixture(&state_a, &a, &remote);
+    register_fixture(&state_b, &b, &remote);
+    assert_eq!(
+        run_sync_for_root(&state_a, &a, "auto").status,
+        ContentSyncStatus::Synced
+    );
+    let conflict = run_sync_for_root(&state_b, &b, "auto");
+    assert_eq!(conflict.status, ContentSyncStatus::Conflict);
+    assert_eq!(conflict.conflicts, vec!["_config.yml"]);
+    assert_eq!(fs::read_to_string(b.join("_config.yml")).unwrap(), "from B");
+    let registry = load_registry(&state_b).unwrap();
+    let item = &registry.records[0];
+    let cache = record_cache_dir(&state_b, &b, item);
+    let local = local_snapshot(&b, "source/images").unwrap();
+    let remote = snapshot_from_manifest(&cache, &read_manifest(&cache).unwrap()).unwrap();
+    apply_conflict_choices(
+        &state_b,
+        &b,
+        &cache,
+        item,
+        &local,
+        &remote,
+        &BTreeMap::from([("_config.yml".into(), "remote".into())]),
+    )
+    .unwrap();
+    assert_eq!(fs::read_to_string(b.join("_config.yml")).unwrap(), "from A");
+    assert!(b.join("source/_posts/a.md").exists());
+    assert!(b.join("source/_redirects").exists());
+}
+
+#[test]
+fn two_machines_merge_complete_sources_and_handle_deletions_without_losing_local_edits() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let a = temp.path().join("a");
+    let b = temp.path().join("b");
+    let remote = temp.path().join("remote.git");
+    super::tests::git_test_init_bare(&remote);
+    let state_a = AppState::new(&temp.path().join("state-a"));
+    let state_b = AppState::new(&temp.path().join("state-b"));
+    write_fixture(&a, "source/_posts/a.md", "article from A");
+    write_fixture(&a, "source/_redirects", "/old /new");
+    write_fixture(&a, ".gitattributes", "*.md text eol=crlf\n");
+    write_fixture(&a, ".gitignore", "source/_posts/\n");
+    write_fixture(&b, "_config.yml", "theme: quiet");
+    write_fixture(&b, "themes/quiet/layout/module.ejs", "new module");
+    register_fixture(&state_a, &a, &remote);
+    register_fixture(&state_b, &b, &remote);
+    let sync = |state: &AppState, root: &Path| {
+        let result = run_sync_for_root(state, root, "auto");
+        assert_eq!(result.status, ContentSyncStatus::Synced, "{result:?}");
+    };
+    sync(&state_a, &a);
+    let cache_a = record_cache_dir(&state_a, &a, &load_registry(&state_a).unwrap().records[0]);
+    write_fixture(&cache_a, "unrelated-cache.txt", "must remain local");
+    sync(&state_b, &b);
+    sync(&state_a, &a);
+    for root in [&a, &b] {
+        for path in [
+            "source/_posts/a.md",
+            "source/_redirects",
+            "_config.yml",
+            "themes/quiet/layout/module.ejs",
+        ] {
+            assert!(
+                root.join(path).is_file(),
+                "missing {} in {}",
+                path,
+                root.display()
+            );
+        }
+    }
+    write_fixture(&a, "source/_posts/a.md", "updated article");
+    write_fixture(&b, "_config.yml", "theme: quiet\nurl: https://example.com");
+    sync(&state_b, &b);
+    let background = run_sync_for_root(&state_a, &a, "push");
+    assert_eq!(
+        background.status,
+        ContentSyncStatus::RemoteAhead,
+        "{background:?}"
+    );
+    sync(&state_a, &a);
+    assert_eq!(
+        fs::read_to_string(a.join("source/_posts/a.md")).unwrap(),
+        "updated article"
+    );
+    assert!(fs::read_to_string(a.join("_config.yml"))
+        .unwrap()
+        .contains("https://example.com"));
+    assert!(
+        !git(&cache_a, &["ls-tree", "-r", "--name-only", "HEAD"], false)
+            .unwrap()
+            .contains("unrelated-cache.txt")
+    );
+    assert_eq!(
+        fs::read_to_string(b.join(".gitattributes")).unwrap(),
+        "*.md text eol=crlf\n"
+    );
+    sync(&state_b, &b);
+    fs::remove_file(a.join("source/_redirects")).unwrap();
+    sync(&state_a, &a);
+    write_fixture(&b, "source/_posts/local-only.md", "new local article");
+    sync(&state_b, &b);
+    assert!(!b.join("source/_redirects").exists());
+    assert!(b.join("source/_posts/local-only.md").is_file());
+    fs::remove_file(a.join("source/_posts/a.md")).unwrap();
+    sync(&state_a, &a);
+    write_fixture(&b, "source/_posts/a.md", "local edit must survive");
+    let conflict = run_sync_for_root(&state_b, &b, "auto");
+    assert_eq!(conflict.status, ContentSyncStatus::Conflict);
+    assert_eq!(conflict.conflicts, vec!["source/_posts/a.md"]);
+    assert_eq!(
+        fs::read_to_string(b.join("source/_posts/a.md")).unwrap(),
+        "local edit must survive"
+    );
+}
+
+#[test]
+fn successful_empty_sync_remains_a_baseline() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut item = record(temp.path());
+    assert!(!has_sync_baseline(&item));
+    item.last_synced_at = Some("2026-09-14T00:00:00Z".into());
+    assert!(has_sync_baseline(&item));
+    assert!(summarize_files(std::iter::empty(), Some(&item)).baseline_available);
+}
+
+#[test]
+fn post_upload_scan_failure_keeps_successful_baseline_but_requires_a_retry() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut item = record(temp.path());
+    item.status = ContentSyncStatus::Synced;
+    item.base_files
+        .insert("source/a.md".into(), "uploaded-hash".into());
+    item.last_synced_at = Some("2026-09-14T00:00:00Z".into());
+    verify_local_after_upload(&mut item, Err(AppError::invalid("scan failed")));
+    assert_eq!(item.status, ContentSyncStatus::LocalPending);
+    assert_eq!(item.base_files["source/a.md"], "uploaded-hash");
+    assert!(item.last_synced_at.is_some());
+    assert!(item
+        .message
+        .unwrap()
+        .contains("已上传，无法确认本地最新状态"));
+}
+
+#[test]
+fn cache_file_directory_swaps_prune_only_empty_managed_parents() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let nested = Snapshot::from([(
+        "source/a/file.md".into(),
+        FileSnapshot {
+            hash: hash_bytes(b"nested"),
+            bytes: (&b"nested"[..]).into(),
+        },
+    )]);
+    let flat = Snapshot::from([(
+        "source/a".into(),
+        FileSnapshot {
+            hash: hash_bytes(b"flat"),
+            bytes: (&b"flat"[..]).into(),
+        },
+    )]);
+    let save = |snapshot: &Snapshot| {
+        write_manifest(
+            &cache,
+            &SyncManifest {
+                schema_version: PROJECT_MANIFEST_SCHEMA,
+                image_dir: "source/images".into(),
+                files: hash_map(snapshot),
+            },
+        )
+        .unwrap()
+    };
+    copy_snapshot_incrementally(&cache, &nested).unwrap();
+    save(&nested);
+    copy_snapshot_incrementally(&cache, &flat).unwrap();
+    assert_eq!(fs::read(cache.join("source/a")).unwrap(), b"flat");
+    save(&flat);
+    copy_snapshot_incrementally(&cache, &nested).unwrap();
+    assert_eq!(fs::read(cache.join("source/a/file.md")).unwrap(), b"nested");
+    save(&nested);
+    write_fixture(&cache, "source/a/untracked.txt", "keep");
+    let error = copy_snapshot_incrementally(&cache, &flat).unwrap_err();
+    assert!(error.message.contains("未跟踪内容"));
+    assert_eq!(
+        fs::read(cache.join("source/a/untracked.txt")).unwrap(),
+        b"keep"
+    );
+}
+
+#[test]
+fn remote_file_directory_swaps_fail_before_any_local_write_or_transaction() {
+    for remote_is_directory in [true, false] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let cache = temp.path().join("cache");
+        let state = AppState::new(&temp.path().join("state"));
+        let (local_path, remote_path) = if remote_is_directory {
+            ("source/a", "source/a/file.md")
+        } else {
+            ("source/a/file.md", "source/a")
+        };
+        write_fixture(&root, local_path, "local preserved");
+        write_fixture(&root, "source/unrelated.md", "unrelated preserved");
+        write_fixture(&cache, remote_path, "remote");
+        let local = local_snapshot(&root, "source/images").unwrap();
+        let remote = local_snapshot(&cache, "source/images").unwrap();
+        let error =
+            apply_remote(&state, &root, &cache, &local, &remote, &hash_map(&local)).unwrap_err();
+        assert!(error.message.contains("文件与文件夹同名"));
+        assert_eq!(
+            fs::read_to_string(root.join(local_path)).unwrap(),
+            "local preserved"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("source/unrelated.md")).unwrap(),
+            "unrelated preserved"
+        );
+        assert!(!state
+            .sync_cache_dir
+            .join(cache_key(&path_key(&root)))
+            .join("apply-transaction.json")
+            .exists());
+    }
+}
+
+#[test]
+fn cache_keeps_unchanged_files_and_untracked_entries_while_removing_tracked_deletions() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().join("root");
+    let cache = temp.path().join("cache");
+    write_fixture(&root, "source/_posts/keep.md", "same");
+    write_fixture(&root, "source/_posts/remove.md", "remove");
+    let first = local_snapshot(&root, "source/images").unwrap();
+    copy_snapshot_to_plain_cache(&root, &cache, &first).unwrap();
+    write_manifest(
+        &cache,
+        &SyncManifest {
+            schema_version: PROJECT_MANIFEST_SCHEMA,
+            image_dir: "source/images".into(),
+            files: hash_map(&first),
+        },
+    )
+    .unwrap();
+    write_fixture(&cache, "notes.txt", "untracked cache entry");
+    let fixed = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    fs::File::options()
+        .write(true)
+        .open(cache.join("source/_posts/keep.md"))
+        .unwrap()
+        .set_modified(fixed)
+        .unwrap();
+    fs::remove_file(root.join("source/_posts/remove.md")).unwrap();
+    write_fixture(&root, "source/_redirects", "new redirect");
+    copy_snapshot_to_plain_cache(
+        &root,
+        &cache,
+        &local_snapshot(&root, "source/images").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::metadata(cache.join("source/_posts/keep.md"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        fixed
+    );
+    assert!(!cache.join("source/_posts/remove.md").exists());
+    assert!(cache.join("source/_redirects").exists());
+    assert_eq!(
+        fs::read_to_string(cache.join("notes.txt")).unwrap(),
+        "untracked cache entry"
+    );
+}
+
+#[test]
+fn excluded_large_files_do_not_block_sync_but_included_large_files_do() {
+    let temp = tempfile::TempDir::new().unwrap();
+    write_fixture(temp.path(), "source/_posts/hello.md", "hello");
+    let excluded = fs::File::create(temp.path().join("debug.log")).unwrap();
+    excluded.set_len(MAX_SYNC_FILE_BYTES + 1).unwrap();
+    assert_eq!(
+        local_snapshot(temp.path(), "source/images").unwrap().len(),
+        1
+    );
+    let included = fs::File::create(temp.path().join("large.dat")).unwrap();
+    included.set_len(MAX_SYNC_FILE_BYTES + 1).unwrap();
+    assert_eq!(
+        local_snapshot(temp.path(), "source/images")
+            .unwrap_err()
+            .code,
+        "sync_file_too_large"
+    );
+}
+
+#[test]
+fn webdav_transfer_count_is_unique_unknown_objects() {
+    let known_hash = hash_bytes(b"known");
+    let new_hash = hash_bytes(b"new");
+    let manifest = SyncManifest {
+        schema_version: PROJECT_MANIFEST_SCHEMA,
+        image_dir: "source/images".into(),
+        files: BTreeMap::from([
+            ("source/a.md".into(), known_hash.clone()),
+            ("source/b.md".into(), new_hash.clone()),
+            ("source/c.md".into(), new_hash.clone()),
+        ]),
+    };
+    let pending = pending_webdav_objects(&manifest, &BTreeSet::from([known_hash]));
+    assert_eq!(pending.len(), 1);
+    assert!(pending.contains_key(new_hash.as_str()));
+}
+
+#[test]
+fn summary_counts_full_source_scope_and_only_logical_changes() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut item = record(temp.path());
+    item.base_files = BTreeMap::from([
+        ("source/_posts/a.md".into(), "same".into()),
+        ("removed.md".into(), "gone".into()),
+    ]);
+    let summary = summarize_files(
+        [
+            ("source/_posts/a.md", "same", 10),
+            ("_config.yml", "changed", 20),
+            ("source/_redirects", "new", 30),
+            ("themes/quiet/layout/module.ejs", "module", 40),
+            ("source/images/a.png", "image", 50),
+        ]
+        .into_iter(),
+        Some(&item),
+    );
+    assert_eq!((summary.file_count, summary.total_bytes), (5, 150));
+    assert_eq!(
+        (
+            summary.pending_file_count,
+            summary.pending_bytes,
+            summary.deleted_file_count
+        ),
+        (4, 140, 1)
+    );
+    assert_eq!(
+        summary
+            .categories
+            .iter()
+            .map(|item| item.file_count)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 1, 1]
+    );
+}
+
 #[test]
 fn obsolete_schedule_cleanup_keeps_the_latest_receiver_alive() {
     let temp = tempfile::TempDir::new().unwrap();
