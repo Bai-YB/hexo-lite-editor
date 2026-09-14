@@ -6,6 +6,7 @@ for (const viewport of [
   { width: 640, height: 860, theme: "light" }
 ] as const) {
   test(`1.0.6.2 main surfaces ${viewport.width}x${viewport.height} ${viewport.theme}`, async ({ page }) => {
+    test.setTimeout(60000);
     await page.setViewportSize(viewport);
     const capture = async (name: string) => {
       await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, viewport.theme);
@@ -31,8 +32,8 @@ for (const viewport of [
     await expect(page.getByRole("button", { name: "立即同步", exact: true })).toBeVisible();
     await capture("sync-connected");
     await page.goto("/?demo=1&updateAvailable=1");
+    await expect(page.getByRole("button", { name: "查看更新", exact: true })).toBeVisible({ timeout: 15000 });
     await page.getByRole("button", { name: "关于", exact: true }).click();
-    await page.getByRole("button", { name: "检查更新", exact: true }).click();
     await page.getByRole("button", { name: "下载更新", exact: true }).click();
     await expect(page.getByText("更新包已验证。点击安装后，应用将自动重启。", { exact: true })).toBeVisible({ timeout: 8000 });
     await capture("about-ready");

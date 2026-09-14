@@ -365,10 +365,10 @@ test("云端前进时可以确认使用最新云端或用本机覆盖", async ({
 
 test("启动后静默检查更新，不弹阻断式对话框，关于页显示摘要和真实进度", async ({ page }) => {
   await page.goto("/?demo=1&updateAvailable=1");
+  await expect(page.getByRole("button", { name: "查看更新", exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByRole("heading", { name: "更新" })).toBeVisible();
-  await page.getByRole("button", { name: "检查更新" }).click();
+  await expect(page.getByRole("heading", { name: "更新", exact: true })).toBeVisible();
   await expect(page.getByText("有新版本可下载")).toBeVisible();
   await page.getByRole("button", { name: "下载更新" }).click();
   await expect(page.getByRole("progressbar")).toBeVisible();

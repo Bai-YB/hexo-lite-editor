@@ -24,8 +24,8 @@ test("默认只后台检查，手动下载显示真实进度和五条日志，�
 test("未知总大小使用不确定进度，减少动态效果时停止循环动画", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?demo=1&updateAvailable=1&updateUnknownSize=1");
+  await expect(page.getByRole("button", { name: "查看更新", exact: true })).toBeVisible({ timeout: 15000 });
   await page.getByRole("button", { name: "关于", exact: true }).click();
-  await page.getByRole("button", { name: "检查更新", exact: true }).click();
   await page.getByRole("button", { name: "下载更新", exact: true }).click();
   const progress = page.getByRole("progressbar");
   await expect(progress).toBeVisible();
