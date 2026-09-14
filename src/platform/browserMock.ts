@@ -380,6 +380,10 @@ export const browserMock = {
   downloadCloudflareAsset: async (_assetId: string) => [],
   getUpdateSnapshot: async () => structuredClone(mockUpdate),
   checkUpdate: async () => {
+    // Match the native operation lock and retain packages ready for installation.
+    if (["downloading", "verifying", "downloaded", "installing"].includes(mockUpdate.status)) {
+      return structuredClone(mockUpdate);
+    }
     emitMockUpdate({ ...mockUpdate, status: "checking" });
     return emitMockUpdate(demoFlag("updateAvailable")
       ? { currentVersion: appVersion, latestVersion: "1.0.7", status: "available", releaseNotes: "## 更新内容\n\n- 增量同步站点文件\n- 自动合并不同文件\n- 简化设置导航\n- 显示真实下载进度\n- 点击安装更新\n- 支持减少动态效果" }

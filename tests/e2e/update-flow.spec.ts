@@ -32,7 +32,15 @@ test("未知总大小使用不确定进度，减少动态效果时停止循环�
   expect(await progress.getAttribute("aria-valuenow")).toBeNull();
   await expect(page.locator(".progress-values strong")).toHaveText("");
   expect(await page.locator(".progress-fill").evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
+  const checkAgain = () => page.evaluate(async () => {
+    const modulePath = "/src/platform/tauri.ts";
+    const { platform } = await import(/* @vite-ignore */ modulePath);
+    return (await platform.checkUpdate()).status;
+  });
+  expect(["downloading", "verifying", "downloaded"]).toContain(await checkAgain());
   await expect(page.getByRole("button", { name: "安装更新", exact: true })).toBeVisible({ timeout: 15000 });
+  expect(await checkAgain()).toBe("downloaded");
+  await expect(page.getByRole("button", { name: "安装更新", exact: true })).toBeVisible();
 });
 
 test("开启自动下载后后台完成，不打断编辑，切换页面保留已下载状态", async ({ page }) => {
