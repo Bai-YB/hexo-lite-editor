@@ -10,7 +10,7 @@
 </script>
 
 <div class="settings-sticky-header">
-  <PageHeader title={$ui("设置")} description={$ui("按工作流程整理；更改只在保存后写入应用配置。")}>
+  <PageHeader title={$ui("设置")} description={$ui("偏好修改需保存；连接操作立即生效。")}>
     <span class:warning={dirty} class:success={!dirty} class="settings-save-state">{saving ? $ui("正在保存") : dirty ? $ui("有未保存更改") : $ui("已保存")}</span>
     {#if dirty || saving}
       <button class="button" type="button" disabled={saving} on:click={onDiscard}>{$ui("取消")}</button>

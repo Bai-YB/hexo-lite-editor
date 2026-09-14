@@ -250,11 +250,11 @@ test("远程图片不触发后端解析且切换文章不残留旧图", async ({
 test("内容同步向导要求公开仓库确认并展示首次同步预检", async ({ page }) => {
   await page.goto("/?demo=1&syncPublic=1");
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByRole("button", { name: /内容同步/ }).click();
+  await page.getByRole("button", { name: /文件同步/ }).click();
   const panel = page.locator(".settings-content-panel");
-  await expect(panel.getByRole("heading", { name: "项目同步", level: 3 })).toBeVisible();
-  await expect(panel.getByText(/项目同步分支会继承仓库可见性/)).toBeVisible();
-  const enable = panel.getByRole("button", { name: "确认启用" });
+  await expect(panel.getByRole("heading", { name: "本次变化", level: 3 })).toBeVisible();
+  await expect(panel.getByText(/我同意将草稿、配置和主题上传到公开仓库/)).toBeVisible();
+  const enable = panel.getByRole("button", { name: "合并并开始同步" });
   await expect(enable).toBeDisabled();
   await panel.getByRole("button", { name: "预检" }).click();
   await expect(panel.getByText("启用预检")).toBeVisible();
@@ -262,13 +262,13 @@ test("内容同步向导要求公开仓库确认并展示首次同步预检", as
   await panel.locator(".sync-warning input").check();
   await expect(enable).toBeEnabled();
   await enable.click();
-  await expect(panel.getByRole("button", { name: "上传本地内容" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "立即同步" })).toBeVisible();
 });
 
 test("WebDAV 真实测试通过后启用且配置表单始终可编辑", async ({ page }) => {
   await page.goto("/?demo=1");
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByRole("button", { name: /内容同步/ }).click();
+  await page.getByRole("button", { name: /文件同步/ }).click();
   const panel = page.locator(".settings-content-panel");
   await panel.getByLabel("同步方式").selectOption("webdav");
   await panel.getByLabel("WebDAV 服务器地址").fill("https://dav.example.com/remote.php/dav/files/blogger");
@@ -276,21 +276,20 @@ test("WebDAV 真实测试通过后启用且配置表单始终可编辑", async (
   await panel.getByLabel("WebDAV 用户名").fill("blogger");
   await panel.getByLabel("WebDAV 密码").fill("app-password");
   await panel.getByRole("button", { name: "保存并测试连接" }).click();
-  await expect(panel.getByText("WebDAV 真实连接和预检通过")).toBeVisible();
+  await expect(panel.getByText("连接测试通过")).toBeVisible();
   await expect(panel.getByLabel("WebDAV 密码")).toHaveValue("");
   await expect(panel.getByText(/hexo\/my-blog/)).toBeVisible();
-  await panel.getByRole("button", { name: "确认启用 WebDAV" }).click();
-  await expect(panel.getByRole("button", { name: "上传本地内容" })).toBeVisible();
+  await panel.getByRole("button", { name: "合并并开始同步" }).click();
+  await expect(panel.getByRole("button", { name: "立即同步" })).toBeVisible();
   await panel.locator(".sync-connection-details > summary").click();
-  await expect(panel.getByText("当前已应用连接")).toBeVisible();
   await expect(panel.getByLabel("WebDAV 服务器地址")).toBeVisible();
   await expect(panel.getByLabel("WebDAV 远端目录")).toBeVisible();
   await expect(panel.getByLabel("WebDAV 用户名")).toHaveValue("blogger");
   await expect(panel.getByLabel("WebDAV 密码")).toBeVisible();
-  await expect(panel.getByRole("button", { name: "上传本地内容" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "立即同步" })).toBeVisible();
 
   await panel.getByLabel("WebDAV 远端目录").fill("hexo/another-blog");
-  await expect(panel.getByText(/尚未应用/)).toBeVisible();
+  await expect(panel.getByText(/未应用的修改/)).toBeVisible();
   await expect(panel.getByRole("button", { name: "应用连接设置" })).toBeDisabled();
   await panel.getByRole("button", { name: "保存并测试连接" }).click();
   await expect(panel.getByRole("button", { name: "应用连接设置" })).toBeEnabled();
@@ -299,7 +298,7 @@ test("WebDAV 真实测试通过后启用且配置表单始终可编辑", async (
 test("WebDAV 认证失败后保留表单和输入并可直接修正", async ({ page }) => {
   await page.goto("/?demo=1&webdavAuthFail=1");
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByRole("button", { name: /内容同步/ }).click();
+  await page.getByRole("button", { name: /文件同步/ }).click();
   const panel = page.locator(".settings-content-panel");
   await panel.getByLabel("同步方式").selectOption("webdav");
   await panel.getByLabel("WebDAV 服务器地址").fill("https://dav.example.com/dav");
@@ -312,14 +311,14 @@ test("WebDAV 认证失败后保留表单和输入并可直接修正", async ({ p
   await expect(panel.getByLabel("WebDAV 密码")).toHaveValue("wrong-password");
   await panel.getByLabel("WebDAV 密码").fill("correct-password");
   await panel.getByRole("button", { name: "保存并测试连接" }).click();
-  await expect(panel.getByText("WebDAV 真实连接和预检通过")).toBeVisible();
+  await expect(panel.getByText("连接测试通过")).toBeVisible();
   await expect(panel.getByLabel("WebDAV 密码")).toHaveValue("");
 });
 
 test("多个 deploy 仓库必须由用户明确选择", async ({ page }) => {
   await page.goto("/?demo=1&syncMultiple=1");
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByRole("button", { name: /内容同步/ }).click();
+  await page.getByRole("button", { name: /文件同步/ }).click();
   const repository = page.getByLabel("目标仓库");
   await expect(repository).toHaveValue("");
   await expect(page.getByText("选择目标仓库后才能预检和启用内容同步。")).toBeVisible();
@@ -330,7 +329,7 @@ test("多个 deploy 仓库必须由用户明确选择", async ({ page }) => {
 test("内容同步冲突逐文件展示 Markdown 差异与二进制哈希选择", async ({ page }) => {
   await page.goto("/?demo=1&syncConflict=1");
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByRole("button", { name: /内容同步/ }).click();
+  await page.getByRole("button", { name: /文件同步/ }).click();
   const cards = page.locator(".sync-conflict-card");
   await expect(cards).toHaveCount(2);
   await expect(cards.nth(0)).toContainText("source/_posts/welcome.md");
@@ -351,9 +350,11 @@ test("内容同步冲突逐文件展示 Markdown 差异与二进制哈希选择"
 test("云端前进时可以确认使用最新云端或用本机覆盖", async ({ page }) => {
   await page.goto("/?demo=1&syncRemoteAhead=1");
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByRole("button", { name: /内容同步/ }).click();
+  await page.getByRole("button", { name: /文件同步/ }).click();
   const panel = page.locator(".settings-content-panel");
-  await expect(panel.getByRole("button", { name: "使用云端最新版本" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "合并云端变更" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "用本机项目覆盖云端" })).toBeHidden();
+  await panel.getByText("高级操作", { exact: true }).click();
   await expect(panel.getByRole("button", { name: "用本机项目覆盖云端" })).toBeVisible();
   await panel.getByRole("button", { name: "用本机项目覆盖云端" }).click();
   const dialog = page.getByRole("dialog", { name: "用本机项目覆盖云端？" });
@@ -362,44 +363,49 @@ test("云端前进时可以确认使用最新云端或用本机覆盖", async ({
   await expect(page.locator(".sync-status.synced")).toBeVisible();
 });
 
-test("启动后自动下载签名更新并在应用内提示安装", async ({ page }) => {
+test("启动后静默检查更新，不弹阻断式对话框，关于页显示摘要和真实进度", async ({ page }) => {
   await page.goto("/?demo=1&updateAvailable=1");
-  const dialog = page.getByRole("dialog", { name: "更新 1.0.7 已准备好" });
-  await expect(dialog).toBeVisible({ timeout: 8_000 });
-  await expect(dialog).toContainText("自动下载并通过签名验证");
-  await expect(dialog.getByRole("button", { name: "重启并安装" })).toBeVisible();
-  await dialog.getByRole("button", { name: "稍后" }).click();
-  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "关于" }).click();
+  await expect(page.getByRole("heading", { name: "更新" })).toBeVisible();
+  await page.getByRole("button", { name: "检查更新" }).click();
+  await expect(page.getByText("有新版本可下载")).toBeVisible();
+  await page.getByRole("button", { name: "下载更新" }).click();
+  await expect(page.getByRole("progressbar")).toBeVisible();
+  await expect(page.getByRole("progressbar")).toHaveAttribute("aria-valuenow", /[1-9]/);
+  await expect(page.getByText("更新包已验证。点击安装后，应用将自动重启。")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("本次更新")).toBeVisible();
+  await expect(page.getByText("完整更新日志")).toBeVisible();
 });
 
 test("维护页不向普通用户显示任务日志或终端输出，关于页保持精简", async ({ page }) => {
   await page.getByRole("button", { name: "设置" }).click();
-  await page.getByRole("button", { name: /^维护/ }).click();
+  await page.getByRole("button", { name: /^更新与恢复/ }).click();
   await expect(page.getByRole("heading", { name: "更新与恢复" })).toBeVisible();
   await expect(page.getByText("任务日志")).toHaveCount(0);
   await expect(page.locator(".diagnostic-log-view")).toHaveCount(0);
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByText("版本 1.0.6")).toBeVisible();
+  await expect(page.getByText("版本 1.0.6.2")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);
   await expect(page.getByText("操作系统")).toHaveCount(0);
 });
 
 test("设置分类状态持久化，未保存标记和图床来源正确联动", async ({ page }) => {
   await page.getByRole("button", { name: "设置" }).click();
-  const editingNav = page.getByRole("button", { name: /编辑体验/ });
+  const editingNav = page.getByRole("navigation", { name: "设置分类" }).getByRole("button", { name: "编辑器", exact: true });
   await editingNav.click();
   await expect(editingNav).toHaveAttribute("aria-current", "page");
   await page.getByRole("button", { name: "关于" }).click();
   await page.getByRole("button", { name: "设置" }).click();
-  await expect(page.getByRole("button", { name: /编辑体验/ })).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("navigation", { name: "设置分类" }).getByRole("button", { name: "编辑器", exact: true })).toHaveAttribute("aria-current", "page");
 
-  await page.getByRole("button", { name: /图片与图床/ }).click();
+  await page.getByRole("button", { name: /^图片/ }).click();
   const imageBed = page.locator(".settings-content-panel");
   await expect(imageBed.getByText("图片保存目录")).toHaveCount(0);
   await expect(imageBed.getByText("Markdown 访问前缀")).toHaveCount(0);
   await expect(imageBed.getByText("图床名称")).toHaveCount(0);
   await imageBed.locator("select").selectOption("cloudflare-imgbed");
-  await expect(page.getByRole("button", { name: /图片与图床/ }).locator(".settings-dirty-dot")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^图片/ }).locator(".settings-dirty-dot")).toBeVisible();
   await expect(imageBed.getByText("图片保存目录")).toHaveCount(0);
   await expect(imageBed.getByText("Markdown 访问前缀")).toHaveCount(0);
   await expect(imageBed.getByText("图床名称")).toHaveCount(0);
@@ -416,7 +422,7 @@ test("设置分类状态持久化，未保存标记和图床来源正确联动",
   await expect(tokenDialog).toHaveCount(0);
   await expect(page.getByText("Token 已创建并保存到系统凭据库。")).toBeVisible();
   // Token acquisition persists only connection fields; explicitly save the selected provider.
-  await expect(page.getByRole("button", { name: /图片与图床/ }).locator(".settings-dirty-dot")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^图片/ }).locator(".settings-dirty-dot")).toBeVisible();
   await page.getByRole("button", { name: "保存", exact: true }).click();
 
   await imageBed.getByRole("button", { name: "测试连接", exact: true }).click();
@@ -442,7 +448,7 @@ test("设置分类切换时内容宽度保持稳定", async ({ page }) => {
     const generalBox = await layout.boundingBox();
     const generalClientWidth = await settingsPage.evaluate((element) => element.clientWidth);
 
-    await page.getByRole("button", { name: /编辑体验/ }).click();
+    await page.getByRole("navigation", { name: "设置分类" }).getByRole("button", { name: "编辑器", exact: true }).click();
     const editingBox = await layout.boundingBox();
     const editingClientWidth = await settingsPage.evaluate((element) => element.clientWidth);
 
@@ -454,6 +460,27 @@ test("设置分类切换时内容宽度保持稳定", async ({ page }) => {
   }
 
   await expect(settingsPage).toHaveCSS("scrollbar-gutter", "stable");
+});
+
+test("窄窗口中设置六组导航清晰，连接控件使用单列", async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 900 });
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  const nav = page.getByRole("navigation", { name: "设置分类" });
+  await expect(nav.getByRole("button")).toHaveText(["常规", "编辑器", "图片", "预览与发布", "文件同步", "更新与恢复"]);
+  await nav.getByRole("button", { name: "文件同步", exact: true }).click();
+  const panel = page.locator(".settings-content-panel");
+  await expect(panel.getByText("主题与模块", { exact: true })).toBeVisible();
+  await panel.getByLabel("同步方式").selectOption("webdav");
+  const address = panel.getByLabel("WebDAV 服务器地址");
+  await expect(address).toBeVisible();
+  const geometry = await address.evaluate((element) => {
+    const row = element.closest(".setting-row")!;
+    const label = row.querySelector(".setting-copy")!;
+    return { row: row.getBoundingClientRect().width, input: element.getBoundingClientRect().width, inputTop: element.getBoundingClientRect().top, labelBottom: label.getBoundingClientRect().bottom, overflow: document.documentElement.scrollWidth > window.innerWidth };
+  });
+  expect(geometry.inputTop).toBeGreaterThan(geometry.labelBottom);
+  expect(geometry.input).toBeGreaterThan(geometry.row - 30);
+  expect(geometry.overflow).toBe(false);
 });
 
 test("页面过渡在 200ms 内结束且离场页不拦截点击", async ({ page }) => {
@@ -525,6 +552,6 @@ test("英文模式覆盖编辑器、图床、设置和插件管理 UI", async ({
   await page.locator(".nav-item").filter({ hasText: "Images" }).click();
   await expect(page.getByRole("heading", { name: "Images", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Import", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Editor" }).click();
+  await page.locator(".nav-rail").getByRole("button", { name: "Editor", exact: true }).click();
   await expect(page.getByRole("button", { name: "Quick preview", exact: true })).toBeVisible();
 });

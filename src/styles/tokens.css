@@ -41,6 +41,7 @@
   --space-group: 13px;
   --duration-fast: 120ms;
   --duration-normal: 160ms;
+  --ease-feedback: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 :root[data-theme="dark"] {

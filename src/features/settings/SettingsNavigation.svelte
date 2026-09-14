@@ -31,7 +31,7 @@
       on:keydown={(event) => onKeydown(event, index)}
     >
       <span class="settings-nav-icon" aria-hidden="true"><SectionIcon size={16} /></span>
-      <span class="settings-nav-copy"><strong>{$ui(section.title)}</strong><small>{$ui(section.description)}</small></span>
+      <span class="settings-nav-copy"><strong>{$ui(section.title)}</strong></span>
       {#if dirtySections[section.id]}<i class="settings-dirty-dot" aria-label={$ui("此分类有未保存更改")}></i>{/if}
     </button>
   {/each}

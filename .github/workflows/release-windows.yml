@@ -9,7 +9,7 @@ on:
       version:
         description: "Version without the v prefix"
         required: true
-        default: "1.0.6.1"
+        default: "1.0.6.2"
 
 permissions:
   contents: write
@@ -91,7 +91,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo clippy --all-targets --all-features -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test
+          cargo test --all-targets --all-features
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Package Windows release
@@ -155,23 +155,28 @@ jobs:
           )
           $checksumAsset = "$releaseDirectory/SHA256SUMS.txt"
           $manifestAsset = "$releaseDirectory/release-manifest.json"
-          if (gh release view $tag 2>$null) {
-            gh release edit $tag --draft --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            gh release upload $tag @binaryAssets --clobber
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            gh release upload $tag $checksumAsset --clobber
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            # Upload the manifest last. macOS uses it as the atomic pairing marker
-            # for the Windows updater binary and signature.
-            gh release upload $tag $manifestAsset --clobber
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } else {
+          gh release view $tag --json isDraft --jq .isDraft 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
             $tagArgument = if ($env:GITHUB_REF -like "refs/tags/v*") { @("--verify-tag") } else { @("--target", $env:GITHUB_SHA) }
-            gh release create $tag @binaryAssets @tagArgument --draft --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            gh release upload $tag $checksumAsset --clobber
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            gh release upload $tag $manifestAsset --clobber
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            # Another platform may create the same draft between view and create.
+            # Create without assets, then use one upload path after re-reading it.
+            gh release create $tag @tagArgument --draft --title "Hexo Lite Editor $env:RELEASE_VERSION" --notes-file $notes
           }
+          $isDraft = $null
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $isDraft = gh release view $tag --json isDraft --jq .isDraft 2>$null
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw "Could not read or create release $tag" }
+            Start-Sleep -Seconds 2
+          }
+          if ($isDraft -ne "true") {
+            Write-Host "Release $tag is already published; refusing to replace immutable assets."
+            exit 0
+          }
+          gh release upload $tag @binaryAssets --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release upload $tag $checksumAsset --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Upload the manifest last so it describes the complete binary/signature set.
+          gh release upload $tag $manifestAsset --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

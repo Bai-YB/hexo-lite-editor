@@ -14,6 +14,7 @@ vi.mock("$platform/tauri", () => ({
     credentialLegacyAvailable: vi.fn(async () => false),
     detectContentSync: vi.fn(async () => ({ candidates: [], requiresSelection: false })),
     getContentSyncStatus: vi.fn(),
+    getContentSyncSummary: vi.fn(async () => ({ fileCount: 9, totalBytes: 4096, pendingFileCount: 2, pendingBytes: 1024, deletedFileCount: 1, baselineAvailable: true, categories: [{ id: "articles", fileCount: 3, totalBytes: 1024 }, { id: "site", fileCount: 2, totalBytes: 1024 }, { id: "themes", fileCount: 2, totalBytes: 1024 }, { id: "assets", fileCount: 2, totalBytes: 1024 }] })),
     getContentSyncProgress: vi.fn(async () => null),
     getContentSyncConflicts: vi.fn(async () => [{ path: "source/_posts/post.md", kind: "markdown", localText: "local", remoteText: "remote" }]),
     webDavCredentialStatus: vi.fn(async () => ({ configured: true, username: "writer" })),
@@ -54,7 +55,7 @@ describe("settings interaction recovery", () => {
     finish({ username: "writer", testedAt: "2026-09-11", sync: status, preflight: { endpoint: "https://old.example/dav", remoteDir: "hexo-lite-content", fileCount: 1, totalBytes: 4, remoteFileCount: 0, remoteTotalBytes: 0, localOnlyCount: 1, remoteOnlyCount: 0, differentCount: 0, remoteExists: false, remoteManifestValid: false } });
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("请重新测试当前输入"));
     expect((view.getByLabelText("WebDAV 服务器地址") as HTMLInputElement).value).toBe("https://new.example/dav");
-    expect(view.queryByText("WebDAV 真实连接和预检通过")).toBeNull();
+    expect(view.queryByText("连接测试通过")).toBeNull();
   });
   it("shows real file progress, rejects duplicate upload, and keeps cancellation pending until the operation finishes", async () => {
     let finish!: (status: ContentSyncView) => void;
@@ -62,14 +63,14 @@ describe("settings interaction recovery", () => {
     vi.mocked(platform.getContentSyncStatus).mockResolvedValue(status);
     vi.mocked(platform.runContentSync).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync" });
-    await waitFor(() => expect(view.getByRole("button", { name: "立即上传变更" })).toBeTruthy());
-    await fireEvent.click(view.getByRole("button", { name: "立即上传变更" }));
+    await waitFor(() => expect(view.getByRole("button", { name: "立即同步" })).toBeTruthy());
+    await fireEvent.click(view.getByRole("button", { name: "立即同步" }));
     await waitFor(() => expect(platform.runContentSync).toHaveBeenCalledOnce());
     const handler = vi.mocked(platform.onContentSyncPhase).mock.calls[0][0];
     handler({ projectId: "project", sessionGeneration: 1, phase: "uploading", status: "checking", message: "upload source/links.yml", completedFiles: 2, totalFiles: 6 });
     await tick();
     expect(view.getByRole("progressbar").getAttribute("value")).toBe("2");
-    expect((view.getByRole("button", { name: "立即上传变更" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((view.getByRole("button", { name: "立即同步" }) as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.click(view.getByRole("button", { name: "停止同步" }));
     expect(platform.cancelContentSync).toHaveBeenCalledWith("project", 1);
     expect(view.getByText("正在停止同步...")).toBeTruthy();
@@ -140,8 +141,8 @@ describe("settings interaction recovery", () => {
     const save = vi.fn(async (value: AppConfigV3) => value);
     const view = render(SettingsPage, { config, initialSection: "editing", onSaveConfig: save });
     await fireEvent.change(view.getByLabelText("字号"), { target: { value: "20" } });
-    await fireEvent.click(view.getByRole("button", { name: /图片与图床/ }));
-    await fireEvent.change(view.getByLabelText("默认来源"), { target: { value: "cloudflare-imgbed" } });
+    await fireEvent.click(view.getByRole("button", { name: /^图片/ }));
+    await fireEvent.change(view.getByLabelText("图片保存到"), { target: { value: "cloudflare-imgbed" } });
     await fireEvent.change(view.getByLabelText("服务地址"), { target: { value: "https://img.example.com" } });
     await fireEvent.click(view.getByRole("button", { name: "一键获取 Token" }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
@@ -171,7 +172,43 @@ describe("settings interaction recovery", () => {
     const status: ContentSyncView = { enabled: true, provider: "webdav", status: "remoteAhead", endpoint: "https://dav.example.com", remoteDir: "blog", conflicts: [], lastSyncedAt: "2026-09-10T00:00:00Z" };
     vi.mocked(platform.getContentSyncStatus).mockResolvedValue(status);
     const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync" });
-    await waitFor(() => expect(view.getByRole("button", { name: "使用云端最新版本" })).toBeTruthy());
-    expect(view.getByRole("button", { name: "用本机项目覆盖云端" })).toBeTruthy();
+    await waitFor(() => expect(view.getByRole("button", { name: "合并云端变更" })).toBeTruthy());
+    expect(view.getByRole("button", { name: "用本机项目覆盖云端" }).closest("details")?.open).toBe(false);
+    await fireEvent.click(view.getByText("高级操作", { exact: true }));
+    expect(view.container.querySelector(".sync-danger-zone")).toBeTruthy();
+  });
+
+  it("summarizes all source categories and merges remote changes without an overwrite dialog", async () => {
+    const status: ContentSyncView = { enabled: true, provider: "github", status: "remoteAhead", conflicts: [], lastSyncedAt: "2026-09-10T00:00:00Z" };
+    vi.mocked(platform.getContentSyncStatus).mockResolvedValue(status);
+    vi.mocked(platform.runContentSync).mockResolvedValue({ ...status, status: "synced" });
+    const publish = vi.fn(async () => {});
+    const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync", onPublish: publish });
+    await waitFor(() => expect(view.getByText("配置与页面")).toBeTruthy());
+    for (const label of ["文章与草稿", "配置与页面", "主题与模块", "图片与资源"]) expect(view.getByText(label)).toBeTruthy();
+    expect(view.container.querySelector(".sync-change-summary")?.textContent).toContain("待上传 2 个文件 · 1.0 KB");
+    expect(view.container.querySelector(".sync-change-summary")?.textContent).toContain("删除 1 个文件");
+    expect((view.getByRole("button", { name: "发布网站" }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(view.getByRole("button", { name: "合并云端变更" }));
+    await waitFor(() => expect(platform.runContentSync).toHaveBeenCalledWith("project", 1, "auto", false));
+    expect(view.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect((view.getByRole("button", { name: "发布网站" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(publish).not.toHaveBeenCalled();
+    await fireEvent.click(view.getByRole("button", { name: "发布网站" }));
+    expect(publish).toHaveBeenCalledOnce();
+  });
+
+  it("keeps automatic download opt-in and preserves it when toggling startup checks", async () => {
+    const save = vi.fn(async (value: AppConfigV3) => value);
+    const view = render(SettingsPage, { config: structuredClone(defaultConfig), initialSection: "maintenance", onSaveConfig: save });
+    const download = view.getByLabelText("后台下载更新") as HTMLInputElement;
+    expect(download.checked).toBe(false);
+    await fireEvent.click(download);
+    await fireEvent.click(view.getByLabelText("启动时检查更新"));
+    expect(download.disabled).toBe(true);
+    expect(download.checked).toBe(true);
+    await fireEvent.click(view.getByRole("button", { name: /^保存$/ }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save.mock.calls[0][0].update).toEqual({ checkOnStart: false, autoDownload: true });
   });
 });

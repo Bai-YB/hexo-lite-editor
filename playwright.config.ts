@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   globalSetup: "./tests/e2e/global-setup.ts",
   testDir: "./tests/e2e",
+  workers: 2,
   outputDir: "./output/playwright/results",
   reporter: [["list"], ["html", { outputFolder: "output/playwright/report", open: "never" }]],
   use: {

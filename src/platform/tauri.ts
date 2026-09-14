@@ -30,6 +30,7 @@ import type {
   ContentSyncDetection,
   ContentSyncEvent,
   ContentSyncPreflight,
+  ContentSyncSummary,
   WebDavConnectionTestResult,
   ContentSyncView,
   PreviewServerView,
@@ -350,11 +351,15 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.getContentSyncStatus();
     return call<ContentSyncView>("get_content_sync_status", { projectId, sessionGeneration });
   },
-  enableContentSync(request: { projectId: string; sessionGeneration: number; repository: string; branch: string; initialChoice?: "local" | "remote"; confirmPublic: boolean }) {
+  getContentSyncSummary(projectId: string, sessionGeneration: number) {
+    if (isBrowserDemo()) return browserMock.getContentSyncSummary();
+    return call<ContentSyncSummary>("get_content_sync_summary", { projectId, sessionGeneration });
+  },
+  enableContentSync(request: { projectId: string; sessionGeneration: number; repository: string; branch: string; initialChoice?: "auto" | "local" | "remote"; confirmPublic: boolean }) {
     if (isBrowserDemo()) return browserMock.enableContentSync(request);
     return call<ContentSyncView>("enable_content_sync", { request });
   },
-  enableWebDavContentSync(request: { projectId: string; sessionGeneration: number; endpoint: string; remoteDir: string; initialChoice?: "local" | "remote" }) {
+  enableWebDavContentSync(request: { projectId: string; sessionGeneration: number; endpoint: string; remoteDir: string; initialChoice?: "auto" | "local" | "remote" }) {
     if (isBrowserDemo()) return browserMock.enableWebDavContentSync(request);
     return call<ContentSyncView>("enable_webdav_content_sync", { request });
   },
@@ -366,9 +371,9 @@ export const platform = {
     if (isBrowserDemo()) return browserMock.disableContentSync();
     return call<ContentSyncView>("disable_content_sync", { projectId, sessionGeneration });
   },
-  runContentSync(projectId: string, sessionGeneration: number, direction: "auto" | "local" | "remote" | "overwriteLocal" | "overwriteRemote" = "auto") {
+  runContentSync(projectId: string, sessionGeneration: number, direction: "auto" | "local" | "remote" | "overwriteLocal" | "overwriteRemote" = "auto", confirmScope = false) {
     if (isBrowserDemo()) return browserMock.runContentSync(direction);
-    return call<ContentSyncView>("run_content_sync", { request: { projectId, sessionGeneration, direction } });
+    return call<ContentSyncView>("run_content_sync", { request: { projectId, sessionGeneration, direction, confirmScope } });
   },
   cancelContentSync(projectId: string, sessionGeneration: number) {
     if (isBrowserDemo()) return Promise.resolve(false);
@@ -528,6 +533,7 @@ export const platform = {
   installUpdate() { if (isBrowserDemo()) return browserMock.installUpdate(); return call<void>("install_update"); },
   downloadAndInstallUpdate() { return call<void>("download_and_install_update"); },
   async onUpdateSnapshot(handler: (snapshot: import("$shared/types/app").UpdateSnapshot) => void): Promise<UnlistenFn> {
+    if (isBrowserDemo()) return browserMock.onUpdateSnapshot(handler);
     if (!isTauri()) return () => undefined;
     return listen<import("$shared/types/app").UpdateSnapshot>("update-snapshot-changed", ({ payload }) => handler(payload));
   }

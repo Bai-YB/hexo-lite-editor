@@ -71,7 +71,7 @@
 
 .settings-nav button {
   width: 100%;
-  min-height: 58px;
+  min-height: 46px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -130,7 +130,7 @@
 .settings-content-panel {
   min-width: 0;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .settings-content-heading {
@@ -141,7 +141,7 @@
 .settings-content-heading h2 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: -0.01em; }
 .settings-content-heading > span { display: block; margin-top: 6px; color: var(--text-secondary); font-size: 12px; }
 
-.settings-block { padding: 18px 24px 20px; }
+.settings-block { padding: 22px 24px; }
 .settings-block + .settings-block { border-top: 1px solid var(--border-subtle); }
 
 .settings-block-heading { margin-bottom: 10px; }
@@ -149,9 +149,9 @@
 .setting-subsection-heading h3 {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0;
 }
 .settings-block-heading p { margin: 3px 0 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; }
 
@@ -691,4 +691,24 @@
   .settings-nav small { display: none; }
   .settings-content-panel .setting-row { grid-template-columns: minmax(0, 1fr) minmax(180px, 240px); }
   .settings-content-panel .credential-actions { width: 100%; }
+}
+
+@media (max-width: 660px) {
+  .settings-page { padding-inline: 14px; }
+  .settings-sticky-header { margin-inline: -14px; padding-inline: 14px; }
+  .settings-content-heading, .settings-block { padding-inline: 18px; }
+  .settings-nav { position: static; }
+  .settings-content-panel .setting-row { grid-template-columns: minmax(0, 1fr); gap: 10px; padding-block: 12px; }
+  .settings-content-panel .compact-control,
+  .settings-content-panel .control-wide,
+  .settings-content-panel .credential-control,
+  .settings-content-panel .credential-actions { width: 100%; justify-self: stretch; }
+  .settings-content-panel .credential-actions { justify-items: stretch; }
+  .settings-content-panel .button-row { flex-wrap: wrap; }
+  .settings-content-panel .button-row > .button { flex: 1 1 auto; }
+  .settings-content-panel .setting-row > .button { width: 100%; }
+  .settings-content-panel .switch { justify-self: start; }
+  .settings-content-panel .sync-diff { grid-template-columns: minmax(0, 1fr); }
+  .settings-content-panel .recent-project-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .settings-content-panel .recent-availability { display: none; }
 }

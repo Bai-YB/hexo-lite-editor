@@ -15,6 +15,8 @@
   import PageTransition from "$shared/components/PageTransition.svelte";
   import { isTauri, normalizeError, platform } from "$platform/tauri";
   import { defaultConfig } from "$shared/types/app";
+  import { shouldAutoDownload, updateStore } from "$features/update/updateStore";
+  import { updateViewModel } from "$features/update/updateViewModel";
   import type {
     AppConfigV3,
     AppPage,
@@ -24,8 +26,7 @@
     PreviewServerView,
     RecentProjectView,
     SettingsSectionId,
-    TaskEvent,
-    UpdateSnapshot
+    TaskEvent
   } from "$shared/types/app";
   import { EditorSessionStore } from "$features/editor/EditorSessionStore";
   import { FileSessionStore } from "$features/files/FileSessionStore";
@@ -64,6 +65,8 @@
   let unlistenSyncPhase: (() => void) | undefined;
   let unlistenRescan: (() => void) | undefined;
   let unlistenClose: (() => void) | undefined;
+  let unlistenUpdate: (() => void) | undefined;
+  let updateCheckTimer: ReturnType<typeof setTimeout> | undefined;
   let configTimer: ReturnType<typeof setTimeout> | undefined;
   let notice = "";
   let noticeSeverity: "info" | "error" = "info";
@@ -83,7 +86,7 @@
   let publishTaskId = "";
   let pendingImageUploads = 0;
   let settingsInitialSection: SettingsSectionId | null = null;
-  let autoUpdateReady: UpdateSnapshot | null = null;
+  let dismissedUpdateVersion = "";
   let configRevision = 0;
   let configSaveQueue: Promise<unknown> = Promise.resolve();
   let externalChange: "changed" | "deleted" | null = null;
@@ -111,11 +114,23 @@
   $: activeTask = findActiveTask(taskEvents);
   $: serverActive = previewServer?.state === "running";
   $: activeDocumentTitle = articles.find((article) => article.articleId === activeArticleId)?.title ?? "";
+  $: globalUpdateModel = updateViewModel($updateStore);
 
   onMount(async () => {
     window.addEventListener("keydown", handleShortcut);
     // Warm the small page modules so the first navigation is as quick as later ones.
     void Promise.all(Object.values(pageLoaders).map((load) => load()));
+    try {
+      let receivedUpdateEvent = false;
+      unlistenUpdate = await platform.onUpdateSnapshot((snapshot) => {
+        receivedUpdateEvent = true;
+        updateStore.set(snapshot);
+      });
+      const initialUpdate = await platform.getUpdateSnapshot();
+      if (!receivedUpdateEvent) updateStore.set(initialUpdate);
+    } catch (error) {
+      console.info("更新状态暂不可用", normalizeError(error).message);
+    }
     try {
       const loaded = await platform.loadConfig();
       config = loaded.config;
@@ -127,26 +142,17 @@
         const lastCheckKey = "hexo-lite-editor:update-last-auto-check";
         const lastCheck = Number(localStorage.getItem(lastCheckKey) ?? "0");
         if (!Number.isFinite(lastCheck) || Date.now() - lastCheck >= 86_400_000) {
-          setTimeout(() => {
+          updateCheckTimer = setTimeout(() => {
             void (async () => {
-              let update: UpdateSnapshot;
               try {
-                update = await platform.checkUpdate();
+                const update = await platform.checkUpdate();
+                updateStore.set(update);
                 localStorage.setItem(lastCheckKey, String(Date.now()));
-              } catch (error) {
-                console.info("启动更新检查未完成", normalizeError(error).message);
-                return;
-              }
-              if (update.status !== "available") return;
-              showNotice(`发现新版本 ${update.latestVersion ?? ""}，正在后台安全下载。`);
-              try {
-                const downloaded = await platform.downloadUpdate();
-                if (downloaded.status === "downloaded") {
-                  autoUpdateReady = downloaded;
-                  showNotice(`版本 ${downloaded.latestVersion ?? ""} 已下载并验证签名，可重启安装。`);
+                if (shouldAutoDownload(update, config.update.autoDownload)) {
+                  updateStore.set(await platform.downloadUpdate());
                 }
               } catch (error) {
-                showNotice(`自动下载更新失败：${normalizeError(error).message}`, "error");
+                console.info("后台更新未完成", normalizeError(error).message);
               }
             })();
           }, 3000);
@@ -228,6 +234,8 @@
     unlistenSyncPhase?.();
     unlistenRescan?.();
     unlistenClose?.();
+    unlistenUpdate?.();
+    clearTimeout(updateCheckTimer);
     clearTimeout(configTimer);
     clearTimeout(noticeTimer);
     unsubscribeEditor();
@@ -480,13 +488,22 @@
   }
 
   function beforeSync(): Promise<boolean> {
+    if (activeTask || publishing) {
+      showNotice("请等待 Hexo 或发布任务完成后再同步。", "error");
+      return Promise.resolve(false);
+    }
     if (guardAction || recoveryBusy || pendingImageUploads > 0 || externalChange) {
       showNotice("请先完成图片操作或处理当前文章的版本差异，再同步。", "error");
       return Promise.resolve(false);
     }
     return new Promise((resolve) => {
       guardCompletion = resolve;
-      requestGuard("同步前，请保存或放弃文章和项目文件的修改。", () => { resolve(true); guardCompletion = null; }, "documents");
+      requestGuard("同步前，请保存或放弃文章和项目文件的修改。", () => {
+        const busy = Boolean(activeTask) || publishing || pendingImageUploads > 0 || recoveryBusy || Boolean(externalChange);
+        if (busy) showNotice("当前任务尚未完成，请稍后再同步。", "error");
+        resolve(!busy);
+        guardCompletion = null;
+      }, "documents");
     });
   }
 
@@ -670,9 +687,15 @@
       showNotice("请等待图片上传、Hexo 或发布任务完成后再安装更新。", "error");
       return;
     }
-    autoUpdateReady = null;
     requestGuard("安装更新前需要保存或放弃文章、项目文件和设置中的修改。", async () => {
-      try { await platform.installUpdate(); }
+      try {
+        await flushPendingConfig();
+        if (pendingImageUploads > 0 || activeTask || publishing || previewServer?.state === "starting" || previewServer?.state === "stopping") {
+          showNotice("请等待当前任务完成后再安装更新。", "error");
+          return;
+        }
+        await platform.installUpdate();
+      }
       catch (error) { showNotice(normalizeError(error).message, "error"); }
     }, "both");
   }
@@ -920,6 +943,7 @@
             onNotice={showNotice}
             onPendingImageUploadsChange={(count: number) => (pendingImageUploads = count)}
             onInstallUpdate={installUpdate}
+            onOpenUpdates={() => navigate("about")}
             onOpenSettings={(section?: SettingsSectionId) => navigate("settings", section ?? "maintenance")}
               />
             {/await}
@@ -927,6 +951,13 @@
         {/key}
       {/if}
       <div class="status-toasts" aria-live="polite">
+        {#if page !== "about" && ["available", "downloading", "verifying", "downloaded", "error"].includes($updateStore.status) && dismissedUpdateVersion !== `${$updateStore.latestVersion ?? ""}:${$updateStore.status}`}
+          <div class="task-indicator notice-indicator" role="status">
+            <span>{$ui(globalUpdateModel.stageLabel)}{#if $updateStore.latestVersion} · {$updateStore.latestVersion}{/if}{#if $updateStore.status === "downloading" && globalUpdateModel.percent !== null} · {Math.floor(globalUpdateModel.percent)}%{/if}</span>
+            {#if globalUpdateModel.canInstall}<button class="button" type="button" on:click={installUpdate}>{$ui("安装更新")}</button>{:else}<button class="button" type="button" on:click={() => navigate("about")}>{$ui("查看更新")}</button>{/if}
+            <button class="notice-close" type="button" aria-label={$ui("稍后")} on:click={() => (dismissedUpdateVersion = `${$updateStore.latestVersion ?? ""}:${$updateStore.status}`)}><X size={14} /></button>
+          </div>
+        {/if}
         {#if externalChange}
           <div class="task-indicator notice-indicator" role="status">
             <span>{externalChange === "deleted" ? $ui("当前文章已在云端删除，本地内容已保留。") : $ui("当前文章有云端更新，保存已暂停。")}</span>
@@ -986,16 +1017,6 @@
         <button class="button danger" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("close")}>{$ui("放弃并关闭文章")}</button>
       {/if}
     </svelte:fragment>
-  </ModalDialog>
-{/if}
-
-{#if autoUpdateReady}
-  <ModalDialog
-    title={$ui("更新 {p0} 已准备好", { p0: autoUpdateReady.latestVersion ?? "" })}
-    description={$ui("更新包已在应用内自动下载并通过签名验证。可以现在重启安装，也可以稍后在“关于”页面安装。")}
-    onClose={() => (autoUpdateReady = null)}
-  >
-    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (autoUpdateReady = null)}>{$ui("稍后")}</button><button class="button primary" type="button" data-autofocus on:click={installUpdate}>{$ui("重启并安装")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 

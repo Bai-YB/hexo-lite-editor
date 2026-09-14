@@ -20,6 +20,7 @@ import type {
   ContentSyncConflict,
   ContentSyncDetection,
   ContentSyncPreflight,
+  ContentSyncSummary,
   ContentSyncView,
   CredentialStatus,
   WebDavContentSyncPreflight,
@@ -41,6 +42,13 @@ const session = {
 
 const demoFlag = (name: string) =>
   typeof location !== "undefined" && new URLSearchParams(location.search).get(name) === "1";
+let mockUpdate: import("$shared/types/app").UpdateSnapshot = { currentVersion: appVersion, status: "idle" };
+const mockUpdateListeners = new Set<(snapshot: import("$shared/types/app").UpdateSnapshot) => void>();
+function emitMockUpdate(snapshot: import("$shared/types/app").UpdateSnapshot) {
+  mockUpdate = snapshot;
+  for (const listener of mockUpdateListeners) listener(structuredClone(snapshot));
+  return structuredClone(snapshot);
+}
 const image = (seed: string) => {
   if (demoFlag("imageFail") && seed === "quiet-desk") return `${location.origin}/__empty-image`;
   if (demoFlag("readme")) return `${location.origin}/readme-demo/${seed}.png`;
@@ -48,6 +56,7 @@ const image = (seed: string) => {
 };
 
 let config: AppConfigV3 = structuredClone(defaultConfig);
+if (demoFlag("updateAutoDownload")) config.update.autoDownload = true;
 // Browser fixtures are intentionally deterministic; system-language resolution is covered by unit tests.
 if (demoFlag("demo")) config.general.language = "zh-CN";
 config.imageBed.cloudflareApiUrl = "https://img.example.com";
@@ -330,8 +339,9 @@ export const browserMock = {
     };
   },
   getContentSyncStatus: async (): Promise<ContentSyncView> => structuredClone(contentSync),
-  enableContentSync: async (request?: { repository?: string; branch?: string }): Promise<ContentSyncView> => (contentSync = { enabled: true, status: "localPending", provider: "github", repository: request?.repository ?? "https://github.com/example/quiet-notes.git", branch: request?.branch ?? "hexo-lite-content", visibility: "unknown", conflicts: [], message: "等待选择首次同步方向。" }),
-  enableWebDavContentSync: async (request: { endpoint: string; remoteDir: string }): Promise<ContentSyncView> => (contentSync = { enabled: true, status: "localPending", provider: "webdav", endpoint: request.endpoint.replace(/\/$/, ""), remoteDir: request.remoteDir, conflicts: [], message: "WebDAV 同步已启用，等待首次选择同步方向。" }),
+  getContentSyncSummary: async (): Promise<ContentSyncSummary> => ({ fileCount: 12, totalBytes: 256000, pendingFileCount: contentSync.status === "synced" ? 0 : 3, pendingBytes: contentSync.status === "synced" ? 0 : 4096, deletedFileCount: 0, baselineAvailable: !!contentSync.lastSyncedAt, categories: [{ id: "articles", fileCount: 4, totalBytes: 16000 }, { id: "site", fileCount: 4, totalBytes: 8000 }, { id: "themes", fileCount: 2, totalBytes: 32000 }, { id: "assets", fileCount: 2, totalBytes: 200000 }] }),
+  enableContentSync: async (request?: { repository?: string; branch?: string }): Promise<ContentSyncView> => (contentSync = { enabled: true, status: "synced", provider: "github", repository: request?.repository ?? "https://github.com/example/quiet-notes.git", branch: request?.branch ?? "hexo-lite-content", visibility: "unknown", conflicts: [], message: "两端文件已合并并同步。", lastSyncedAt: new Date().toISOString() }),
+  enableWebDavContentSync: async (request: { endpoint: string; remoteDir: string }): Promise<ContentSyncView> => (contentSync = { enabled: true, status: "synced", provider: "webdav", endpoint: request.endpoint.replace(/\/$/, ""), remoteDir: request.remoteDir, conflicts: [], message: "两端文件已合并并同步。", lastSyncedAt: new Date().toISOString() }),
   updateWebDavContentSync: async (request: { endpoint: string; remoteDir: string }): Promise<ContentSyncView> => (contentSync = { ...contentSync, enabled: true, status: "localPending", provider: "webdav", endpoint: request.endpoint.replace(/\/$/, ""), remoteDir: request.remoteDir, conflicts: [], message: "WebDAV 连接设置已应用，请选择首次同步方向。" }),
   disableContentSync: async (): Promise<ContentSyncView> => (contentSync = { enabled: false, status: "off", provider: "github", conflicts: [] }),
   runContentSync: async (_direction = "auto"): Promise<ContentSyncView> => (contentSync = { ...contentSync, status: "synced", conflicts: [], message: "演示项目已同步。", lastSyncedAt: new Date().toISOString() }),
@@ -368,12 +378,32 @@ export const browserMock = {
     if (item) item.directory = request.targetDirectory;
   },
   downloadCloudflareAsset: async (_assetId: string) => [],
-  getUpdateSnapshot: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: appVersion, status: "idle" }),
-  checkUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => demoFlag("updateAvailable")
-    ? ({ currentVersion: appVersion, latestVersion: "1.0.7", status: "available", releaseNotes: "Update available" })
-    : ({ currentVersion: appVersion, status: "upToDate" }),
-  downloadUpdate: async (): Promise<import("$shared/types/app").UpdateSnapshot> => ({ currentVersion: appVersion, latestVersion: "1.0.7", status: "downloaded", downloadedBytes: 1024, totalBytes: 1024 }),
-  installUpdate: async () => undefined,
+  getUpdateSnapshot: async () => structuredClone(mockUpdate),
+  checkUpdate: async () => {
+    emitMockUpdate({ ...mockUpdate, status: "checking" });
+    return emitMockUpdate(demoFlag("updateAvailable")
+      ? { currentVersion: appVersion, latestVersion: "1.0.7", status: "available", releaseNotes: "## 更新内容\n\n- 增量同步站点文件\n- 自动合并不同文件\n- 简化设置导航\n- 显示真实下载进度\n- 点击安装更新\n- 支持减少动态效果" }
+      : { currentVersion: appVersion, status: "upToDate" });
+  },
+  downloadUpdate: async () => {
+    const size = 8 * 1024 * 1024;
+    emitMockUpdate({ ...mockUpdate, status: "downloading", downloadedBytes: 0, totalBytes: demoFlag("updateUnknownSize") ? undefined : size });
+    for (let chunk = 1; chunk <= 8; chunk += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      emitMockUpdate({ ...mockUpdate, downloadedBytes: chunk * size / 8 });
+    }
+    emitMockUpdate({ ...mockUpdate, status: "verifying", totalBytes: size });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return emitMockUpdate({ ...mockUpdate, status: "downloaded", totalBytes: size });
+  },
+  onUpdateSnapshot: (handler: (snapshot: import("$shared/types/app").UpdateSnapshot) => void) => {
+    mockUpdateListeners.add(handler);
+    return () => { mockUpdateListeners.delete(handler); };
+  },
+  installUpdate: async () => {
+    document.documentElement.dataset.updateInstalled = "true";
+    emitMockUpdate({ ...mockUpdate, status: "installing" });
+  },
   listPlugins: async () => structuredClone(mockPlugins),
   chooseAndInstallPlugin: async () => structuredClone(mockPlugins),
   enablePlugin: async (pluginId: string) => (mockPlugins = mockPlugins.map((plugin) => plugin.manifest.id === pluginId ? { ...plugin, enabled: true } : plugin), structuredClone(mockPlugins)),

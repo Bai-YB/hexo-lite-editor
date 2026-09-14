@@ -1,28 +1,28 @@
 <script lang="ts">
-  import { cubicIn, cubicOut } from "svelte/easing";
+  import { cubicIn, quintOut } from "svelte/easing";
 
   export let pageKey: string;
-  export let duration = 160;
+  export let duration = 180;
 
-  const reduceMotion =
-    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reducedMotion = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  $: enterDuration = reduceMotion ? 0 : Math.min(200, Math.max(0, duration));
-  $: leaveDuration = reduceMotion ? 0 : Math.min(120, Math.max(0, duration - 60));
+  $: enterDuration = Math.min(200, Math.max(0, duration));
+  $: leaveDuration = Math.min(100, Math.max(0, duration - 80));
 
   function pageEnter(_node: Element, options: { duration: number }) {
+    const reduce = reducedMotion();
     return {
-      duration: options.duration,
-      easing: cubicOut,
-      css: (t: number) => `opacity: ${t}; transform: translateY(${(1 - t) * 6}px); pointer-events: auto;`
+      duration: reduce ? 0 : options.duration,
+      easing: quintOut,
+      css: (t: number) => `opacity: ${t}; transform: translateY(${reduce ? 0 : (1 - t) * 4}px); pointer-events: auto;`
     };
   }
 
   function pageLeave(_node: Element, options: { duration: number }) {
     return {
-      duration: options.duration,
+      duration: reducedMotion() ? 0 : options.duration,
       easing: cubicIn,
-      css: (t: number) => `opacity: ${t}; transform: translateY(${(1 - t) * -4}px); pointer-events: none;`
+      css: (t: number) => `opacity: ${t}; pointer-events: none;`
     };
   }
 </script>
@@ -42,5 +42,7 @@
     inset: 0;
     min-width: 0;
     min-height: 0;
+    pointer-events: auto;
   }
+
 </style>

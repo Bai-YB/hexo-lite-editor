@@ -11,7 +11,7 @@ on:
       version:
         description: "Version without the v prefix"
         required: true
-        default: "1.0.6.1"
+        default: "1.0.6.2"
 
 permissions:
   contents: write
@@ -80,7 +80,7 @@ jobs:
           set -o pipefail
           cargo fmt --check 2>&1 | tee rust-checks.log
           cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee -a rust-checks.log
-          cargo test 2>&1 | tee -a rust-checks.log
+          cargo test --all-targets --all-features 2>&1 | tee -a rust-checks.log
 
       - name: Upload Rust diagnostics
         if: always()
@@ -130,7 +130,14 @@ jobs:
           version="$RELEASE_VERSION"
           tag="$RELEASE_TAG"
           notes=".github/release-notes/v$version.md"
-          gh release view "$tag" >/dev/null || gh release create "$tag" --draft --title "Hexo Lite Editor $version" --notes-file "$notes"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --draft --target "$(git rev-parse HEAD)" --title "Hexo Lite Editor $version" --notes-file "$notes" \
+              || gh release view "$tag" >/dev/null
+          fi
+          if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft)" != true ]]; then
+            echo "Release $tag is already published; refusing to replace immutable assets."
+            exit 0
+          fi
           gh release upload "$tag" \
             "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.dmg" \
             "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.zip" \
@@ -139,65 +146,3 @@ jobs:
             "release-artifacts/$version/release-manifest-macos.json" \
             "release-artifacts/$version/SHA256SUMS-macos.txt" \
             --clobber
-
-          mkdir -p "release-artifacts/$version/windows-updater"
-          windows_installer_name="Hexo-Lite-Editor_${version}_windows-x64-setup.exe"
-          windows_manifest_name="release-manifest.json"
-          for attempt in {1..30}; do
-            rm -f "release-artifacts/$version/windows-updater/"*
-            gh release download "$tag" --pattern "$windows_installer_name" --pattern "$windows_installer_name.sig" --pattern "$windows_manifest_name" --dir "release-artifacts/$version/windows-updater" --clobber 2>/dev/null || true
-            windows_asset="release-artifacts/$version/windows-updater/$windows_installer_name"
-            windows_manifest="release-artifacts/$version/windows-updater/$windows_manifest_name"
-            if [[ -f "$windows_asset" && -f "$windows_asset.sig" && -f "$windows_manifest" ]]; then
-              if node scripts/verify-windows-release.mjs \
-                --manifest "$windows_manifest" \
-                --version "$version" \
-                --runtime-version "$RUNTIME_VERSION" \
-                --source-commit "$(git rev-parse HEAD)" \
-                --installer "$windows_asset" \
-                --signature "$windows_asset.sig"; then
-                break
-              fi
-            fi
-            if [[ "$attempt" == 30 ]]; then
-              echo "::error title=Windows updater missing::Timed out waiting for the Windows signed updater assets."
-              exit 1
-            fi
-            sleep 20
-          done
-          windows_signature="$windows_asset.sig"
-          node scripts/generate-latest-json.mjs \
-            --version "$RUNTIME_VERSION" \
-            --tag "$tag" \
-            --repository "$GITHUB_REPOSITORY" \
-            --notes "$notes" \
-            --windows-asset "$windows_asset" \
-            --windows-signature "$windows_signature" \
-            --macos-asset "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz" \
-            --macos-signature "release-artifacts/$version/Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz.sig" \
-            --output "release-artifacts/$version/latest.json"
-          node scripts/verify-updater-manifest.mjs \
-            --manifest "release-artifacts/$version/latest.json" \
-            --version "$RUNTIME_VERSION" \
-            --tag "$tag" \
-            --platform windows-x86_64 \
-            --platform darwin-x86_64 \
-            --platform darwin-aarch64
-          (
-            cd "release-artifacts/$version"
-            shasum -a 256 latest.json >> SHA256SUMS-macos.txt
-          )
-          gh release upload "$tag" \
-            "release-artifacts/$version/latest.json" \
-            "release-artifacts/$version/SHA256SUMS-macos.txt" \
-            --clobber
-          mkdir -p "release-artifacts/$version/updater-verify"
-          gh release download "$tag" --pattern latest.json --dir "release-artifacts/$version/updater-verify" --clobber
-          node scripts/verify-updater-manifest.mjs \
-            --manifest "release-artifacts/$version/updater-verify/latest.json" \
-            --version "$RUNTIME_VERSION" \
-            --tag "$tag" \
-            --platform windows-x86_64 \
-            --platform darwin-x86_64 \
-            --platform darwin-aarch64
-          gh release edit "$tag" --draft=false --latest

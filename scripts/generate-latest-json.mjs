@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 
 const values = new Map();
@@ -18,7 +18,8 @@ const notes = await readFile(required("--notes"), "utf8");
 const assetUrl = (file) => `https://github.com/${repository}/releases/download/${tag}/${encodeURIComponent(basename(file))}`;
 const platform = async (asset, signature) => ({
   signature: (await readFile(signature, "utf8")).trim(),
-  url: assetUrl(asset)
+  url: assetUrl(asset),
+  size: (await stat(asset)).size
 });
 
 const platforms = {};

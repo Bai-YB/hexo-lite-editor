@@ -237,6 +237,7 @@ export interface AppConfigV3 {
   };
   update: {
     checkOnStart: boolean;
+    autoDownload: boolean;
   };
 }
 
@@ -410,6 +411,17 @@ export type ContentSyncStatus =
 
 export type ContentSyncProvider = "github" | "webdav";
 
+export interface ContentSyncSummary {
+  fileCount: number;
+  totalBytes: number;
+  /** Source bytes changed since the last successful sync, before compression. */
+  pendingFileCount: number;
+  pendingBytes: number;
+  deletedFileCount: number;
+  baselineAvailable: boolean;
+  categories: Array<{ id: "articles" | "site" | "themes" | "assets"; fileCount: number; totalBytes: number }>;
+}
+
 export interface ContentSyncView {
   projectId?: string;
   sessionGeneration?: number;
@@ -526,8 +538,8 @@ export interface RuntimeInfo {
   webview: string;
 }
 
-export type UpdateStatus = "idle" | "checking" | "upToDate" | "available" | "downloading" | "downloaded" | "installing" | "error";
-export type UpdateErrorStage = "check" | "download" | "install";
+export type UpdateStatus = "idle" | "checking" | "upToDate" | "available" | "downloading" | "verifying" | "downloaded" | "installing" | "error";
+export type UpdateErrorStage = "check" | "download" | "verify" | "install";
 export interface UpdateSnapshot {
   currentVersion: string; status: UpdateStatus; latestVersion?: string; releaseNotes?: string;
   releaseDate?: string; downloadedBytes?: number; totalBytes?: number; errorStage?: UpdateErrorStage;
@@ -576,5 +588,5 @@ export const defaultConfig: AppConfigV3 = {
     gitPushAfterDeploy: false
   },
   diagnostics: { logRetentionDays: 14, maxLogStorageMb: 20 },
-  update: { checkOnStart: true }
+  update: { checkOnStart: true, autoDownload: false }
 };

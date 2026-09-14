@@ -1,47 +1,83 @@
 ﻿name: Finalize release
 
 on:
+  workflow_run:
+    workflows: [Release Windows, Build macOS]
+    types: [completed]
   workflow_dispatch:
     inputs:
       version:
         description: "Release version"
         required: true
-        default: "1.0.6.1"
+        default: "1.0.6.2"
       source_commit:
         description: "Commit used to build the uploaded artifacts"
         required: true
-        default: "02d7e7f5ee78634c73be1ef40c2b7121fc52cff6"
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
-  group: finalize-release-${{ inputs.version }}
+  group: finalize-release-${{ inputs.source_commit || github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
   finalize:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ inputs.version }}
-      SOURCE_COMMIT: ${{ inputs.source_commit }}
+      SOURCE_COMMIT: ${{ inputs.source_commit || github.event.workflow_run.head_sha }}
     steps:
+      - name: Wait for both successful platform builds
+        id: builds
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          for attempt in 1 2 3; do
+            gh run list --repo "$GITHUB_REPOSITORY" --commit "$SOURCE_COMMIT" --limit 100 \
+              --json workflowName,status,conclusion,headSha,createdAt > "$RUNNER_TEMP/platform-runs.json"
+            ready="$(node - "$RUNNER_TEMP/platform-runs.json" <<'NODE'
+          const fs = require('node:fs');
+          const runs = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const ready = ['Release Windows', 'Build macOS'].every((name) => {
+            const candidates = runs.filter((run) => run.workflowName === name && run.headSha === process.env.SOURCE_COMMIT);
+            if (candidates.some((run) => run.status !== 'completed')) return false;
+            const latest = candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+            return latest?.conclusion === 'success';
+          });
+          console.log(ready);
+          NODE
+            )"
+            [[ "$ready" == true ]] && break
+            [[ "$attempt" == 3 ]] || sleep 10
+          done
+          echo "ready=$ready" >> "$GITHUB_OUTPUT"
+          if [[ "$ready" != true && "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            echo 'Both platform builds must succeed for this exact source commit.' >&2
+            exit 1
+          fi
       - name: Checkout build source
+        if: steps.builds.outputs.ready == 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_commit }}
+          ref: ${{ env.SOURCE_COMMIT }}
           fetch-depth: 1
 
       - uses: actions/setup-node@v4
+        if: steps.builds.outputs.ready == 'true'
         with:
           node-version: 22
 
       - name: Verify and finalize release
+        if: steps.builds.outputs.ready == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
+          VERSION="${VERSION:-$(node scripts/release-version.mjs version)}"
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || exit 1
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || exit 1
           [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || exit 1
@@ -53,6 +89,10 @@ jobs:
           mkdir -p "$work/download" "$work/remote"
           release_json="$work/release.json"
           gh release view "$tag" --repo "$repo" --json isDraft,targetCommitish,assets > "$release_json"
+          if [[ "$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft)" == false ]]; then
+            echo "$tag has already been finalized."
+            exit 0
+          fi
           node --input-type=module - "$release_json" "$VERSION" "$SOURCE_COMMIT" "$tag" <<'NODE'
           import { readFileSync } from 'node:fs';
           const [releasePath, version, source, tag] = process.argv.slice(2);
@@ -69,11 +109,11 @@ jobs:
             `Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz`,
             `Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz.sig`,
             'release-manifest.json', 'release-manifest-macos.json',
-            'SHA256SUMS.txt', 'SHA256SUMS-macos.txt', 'latest.json'
+            'SHA256SUMS.txt', 'SHA256SUMS-macos.txt'
           ];
           const names = new Set((release.assets ?? []).map((a) => a.name));
           for (const name of expected) if (!names.has(name)) throw new Error(`Missing release asset: ${name}`);
-          if (names.size !== expected.length) throw new Error(`Unexpected release asset count: ${names.size}`);
+          for (const name of names) if (!expected.includes(name) && name !== 'latest.json') throw new Error(`Unexpected asset: ${name}`);
           if (release.targetCommitish && release.targetCommitish !== 'main' && release.targetCommitish !== source) {
             throw new Error(`Release target ${release.targetCommitish} does not match source ${source}`);
           }
@@ -130,10 +170,25 @@ jobs:
             --output "$work/latest.json"
           node scripts/verify-updater-manifest.mjs --manifest "$work/latest.json" --version "$runtime_version" --tag "$tag" \
             --platform windows-x86_64 --platform darwin-x86_64 --platform darwin-aarch64
+          node scripts/verify-updater-signatures.mjs "$work/latest.json" "$work/download"
           awk '!/latest\.json\r?$/' "$work/download/SHA256SUMS-macos.txt" > "$work/SHA256SUMS-macos.txt"
           sha256sum "$work/latest.json" | sed "s#$work/latest.json#latest.json#" >> "$work/SHA256SUMS-macos.txt"
           gh release upload "$tag" --repo "$repo" "$work/latest.json#latest.json" "$work/SHA256SUMS-macos.txt#SHA256SUMS-macos.txt" --clobber
           gh release download "$tag" --repo "$repo" --pattern latest.json --pattern SHA256SUMS-macos.txt --dir "$work/remote" --clobber
           cmp "$work/latest.json" "$work/remote/latest.json"
           cmp "$work/SHA256SUMS-macos.txt" "$work/remote/SHA256SUMS-macos.txt"
+          # A rerun may have started while assets were being checked. Keep this
+          # release as a draft until both platforms are still complete and successful.
+          gh run list --repo "$repo" --commit "$SOURCE_COMMIT" --limit 100 \
+            --json workflowName,status,conclusion,headSha,createdAt > "$work/final-platform-runs.json"
+          node - "$work/final-platform-runs.json" <<'NODE'
+          const fs = require('node:fs');
+          const runs = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          for (const name of ['Release Windows', 'Build macOS']) {
+            const candidates = runs.filter((run) => run.workflowName === name && run.headSha === process.env.SOURCE_COMMIT);
+            if (candidates.some((run) => run.status !== 'completed')) throw new Error(`${name} is running again; release remains a draft`);
+            const latest = candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+            if (latest?.conclusion !== 'success') throw new Error(`${name} has not succeeded for this source commit`);
+          }
+          NODE
           gh release edit "$tag" --repo "$repo" --draft=false --latest --title "Hexo Lite Editor $VERSION" --notes-file "$notes"

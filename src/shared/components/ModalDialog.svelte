@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { cubicIn, cubicOut } from "svelte/easing";
+  import { cubicIn, quintOut } from "svelte/easing";
   import { fade } from "svelte/transition";
   import { isTopModal, registerModal } from "./modalStack";
 
@@ -13,10 +13,11 @@
   let restoreFocus: HTMLElement | null = null;
 
   function dialogTransition(_node: Element, options: { duration: number }) {
+    const reduce = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     return {
-      duration: options.duration,
-      easing: options.duration > 120 ? cubicOut : cubicIn,
-      css: (t: number) => `opacity:${t};transform:translateY(${(1 - t) * 4}px) scale(${0.97 + t * 0.03})`
+      duration: reduce ? 0 : options.duration,
+      easing: options.duration > 120 ? quintOut : cubicIn,
+      css: (t: number) => `opacity:${t};transform:translateY(${reduce ? 0 : (1 - t) * 4}px) scale(${reduce ? 1 : 0.985 + t * 0.015})`
     };
   }
 
