@@ -40,7 +40,7 @@ test("未知总大小使用不确定进度，减少动态效果时停止循环�
   expect(["downloading", "verifying", "downloaded"]).toContain(await checkAgain());
   await expect(page.getByRole("button", { name: "安装更新", exact: true })).toBeVisible({ timeout: 15000 });
   expect(await checkAgain()).toBe("downloaded");
-  await expect(page.getByRole("button", { name: "安装更新", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "安装更新", exact: true }).first()).toBeVisible();
 });
 
 test("开启自动下载后后台完成，不打断编辑，切换页面保留已下载状态", async ({ page }) => {
@@ -50,5 +50,5 @@ test("开启自动下载后后台完成，不打断编辑，切换页面保留�
   await page.getByRole("button", { name: "关于", exact: true }).click();
   await expect(page.getByText("已准备好更新", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "编辑器", exact: true }).click();
-  await expect(page.getByRole("button", { name: "安装更新", exact: true })).toBeVisible();
+  await expect(page.locator(".notice-indicator").getByRole("button", { name: "安装更新", exact: true })).toBeVisible();
 });
