@@ -28,7 +28,7 @@
 - [CI](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34806818794)、[Windows](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34806821740)、[macOS](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34806821724) 全部成功；Windows 便携包、EXE 与 MSI 烟测成功。
 - [Finalize](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/34807697195) 校验全部资产、11 项 SHA256、更新包大小、Windows/macOS Minisign 签名后发布。发布后再次核对公开资产 digest、两端 manifest、三平台清单和大小，一致。
 - 云端回归修正了浏览器模拟更新器重复检查重置已下载状态的问题，并使启动检查和离场动画期间的测试定位确定；原生更新器已有操作锁和已下载包保留逻辑。
-- 本目录约 7.2 GB 缓存和构建产物已识别。自动执行审核以 `blocked by policy` 拒绝递归删除，包括经绝对路径验证后的单目录删除；尚未清理。源码、Git 历史、文档和用户资料均保留。
+- 本目录约 7.2 GB 缓存和构建产物已识别。测试输出 `output` 已移除；自动执行审核以 `blocked by policy` 拒绝其余缓存的递归删除，包括经绝对路径验证后的单目录删除，清理尚未完成。源码、Git 历史、文档和用户资料均保留。
 
 ## 实际边界
 
