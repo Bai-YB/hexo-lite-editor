@@ -11,7 +11,7 @@ on:
       version:
         description: "Version without the v prefix"
         required: true
-        default: "1.0.6.2"
+        default: "1.0.6.3"
 
 permissions:
   contents: write
@@ -81,6 +81,19 @@ jobs:
           cargo fmt --check 2>&1 | tee rust-checks.log
           cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee -a rust-checks.log
           cargo test --all-targets --all-features 2>&1 | tee -a rust-checks.log
+
+      - name: WebKit interaction parity
+        run: |
+          pnpm exec playwright install chromium webkit
+          pnpm test:e2e --project desktop-webkit
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-playwright-report
+          path: output/playwright/
+          if-no-files-found: ignore
 
       - name: Upload Rust diagnostics
         if: always()

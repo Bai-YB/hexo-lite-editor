@@ -90,9 +90,9 @@ describe("settings interaction recovery", () => {
     });
     const view = render(SettingsPage, { config, initialSection: "editing", onSaveConfig: save,
       onRegisterSettingsController: (value) => { if (value) controller = value; } });
-    await fireEvent.change(view.getByLabelText("字号"), { target: { value: "18" } });
+    await fireEvent.input(view.getByLabelText("字号"), { target: { value: "18" } });
     await fireEvent.click(view.getByRole("button", { name: /^保存$/ }));
-    await fireEvent.change(view.getByLabelText("字号"), { target: { value: "20" } });
+    await fireEvent.input(view.getByLabelText("字号"), { target: { value: "20" } });
     let discarded = false;
     const discard = Promise.resolve(controller.discard()).then(() => { discarded = true; });
     await tick();
@@ -123,13 +123,13 @@ describe("settings interaction recovery", () => {
     const save = vi.fn((config: AppConfigV3) => { submitted = config; return new Promise<AppConfigV3>(resolve => { finish = resolve; }); });
     const config = structuredClone(defaultConfig); config.general.language = "zh-CN";
     const view = render(SettingsPage, { config, initialSection: "editing", onSaveConfig: save });
-    await fireEvent.change(view.getByLabelText("字号"), { target: { value: "18" } });
+    await fireEvent.input(view.getByLabelText("字号"), { target: { value: "18" } });
     await fireEvent.click(view.getByRole("button", { name: /^保存$/ }));
-    await fireEvent.change(view.getByLabelText("字号"), { target: { value: "20" } });
+    await fireEvent.input(view.getByLabelText("字号"), { target: { value: "20" } });
     finish(submitted);
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("保存期间又有设置变化"));
     expect((view.getByLabelText("字号") as HTMLInputElement).value).toBe("20");
-    await fireEvent.change(view.getByLabelText("字号"), { target: { value: "40" } });
+    await fireEvent.input(view.getByLabelText("字号"), { target: { value: "40" } });
     await fireEvent.click(view.getByRole("button", { name: /^保存$/ }));
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("12–28"));
     expect(save).toHaveBeenCalledTimes(1);
@@ -140,7 +140,7 @@ describe("settings interaction recovery", () => {
     const config = structuredClone(defaultConfig); config.general.language = "zh-CN";
     const save = vi.fn(async (value: AppConfigV3) => value);
     const view = render(SettingsPage, { config, initialSection: "editing", onSaveConfig: save });
-    await fireEvent.change(view.getByLabelText("字号"), { target: { value: "20" } });
+    await fireEvent.input(view.getByLabelText("字号"), { target: { value: "20" } });
     await fireEvent.click(view.getByRole("button", { name: /^图片/ }));
     await fireEvent.change(view.getByLabelText("图片保存到"), { target: { value: "cloudflare-imgbed" } });
     await fireEvent.change(view.getByLabelText("服务地址"), { target: { value: "https://img.example.com" } });

@@ -1,10 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import { editorBoundary } from "./keyboard";
+import { expect, test, type Page } from "./fixtures";
 
 async function openFiles(page: Page) {
   await page.routeWebSocket(/.*/, socket => socket.close());
   await page.goto("/?demo=1");
   await page.locator(".markdown-editor-host").waitFor();
-  await page.keyboard.press("Control+6");
+  await page.keyboard.press("ControlOrMeta+6");
   await expect(page.getByRole("complementary", { name: "项目文件" })).toBeVisible();
 }
 
@@ -18,7 +19,7 @@ async function openLinkFile(page: Page) {
 
 async function appendFile(page: Page, value: string) {
   await page.locator(".file-workspace .cm-content").click();
-  await page.keyboard.press("Control+End");
+  await editorBoundary(page, "end");
   await page.keyboard.insertText(value);
   await expect(page.locator(".file-editor-heading")).toContainText("未保存");
 }
@@ -35,13 +36,13 @@ test("file tree opens friend links and a post path routes to the writing editor"
 test("cancel preserves file edits and save-and-continue persists them before navigation", async ({ page }) => {
   await openLinkFile(page);
   await appendFile(page, "\n# keep friend link changes");
-  await page.keyboard.press("Control+5");
+  await page.keyboard.press("ControlOrMeta+5");
   let dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("离开全部文件");
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.locator(".file-workspace .cm-content")).toContainText("keep friend link changes");
-  await page.keyboard.press("Control+5");
+  await page.keyboard.press("ControlOrMeta+5");
   dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: "保存并继续", exact: true }).click();
   await expect(page.getByRole("heading", { name: "插件", exact: true, level: 1 })).toBeVisible();
@@ -62,7 +63,8 @@ test("failed file save keeps the close guard and cancel returns to the edited do
     (window as unknown as { restoreFileSave: () => void }).restoreFileSave = () => { browserMock.saveProjectFile = original; };
     browserMock.saveProjectFile = async () => { throw new Error("file save fixture failed"); };
   });
-  await page.locator(".window-control.close").click();
+  // macOS uses native traffic lights; exercise their shared frontend close guard.
+  await page.locator(".window-control.close").evaluate((button: HTMLButtonElement) => button.click());
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("项目文件");
   await dialog.getByRole("button", { name: "保存并退出", exact: true }).click();
@@ -72,7 +74,7 @@ test("failed file save keeps the close guard and cancel returns to the edited do
   await expect(dialog).toHaveCount(0);
   await expect(page.locator(".file-workspace .cm-content")).toContainText("close protection");
   await page.evaluate(() => (window as unknown as { restoreFileSave: () => void }).restoreFileSave());
-  await page.keyboard.press("Control+s");
+  await page.keyboard.press("ControlOrMeta+s");
   await expect(page.locator(".file-editor-heading")).toContainText("已保存");
 });
 
@@ -86,13 +88,13 @@ test("publishing from all files saves its document first and aborts when that sa
     (window as unknown as { restorePublishFileSave: () => void }).restorePublishFileSave = () => { browserMock.saveProjectFile = original; };
     browserMock.saveProjectFile = async () => { throw new Error("publish file save failed"); };
   });
-  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   await expect(page.getByText("publish file save failed").first()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
   await expect(page.locator(".file-workspace .cm-content")).toContainText("publish friend links");
   await expect(page.locator(".file-editor-heading")).toContainText("未保存");
   await page.evaluate(() => (window as unknown as { restorePublishFileSave: () => void }).restorePublishFileSave());
-  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.taskStarts)).toBe("1");
   await expect(page.locator(".file-editor-heading")).toContainText("已保存");
 });

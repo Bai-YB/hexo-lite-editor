@@ -1,11 +1,11 @@
-﻿import { expect, test } from "@playwright/test";
+﻿import { expect, test } from "./fixtures";
 const out = "output/playwright/1062-visual";
 for (const viewport of [
   { width: 1360, height: 860, theme: "light" },
   { width: 1120, height: 720, theme: "dark" },
   { width: 640, height: 860, theme: "light" }
 ] as const) {
-  test(`1.0.6.2 main surfaces ${viewport.width}x${viewport.height} ${viewport.theme}`, async ({ page }) => {
+  test(`1.0.6.2 main surfaces ${viewport.width}x${viewport.height} ${viewport.theme}`, async ({ page }, testInfo) => {
     test.setTimeout(60000);
     await page.setViewportSize(viewport);
     const capture = async (name: string) => {
@@ -14,7 +14,7 @@ for (const viewport of [
       await page.waitForTimeout(180);
       const overflow = await page.evaluate(() => ({ x: document.documentElement.scrollWidth, w: window.innerWidth }));
       expect(overflow.x, `${name} horizontal overflow`).toBeLessThanOrEqual(overflow.w + 1);
-      await page.screenshot({ path: `${out}/${name}-${viewport.width}x${viewport.height}-${viewport.theme}.png`, fullPage: true });
+      await page.screenshot({ path: `${out}/${testInfo.project.name}/${name}-${viewport.width}x${viewport.height}-${viewport.theme}.png`, fullPage: true });
     };
     const settings = async (section: string) => {
       await page.getByRole("button", { name: "设置", exact: true }).click();
@@ -31,6 +31,7 @@ for (const viewport of [
     await page.getByRole("button", { name: "合并云端变更", exact: true }).click();
     await expect(page.getByRole("button", { name: "立即同步", exact: true })).toBeVisible();
     await capture("sync-connected");
+    await page.evaluate(() => localStorage.removeItem("hexo-lite-editor:update-last-auto-check"));
     await page.goto("/?demo=1&updateAvailable=1");
     await expect(page.getByRole("button", { name: "查看更新", exact: true })).toBeVisible({ timeout: 15000 });
     await page.getByRole("button", { name: "关于", exact: true }).click();

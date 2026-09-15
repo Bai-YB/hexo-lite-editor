@@ -30,10 +30,8 @@
 .settings-page {
   padding: 0 24px 32px;
   scrollbar-gutter: stable;
-}
-
-@supports not (scrollbar-gutter: stable) {
-  .settings-page { overflow-y: scroll; }
+  /* WebKit custom scrollbars can ignore the stable gutter until overflow occurs. */
+  overflow-y: scroll;
 }
 
 .settings-sticky-header {
@@ -62,8 +60,10 @@
 }
 
 .settings-nav {
+  min-width: 0;
+  width: 100%;
   position: sticky;
-  top: 104px;
+  top: calc(var(--settings-header-height, 88px) + 12px);
   display: grid;
   gap: 4px;
   padding: 4px 0;
@@ -211,7 +211,7 @@
   margin: 0 -12px;
   padding: 8px 12px;
   border-radius: 9px;
-  scroll-margin-top: 110px;
+  scroll-margin-top: calc(var(--settings-header-height, 88px) + 16px);
   transition: background var(--duration-fast);
 }
 
@@ -366,6 +366,7 @@
 }
 
 .switch {
+  display: inline-block;
   position: relative;
   justify-self: end;
   width: 38px;
@@ -677,7 +678,7 @@
   .settings-nav {
     position: sticky;
     z-index: 10;
-    top: 88px;
+    top: var(--settings-header-height, 88px);
     grid-auto-flow: column;
     grid-auto-columns: max-content;
     gap: 6px;
@@ -690,6 +691,7 @@
   .settings-nav-copy { flex: 0 0 auto; }
   .settings-nav small { display: none; }
   .settings-content-panel .setting-row { grid-template-columns: minmax(0, 1fr) minmax(180px, 240px); }
+  .settings-content-panel .setting-row { scroll-margin-top: calc(var(--settings-header-height, 88px) + var(--settings-nav-height, 56px) + 16px); }
   .settings-content-panel .credential-actions { width: 100%; }
 }
 

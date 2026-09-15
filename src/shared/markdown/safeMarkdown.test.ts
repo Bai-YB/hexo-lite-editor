@@ -11,6 +11,41 @@ import {
 } from "./safeMarkdown";
 
 describe("safe markdown", () => {
+  it("preserves legacy alignment, font styling and declared image dimensions", () => {
+    const root = document.createElement("article");
+    root.innerHTML = renderSafeMarkdown('<div align="center"><font color="red" face="serif" size="5">标题</font>' +
+      '<img src="https://example.com/a.png" width="320" height="180"></div>' +
+      '<table><tr><td align="right" valign="top" bgcolor="#eeeeee">合计</td></tr></table>');
+    expect(root.querySelector("div")?.style.textAlign).toBe("center");
+    expect(root.querySelector("span")?.style.color).toBe("red");
+    expect(root.querySelector("span")?.style.fontSize).toBe("1.5em");
+    expect(root.querySelector("img")?.style.height).toBe("180px");
+    expect(root.querySelector("td")?.style.textAlign).toBe("right");
+    expect(root.querySelector("td")?.style.verticalAlign).toBe("top");
+    expect(root.querySelector("font")).toBeNull();
+  });
+
+  it("gives inline styles priority and filters unsafe legacy presentation values", () => {
+    const root = document.createElement("article");
+    root.innerHTML = renderSafeMarkdown('<p align="center" style="text-align:left">正文</p>' +
+      '<font color="red;position:fixed" face="url(secret)" style="color:blue">安全</font>');
+    expect(root.querySelector("p")?.style.textAlign).toBe("left");
+    expect(root.querySelector("span")?.style.color).toBe("blue");
+    expect(root.innerHTML).not.toContain("position");
+    expect(root.innerHTML).not.toContain("url(");
+  });
+
+  it("anchors HTML tables and details without injecting children that change their layout", () => {
+    const root = document.createElement("article");
+    root.innerHTML = renderSafeMarkdown('<table>\n<tr><td>表格</td></tr>\n</table>\n\n' +
+      '<details>\n<summary>展开</summary>\n\n**正文**\n\n</details>', {}, false, true);
+    expect(root.querySelector("table")?.dataset.sourceLine).toBe("1");
+    expect(root.querySelector("details")?.dataset.sourceLine).toBe("5");
+    expect(root.querySelector("details strong")?.textContent).toBe("正文");
+    expect(root.querySelector("span[data-source-line]")).toBeNull();
+    expect(root.querySelector("td")?.textContent).toBe("表格");
+  });
+
   it("renders safe raw HTML while removing executable content", () => {
     const html = renderSafeMarkdown(
       '<details open><summary>说明</summary><strong style="color: red; position: fixed" onclick="alert(1)">正文</strong></details>\n<script>alert(1)</script>\n<iframe src="https://example.com"></iframe>'

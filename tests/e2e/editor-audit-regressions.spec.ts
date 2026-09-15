@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { editorBoundary, editorRedo } from "./keyboard";
+import { expect, test } from "./fixtures";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/?demo=1");
@@ -10,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 test("切文章确认期间暂停自动保存，放弃只保留磁盘内容", async ({ page }) => {
   const editor = page.locator(".cm-content");
   await editor.click();
-  await page.keyboard.press("Control+End");
+  await editorBoundary(page, "end");
   await page.keyboard.insertText("应被放弃的文字");
   await page.locator('[data-article-id="tauri"]').click();
   const dialog = page.getByRole("dialog", { name: "保存当前文章？" });
@@ -42,7 +43,7 @@ test("新建文件名跟随完整标题且日期使用本机年月日时分", as
 test("图片读取阶段就阻止换文和新建，并保留后续输入位置", async ({ page }) => {
   const editor = page.locator(".cm-content");
   await editor.click();
-  await page.keyboard.press("Control+End");
+  await editorBoundary(page, "end");
   await editor.evaluate((element) => {
     const original = File.prototype.arrayBuffer;
     File.prototype.arrayBuffer = async function () {
@@ -58,7 +59,7 @@ test("图片读取阶段就阻止换文和新建，并保留后续输入位置",
   await page.getByRole("button", { name: "新建", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "新建文章" })).toHaveCount(0);
   await editor.click();
-  await page.keyboard.press("Control+Home");
+  await editorBoundary(page, "start");
   await page.keyboard.insertText("前面追加\n");
   await page.evaluate(() => (window as unknown as { releaseAuditImage: () => void }).releaseAuditImage());
   await expect(editor).toContainText("regression.png");
@@ -109,16 +110,16 @@ test("上传替换不进入撤销历史且真实预览先保存当前文档", as
   });
   const editor = page.locator(".cm-content");
   await editor.click();
-  await page.keyboard.press("Control+End");
+  await editorBoundary(page, "end");
   await editor.evaluate(element => {
     const data = new DataTransfer();
     data.items.add(new File([new Uint8Array([137, 80, 78, 71])], "photo.png", { type: "image/png" }));
     element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }));
   });
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.imageCacheFinalized)).toBe("1");
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press("ControlOrMeta+z");
   await expect(editor).not.toContainText("hlex-asset.localhost");
-  await page.keyboard.press("Control+y");
+  await editorRedo(page);
   await expect(editor).toContainText("https://img.example.com/ready.png");
   await page.keyboard.insertText("preview-new-content");
   await page.getByRole("button", { name: "真实主题", exact: true }).click();

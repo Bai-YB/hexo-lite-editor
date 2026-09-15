@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("默认只后台检查，手动下载显示真实进度和五条日志，点击直接安装", async ({ page }) => {
   await page.goto("/?demo=1&updateAvailable=1");

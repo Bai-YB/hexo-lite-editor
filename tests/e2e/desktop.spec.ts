@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { editorBoundary } from "./keyboard";
+import { expect, test } from "./fixtures";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/?demo=1");
@@ -31,17 +32,17 @@ test("项目菜单提供最近项目和打开其他博客", async ({ page }) => 
 test("导航提供六个工作区并保留原有数字快捷键", async ({ page }) => {
   await expect(page.locator(".nav-rail").getByText("发布", { exact: true })).toHaveCount(0);
   await expect(page.locator(".nav-rail .nav-item")).toHaveCount(6);
-  await page.keyboard.press("Control+3");
+  await page.keyboard.press("ControlOrMeta+3");
   await expect(page.getByRole("heading", { name: "设置" })).toBeVisible();
-  await page.keyboard.press("Control+4");
+  await page.keyboard.press("ControlOrMeta+4");
   await expect(page.getByRole("heading", { name: "关于" })).toBeVisible();
-  await page.keyboard.press("Control+5");
+  await page.keyboard.press("ControlOrMeta+5");
   await expect(page.getByRole("heading", { name: "插件", exact: true, level: 1 })).toBeVisible();
-  await page.keyboard.press("Control+6");
+  await page.keyboard.press("ControlOrMeta+6");
   await expect(page.getByRole("complementary", { name: "项目文件" })).toBeVisible();
-  await page.keyboard.press("Control+2");
+  await page.keyboard.press("ControlOrMeta+2");
   await expect(page.getByRole("heading", { name: "图床", exact: true })).toBeVisible();
-  await page.keyboard.press("Control+1");
+  await page.keyboard.press("ControlOrMeta+1");
   await expect(page.locator(".markdown-editor-host")).toBeVisible();
 });
 
@@ -49,16 +50,16 @@ test("Ctrl+Shift+P 单次发布并在保存失败时中止", async ({ page }) =>
   const editor = page.locator(".cm-content");
   await editor.click();
   await page.keyboard.type("追加内容");
-  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.taskStarts)).toBe("1");
-  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBe("1");
 
   await page.goto("/?demo=1&saveFail=1");
   await expect(page.getByRole("button", { name: /Quiet Notes/ })).toBeVisible({ timeout: 20_000 });
   await page.locator(".cm-content").click();
   await page.keyboard.type("无法保存的内容");
-  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   await expect(page.getByText("模拟保存失败。")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
 });
@@ -88,7 +89,7 @@ test("粘贴图片先保存本地地址，上传后只替换链接并清理缓�
   await expect(page.getByRole("button", { name: /Quiet Notes/ })).toBeVisible({ timeout: 20_000 });
   const editor = page.locator(".cm-content");
   await editor.click();
-  await page.keyboard.press("Control+End");
+  await editorBoundary(page, "end");
   await editor.evaluate((element) => {
     const data = new DataTransfer();
     data.items.add(new File([new Uint8Array([137, 80, 78, 71])], "old.png", { type: "image/png" }));
@@ -101,7 +102,7 @@ test("粘贴图片先保存本地地址，上传后只替换链接并清理缓�
 
   await expect(editor).toContainText("old.png");
   const localUrl = "http://hlex-asset.localhost/0f5845c7-a9d8-40e9-97af-f770331f5000";
-  await page.keyboard.press("Control+End");
+  await editorBoundary(page, "end");
   for (let index = 0; index < localUrl.length + 3; index += 1) {
     await page.keyboard.press("ArrowLeft");
   }
@@ -109,13 +110,13 @@ test("粘贴图片先保存本地地址，上传后只替换链接并清理缓�
     await page.keyboard.press("Shift+ArrowLeft");
   }
   await page.keyboard.type("用户描述");
-  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
 
   await expect(editor).toContainText("![用户描述](https://img.example.com/blog/$asset-ready.png)", { timeout: 15_000 });
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.imageCacheFinalized)).toBe("1");
   expect(await page.evaluate(() => Number(document.documentElement.dataset.editorSaveCalls ?? "0"))).toBeGreaterThanOrEqual(2);
-  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.taskStarts)).toBe("1");
 });
 
@@ -385,7 +386,7 @@ test("维护页不向普通用户显示任务日志或终端输出，关于页�
   await expect(page.getByText("任务日志")).toHaveCount(0);
   await expect(page.locator(".diagnostic-log-view")).toHaveCount(0);
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByText("版本 1.0.6.2")).toBeVisible();
+  await expect(page.getByText("版本 1.0.6.3")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);
   await expect(page.getByText("操作系统")).toHaveCount(0);
 });

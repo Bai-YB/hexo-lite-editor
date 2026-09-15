@@ -23,9 +23,10 @@ mod tests {
         let current = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
         assert!(current > previous);
         assert!(current > Version::parse("1.0.6+1").unwrap());
-        assert_eq!(current, Version::parse("1.0.6+2").unwrap());
+        assert!(current > Version::parse("1.0.6+2").unwrap());
+        assert_eq!(current, Version::parse("1.0.6+3").unwrap());
         assert!(Version::parse("1.0.7").unwrap() > current);
-        assert_eq!(display_version(&current.to_string()), "1.0.6.2");
+        assert_eq!(display_version(&current.to_string()), "1.0.6.3");
         assert_eq!(display_version("1.0.7"), "1.0.7");
         assert_eq!(display_version("1.0.7+git.sha"), "1.0.7+git.sha");
     }

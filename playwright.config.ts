@@ -26,6 +26,15 @@ export default defineConfig({
         locale: "zh-CN",
         viewport: { width: 1360, height: 860 }
       }
+    },
+    {
+      name: "desktop-webkit",
+      timeout: 60_000,
+      use: {
+        ...devices["Desktop Safari"],
+        locale: "zh-CN",
+        viewport: { width: 1360, height: 860 }
+      }
     }
   ]
 });

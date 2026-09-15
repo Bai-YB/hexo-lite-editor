@@ -36,6 +36,7 @@ const allowedTags = [
   "em",
   "figcaption",
   "figure",
+  "font",
   "footer",
   "header",
   "h1",
@@ -101,7 +102,10 @@ const allowedStyleProperties = new Set([
   "flex-direction", "flex-wrap", "align-items", "align-content", "align-self",
   "justify-content", "justify-items", "justify-self", "place-items", "place-content", "place-self",
   "grid-template-columns", "grid-template-rows", "grid-column", "grid-row",
-  "width", "min-width", "max-width", "height", "min-height", "max-height"
+  "width", "min-width", "max-width", "height", "min-height", "max-height",
+  "inline-size", "min-inline-size", "max-inline-size", "block-size", "min-block-size", "max-block-size",
+  "margin-inline", "margin-block", "padding-inline", "padding-block",
+  "overflow", "overflow-x", "overflow-y", "object-fit", "object-position", "aspect-ratio"
 ]);
 
 const safeSemanticAttributes = new Set([
@@ -194,10 +198,13 @@ export function renderMarkdownWithSourceLines(source: string): string {
   const htmlRule = renderer.rules.html_block!;
   renderer.rules.html_block = (items, index, options, environment, self) => {
     const token = items[index];
-    // A zero-height marker also works for HTML blocks whose opening/closing tags
-    // span multiple Markdown tokens; a wrapper would change their structure.
-    return `<span data-source-line="${token.attrGet("data-source-line")}" style="display: block; height: 0; margin: 0; padding: 0"></span>`
-      + htmlRule(items, index, options, environment, self);
+    const content = htmlRule(items, index, options, environment, self);
+    // Keep the HTML structure intact, including table rows and split details.
+    // A span inside a table is foster-parented by the HTML parser and loses its position.
+    return content.replace(/^(\s*<)([a-z][a-z0-9]*)(?=[\s/>])/i, (opening, prefix, tag) =>
+      allowedTags.includes(tag.toLowerCase())
+        ? `${prefix}${tag} data-source-line="${token.attrGet("data-source-line")}" data-source-end="${token.attrGet("data-source-end")}"`
+        : opening);
   };
   return renderer.render(tokens, markdown.options, env);
 }
@@ -228,6 +235,7 @@ export function chunkPreviewImageSources(sources: string[], size = 32): string[]
 }
 
 function sanitizeSourceAttributes(document: Document) {
+  normalizePresentationAttributes(document);
   document.querySelectorAll<HTMLElement>("[class]").forEach((element) => {
     const safe = [...element.classList].filter((name) => /^language-[a-z0-9_-]+$/i.test(name));
     if (safe.length) element.className = safe.join(" ");
@@ -237,6 +245,50 @@ function sanitizeSourceAttributes(document: Document) {
     const style = sanitizeInlineStyle(element.getAttribute("style") ?? "");
     if (style) element.setAttribute("style", style);
     else element.removeAttribute("style");
+  });
+}
+
+/** Older blog posts use presentation attributes; turn them into contained CSS. */
+function normalizePresentationAttributes(document: Document) {
+  document.querySelectorAll<HTMLElement>("font").forEach((font) => {
+    const span = document.createElement("span");
+    for (const attribute of [...font.attributes]) span.setAttribute(attribute.name, attribute.value);
+    const color = font.getAttribute("color");
+    const face = font.getAttribute("face");
+    const size = font.getAttribute("size") ?? "";
+    const sizes = ["0.63em", "0.82em", "1em", "1.13em", "1.5em", "2em", "3em"];
+    // Inline CSS has priority over the older attributes.
+    if (color && !span.style.color) span.style.color = color;
+    if (face && !span.style.fontFamily) span.style.fontFamily = face;
+    if (/^[1-7]$/.test(size) && !span.style.fontSize) span.style.fontSize = sizes[Number(size) - 1];
+    span.append(...font.childNodes);
+    font.replaceWith(span);
+  });
+  document.querySelectorAll<HTMLElement>("[align], [valign], [bgcolor]").forEach((element) => {
+    const align = element.getAttribute("align")?.toLowerCase();
+    const valign = element.getAttribute("valign")?.toLowerCase();
+    const background = element.getAttribute("bgcolor");
+    if (align && /^(left|center|right|justify)$/.test(align)) {
+      if (element.matches("img, table") && align === "center") {
+        if (!element.style.marginLeft) element.style.marginLeft = "auto";
+        if (!element.style.marginRight) element.style.marginRight = "auto";
+        if (element.matches("img") && !element.style.display) element.style.display = "block";
+      } else if (!element.style.textAlign) element.style.textAlign = align;
+    }
+    if (valign && /^(top|middle|bottom|baseline)$/.test(valign) && !element.style.verticalAlign) {
+      element.style.verticalAlign = valign;
+    }
+    if (background && !element.style.backgroundColor) element.style.backgroundColor = background;
+  });
+  document.querySelectorAll<HTMLImageElement>("img[width], img[height]").forEach((image) => {
+    for (const property of ["width", "height"] as const) {
+      const value = image.getAttribute(property) ?? "";
+      const match = value.match(/^(\d+(?:\.\d+)?)(%)?$/);
+      if (match && !image.style[property]) {
+        const limit = match[2] ? 100 : 2000;
+        image.style[property] = `${Math.min(limit, Number(match[1]))}${match[2] || "px"}`;
+      }
+    }
   });
 }
 

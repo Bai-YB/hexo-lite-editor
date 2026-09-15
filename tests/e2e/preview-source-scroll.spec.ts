@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 
 const blocks = [
   "---", "title: Source scroll fixture", "---", "# Source scroll fixture", "",
@@ -23,7 +23,7 @@ async function prepare(page: Page) {
   await page.locator('[data-article-id="summer"]').click();
   await expect(page.locator(".cm-content")).toContainText("# 盛夏散步");
   await page.locator(".cm-content").click();
-  await page.keyboard.press("Control+A");
+  await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.insertText(source);
   await expect(page.locator(".markdown-preview h2")).toHaveCount(12);
 }
@@ -94,5 +94,7 @@ test("scrolling preview moves the editor to the same source block without feedba
   await page.waitForTimeout(150);
   expect(await editorPosition(page)).toEqual(before);
   await page.getByTitle("开启编辑器与预览同步滚动").click();
-  await expect.poll(async () => Math.abs(await previewOffset(page, 5) - 16)).toBeLessThan(2);
+  // A source→editor→preview round trip crosses fractional CodeMirror and WebKit
+  // line metrics. Keep a three CSS pixel bound while requiring the same source line above.
+  await expect.poll(async () => Math.abs(await previewOffset(page, 5) - 16)).toBeLessThan(3);
 });

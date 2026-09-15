@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("upload progress remains responsive, can stop, and only retries after the operation ends", async ({ page }) => {
   await page.goto("/?demo=1");

@@ -58,6 +58,7 @@
   let pendingSave: Promise<void> | null = null;
   let saveError = "";
   let pageElement: HTMLDivElement;
+  let layoutObserver: ResizeObserver | undefined;
   let disposed = false;
   let credentialRequest = 0;
   let syncRevision = 0;
@@ -126,6 +127,18 @@
   } satisfies Record<SettingsSectionId, boolean>;
 
   onMount(() => {
+    const header = pageElement.querySelector<HTMLElement>(".settings-sticky-header");
+    const nav = pageElement.querySelector<HTMLElement>(".settings-nav");
+    const measureLayout = () => {
+      if (header) pageElement.style.setProperty("--settings-header-height", `${header.getBoundingClientRect().height}px`);
+      if (nav) pageElement.style.setProperty("--settings-nav-height", `${nav.getBoundingClientRect().height}px`);
+    };
+    if (typeof ResizeObserver !== "undefined") {
+      layoutObserver = new ResizeObserver(measureLayout);
+      if (header) layoutObserver.observe(header);
+      if (nav) layoutObserver.observe(nav);
+      measureLayout();
+    }
     const stored = localStorage.getItem(sectionStorageKey) as SettingsSectionId | null;
     activeSection = initialSection ?? (sections.some((section) => section.id === stored) ? stored! : "general");
     onRegisterSettingsController({ save: saveDraft, discard, hasDirty: () => dirty || saving });
@@ -159,6 +172,7 @@
 
   onDestroy(() => {
     disposed = true;
+    layoutObserver?.disconnect();
     unlistenSync?.();
     unlistenSyncPhase?.();
     if (syncTimer) clearInterval(syncTimer);
@@ -169,6 +183,16 @@
   function selectSection(section: SettingsSectionId) {
     activeSection = section;
     localStorage.setItem(sectionStorageKey, section);
+    void tick().then(() => {
+      if (disposed || !pageElement) return;
+      pageElement.scrollTop = 0;
+      const nav = pageElement.querySelector<HTMLElement>(".settings-nav");
+      const button = nav?.querySelector<HTMLButtonElement>(`[data-settings-section="${section}"]`);
+      if (nav && button && nav.scrollWidth > nav.clientWidth) {
+        const left = button.getBoundingClientRect().left - nav.getBoundingClientRect().left + nav.scrollLeft;
+        nav.scrollLeft = Math.max(0, Math.min(nav.scrollLeft, left), left + button.offsetWidth - nav.clientWidth);
+      }
+    });
   }
 
   function sameProject(identity: { projectId: string }) {
@@ -513,7 +537,7 @@
         ? sections.length - 1
         : (index + (event.key === "ArrowDown" || event.key === "ArrowRight" ? 1 : -1) + sections.length) % sections.length;
     selectSection(sections[nextIndex].id);
-    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(`[data-settings-section="${sections[nextIndex].id}"]`)?.focus());
+    requestAnimationFrame(() => pageElement.querySelector<HTMLButtonElement>(`[data-settings-section="${sections[nextIndex].id}"]`)?.focus({ preventScroll: true }));
   }
 
   function change(next: AppConfigV3) {
@@ -744,7 +768,7 @@
         <div class="settings-block">
           <div class="settings-block-heading"><h3>{$ui("保存与备份")}</h3></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-3">{$ui("自动保存")}</label><span id="setting-field-3-hint">{$ui("停止输入后保存文章。")}</span></div><label class="switch"><input id="setting-field-3" aria-describedby="setting-field-3-hint" type="checkbox" checked={draft.general.autoSave} on:change={(event) => change({ ...draft, general: { ...draft.general, autoSave: event.currentTarget.checked } })} /><span></span></label></div>
-          <div class:disabled={!draft.general.autoSave} class="setting-row setting-row-dependent"><div class="setting-copy"><label class="setting-title" for="setting-field-4">{$ui("自动保存延迟")}</label><span id="setting-field-4-hint">{$ui("毫秒，500–30000。")}</span></div><input data-config-field="autoSaveDelayMs" id="setting-field-4" aria-describedby="setting-field-4-hint" class="input compact-control" disabled={!draft.general.autoSave} type="number" min="500" max="30000" step="100" value={draft.general.autoSaveDelayMs} on:change={(event) => change({ ...draft, general: { ...draft.general, autoSaveDelayMs: Number(event.currentTarget.value) } })} /></div>
+          <div class:disabled={!draft.general.autoSave} class="setting-row setting-row-dependent"><div class="setting-copy"><label class="setting-title" for="setting-field-4">{$ui("自动保存延迟")}</label><span id="setting-field-4-hint">{$ui("毫秒，500–30000。")}</span></div><input data-config-field="autoSaveDelayMs" id="setting-field-4" aria-describedby="setting-field-4-hint" class="input compact-control" disabled={!draft.general.autoSave} type="number" min="500" max="30000" step="100" value={draft.general.autoSaveDelayMs} on:input={(event) => change({ ...draft, general: { ...draft.general, autoSaveDelayMs: Number(event.currentTarget.value) } })} /></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-5">{$ui("保存前创建备份")}</label><span id="setting-field-5-hint">{$ui("保留修改前的文件版本。")}</span></div><label class="switch"><input id="setting-field-5" aria-describedby="setting-field-5-hint" type="checkbox" checked={draft.general.backupBeforeSave} on:change={(event) => change({ ...draft, general: { ...draft.general, backupBeforeSave: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
         <details class="settings-block settings-disclosure">
@@ -761,8 +785,8 @@
         </div>
         <div class="settings-block">
           <div class="settings-block-heading"><h3>{$ui("正文排版")}</h3></div>
-          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-7">{$ui("字号")}</label><span id="setting-field-7-hint">12–28 px。</span></div><input data-config-field="fontSize" id="setting-field-7" aria-describedby="setting-field-7-hint" class="input compact-control" type="number" min="12" max="28" value={draft.editor.fontSize} on:change={(event) => change({ ...draft, editor: { ...draft.editor, fontSize: Number(event.currentTarget.value) } })} /></div>
-          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-8">{$ui("行高")}</label><span id="setting-field-8-hint">1.2–2.2。</span></div><input data-config-field="lineHeight" id="setting-field-8" aria-describedby="setting-field-8-hint" class="input compact-control" type="number" min="1.2" max="2.2" step="0.05" value={draft.editor.lineHeight} on:change={(event) => change({ ...draft, editor: { ...draft.editor, lineHeight: Number(event.currentTarget.value) } })} /></div>
+          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-7">{$ui("字号")}</label><span id="setting-field-7-hint">12–28 px。</span></div><input data-config-field="fontSize" id="setting-field-7" aria-describedby="setting-field-7-hint" class="input compact-control" type="number" min="12" max="28" value={draft.editor.fontSize} on:input={(event) => change({ ...draft, editor: { ...draft.editor, fontSize: Number(event.currentTarget.value) } })} /></div>
+          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-8">{$ui("行高")}</label><span id="setting-field-8-hint">1.2–2.2。</span></div><input data-config-field="lineHeight" id="setting-field-8" aria-describedby="setting-field-8-hint" class="input compact-control" type="number" min="1.2" max="2.2" step="0.05" value={draft.editor.lineHeight} on:input={(event) => change({ ...draft, editor: { ...draft.editor, lineHeight: Number(event.currentTarget.value) } })} /></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-9">{$ui("Tab 宽度")}</label><span id="setting-field-9-hint">{$ui("使用 2、4 或 8 个空格。")}</span></div><select id="setting-field-9" aria-describedby="setting-field-9-hint" class="select compact-control" value={draft.editor.tabSize} on:change={(event) => change({ ...draft, editor: { ...draft.editor, tabSize: Number(event.currentTarget.value) } })}><option value="2">2</option><option value="4">4</option><option value="8">8</option></select></div>
         </div>
         <div class="settings-block">
@@ -791,7 +815,7 @@
       {:else if activeSection === "hexoPublish"}
         <div class="settings-block">
           <div class="settings-block-heading"><h3>{$ui("浏览器预览")}</h3><p>{$ui("在浏览器中查看真实网站。")}</p></div>
-          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-15">{$ui("预览端口")}</label><span id="setting-field-15-hint">{$ui("默认使用 4000。")}</span></div><input data-config-field="previewPort" id="setting-field-15" aria-describedby="setting-field-15-hint" class="input compact-control" type="number" min="300" max="65535" value={draft.hexo.previewPort} on:change={(event) => change({ ...draft, hexo: { ...draft.hexo, previewPort: Number(event.currentTarget.value) } })} /></div>
+          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-15">{$ui("预览端口")}</label><span id="setting-field-15-hint">{$ui("默认使用 4000。")}</span></div><input data-config-field="previewPort" id="setting-field-15" aria-describedby="setting-field-15-hint" class="input compact-control" type="number" min="300" max="65535" value={draft.hexo.previewPort} on:input={(event) => change({ ...draft, hexo: { ...draft.hexo, previewPort: Number(event.currentTarget.value) } })} /></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-16">{$ui("打开项目后自动启动预览")}</label><span id="setting-field-16-hint">{$ui("后台启动，不打开浏览器。")}</span></div><label class="switch"><input id="setting-field-16" aria-describedby="setting-field-16-hint" type="checkbox" checked={draft.hexo.autoStartPreview} on:change={(event) => change({ ...draft, hexo: { ...draft.hexo, autoStartPreview: event.currentTarget.checked } })} /><span></span></label></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-17">{$ui("预览草稿")}</label><span id="setting-field-17-hint">{$ui("在本机预览未发布的文章。")}</span></div><label class="switch"><input id="setting-field-17" aria-describedby="setting-field-17-hint" type="checkbox" checked={draft.hexo.previewDrafts} on:change={(event) => change({ ...draft, hexo: { ...draft.hexo, previewDrafts: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
