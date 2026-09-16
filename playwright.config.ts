@@ -3,7 +3,14 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   globalSetup: "./tests/e2e/global-setup.ts",
   testDir: "./tests/e2e",
-  workers: 2,
+  timeout: 60_000,
+  // The full matrix already executes every case in Chromium and WebKit.
+  // A second worker makes two heavyweight browser instances compile and boot
+  // the Vite application at once; hosted Windows/macOS runners can then spend
+  // 20+ seconds on a blank initial document and fail an unrelated first
+  // assertion. Keep local feedback parallel, but make release gates
+  // deterministic on the smaller hosted machines.
+  workers: process.env.CI ? 1 : 2,
   outputDir: "./output/playwright/results",
   reporter: [["list"], ["html", { outputFolder: "output/playwright/report", open: "never" }]],
   use: {

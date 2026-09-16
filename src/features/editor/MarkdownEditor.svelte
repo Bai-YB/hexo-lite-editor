@@ -295,7 +295,16 @@
     const y = Math.max(0, view.scrollDOM.scrollTop + SCROLL_ANCHOR_INSET - view.documentPadding.top);
     const block = view.lineBlockAtHeight(y);
     const line = view.state.doc.lineAt(block.from).number;
-    return line + Math.min(1, Math.max(0, (y - block.top) / Math.max(1, block.height)));
+    const offset = y - block.top;
+    // WebKit rounds programmatic scrollTop values to device pixels. When the
+    // requested anchor lands at a source-line boundary, that can leave the
+    // measured point about one CSS pixel on either side of the boundary and
+    // turn an exact line into a fractional neighbour. Snap only that rounding
+    // band; progress through genuinely tall/wrapped lines remains continuous.
+    const boundaryEpsilon = 1.5;
+    if (offset <= boundaryEpsilon) return line;
+    if (block.height - offset <= boundaryEpsilon && line < view.state.doc.lines) return line + 1;
+    return line + Math.min(1, Math.max(0, offset / Math.max(1, block.height)));
   }
 
   /** Source lines are one-based and may include progress within a wrapped line. */

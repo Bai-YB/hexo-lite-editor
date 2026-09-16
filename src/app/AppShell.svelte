@@ -673,6 +673,10 @@
       if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token) || editorStore.getState().externalChange) throw new Error("当前文章已变化，请处理后重新发布。");
       articles = nextArticles;
       await fileStore.save();
+      // An image import can begin while the saves above are in flight.  The
+      // initial guard alone is therefore not enough: starting Hexo here could
+      // publish the temporary hlex-asset URL before the upload replaces it.
+      if (pendingImageUploads > 0) throw new Error(`还有 ${pendingImageUploads} 张图片正在上传，请等待上传完成后再发布。`);
       const task = await platform.startTask(project.projectId, "publish");
       publishTaskId = task.taskId;
       showNotice("正在后台清理缓存、重新生成并发布博客。" );

@@ -47,13 +47,28 @@ test("导航提供六个工作区并保留原有数字快捷键", async ({ page 
 });
 
 test("Ctrl+Shift+P 单次发布并在保存失败时中止", async ({ page }) => {
+  await page.evaluate(async () => {
+    const modulePath = "/src/platform/tauri.ts";
+    const { platform } = await import(/* @vite-ignore */ modulePath);
+    const originalStartTask = platform.startTask;
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => (releaseStart = resolve));
+    (window as unknown as { releasePublishStart: () => void }).releasePublishStart = releaseStart;
+    platform.startTask = async (...args: Parameters<typeof originalStartTask>) => {
+      document.documentElement.dataset.publishStartCalls = String(Number(document.documentElement.dataset.publishStartCalls ?? "0") + 1);
+      await startGate;
+      return originalStartTask(...args);
+    };
+  });
   const editor = page.locator(".cm-content");
   await editor.click();
   await page.keyboard.type("追加内容");
   await page.keyboard.press("ControlOrMeta+Shift+P");
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.taskStarts)).toBe("1");
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.publishStartCalls)).toBe("1");
   await page.keyboard.press("ControlOrMeta+Shift+P");
-  expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBe("1");
+  expect(await page.evaluate(() => document.documentElement.dataset.publishStartCalls)).toBe("1");
+  await page.evaluate(() => (window as unknown as { releasePublishStart: () => void }).releasePublishStart());
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.taskStarts)).toBe("1");
 
   await page.goto("/?demo=1&saveFail=1");
   await expect(page.getByRole("button", { name: /Quiet Notes/ })).toBeVisible({ timeout: 20_000 });
@@ -62,6 +77,79 @@ test("Ctrl+Shift+P 单次发布并在保存失败时中止", async ({ page }) =>
   await page.keyboard.press("ControlOrMeta+Shift+P");
   await expect(page.getByText("模拟保存失败。")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
+});
+
+test("发布保存后新启动的图片上传会在任务启动前中止发布", async ({ page }) => {
+  await page.goto("/?demo=1&imageUpload=1");
+  await expect(page.getByRole("button", { name: /Quiet Notes/ })).toBeVisible({ timeout: 20_000 });
+  await page.evaluate(async () => {
+    const modulePath = "/src/platform/tauri.ts";
+    const { platform } = await import(/* @vite-ignore */ modulePath);
+    const originalListArticles = platform.listArticles;
+    let releaseArticleList!: () => void;
+    const articleListGate = new Promise<void>((resolve) => (releaseArticleList = resolve));
+    let blockNextArticleList = false;
+    (window as unknown as {
+      armPublishArticleList: () => void;
+      releasePublishArticleList: () => void;
+    }).armPublishArticleList = () => (blockNextArticleList = true);
+    (window as unknown as { releasePublishArticleList: () => void }).releasePublishArticleList = releaseArticleList;
+    platform.listArticles = async (...args: Parameters<typeof originalListArticles>) => {
+      if (blockNextArticleList) {
+        blockNextArticleList = false;
+        document.documentElement.dataset.publishReachedArticleList = "1";
+        await articleListGate;
+      }
+      return originalListArticles(...args);
+    };
+
+    let releaseUpload!: () => void;
+    const uploadGate = new Promise<void>((resolve) => (releaseUpload = resolve));
+    (window as unknown as { releaseRaceUpload: () => void }).releaseRaceUpload = releaseUpload;
+    platform.uploadCachedEditorImage = async (_projectId: string, _sessionGeneration: number, _articleId: string, uploadId: string) => {
+      document.documentElement.dataset.raceUploadStarted = "1";
+      await uploadGate;
+      return { fileName: "race.png", uploadId, url: "https://img.example.com/blog/race-ready.png" };
+    };
+  });
+
+  // Arm and enter the publish path in the same browser task so the editor's
+  // auto-save cannot consume the dirty change before publishing starts.
+  await page.locator(".cm-editor").evaluate(async (node) => {
+    (window as unknown as { armPublishArticleList: () => void }).armPublishArticleList();
+    const modulePath = "/node_modules/@codemirror/view/dist/index.js";
+    const { EditorView } = await import(/* @vite-ignore */ modulePath);
+    const view = EditorView.findFromDOM(node);
+    view.dispatch({ changes: { from: view.state.doc.length, insert: "\n发布竞态保存" } });
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "p",
+      code: "KeyP",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true
+    }));
+  });
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.publishReachedArticleList)).toBe("1");
+  expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
+
+  await page.locator(".cm-content").evaluate((element) => {
+    const data = new DataTransfer();
+    data.items.add(new File([new Uint8Array([137, 80, 78, 71])], "race.png", { type: "image/png" }));
+    element.dispatchEvent(new ClipboardEvent("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: data
+    }));
+  });
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.raceUploadStarted)).toBe("1");
+  await page.evaluate(() => (window as unknown as { releasePublishArticleList: () => void }).releasePublishArticleList());
+  await expect(page.getByRole("alert").filter({ hasText: /还有 \d+ 张图片正在上传/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
+
+  // Resolve the upload before teardown so no asynchronous editor work leaks
+  // into the next test on slower WebKit workers.
+  await page.evaluate(() => (window as unknown as { releaseRaceUpload: () => void }).releaseRaceUpload());
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.imageCacheFinalized)).toBe("1");
 });
 
 test("文章右键菜单支持草稿互转和移到回收站", async ({ page }) => {
@@ -87,6 +175,18 @@ test("文章右键菜单支持草稿互转和移到回收站", async ({ page }) 
 test("粘贴图片先保存本地地址，上传后只替换链接并清理缓存", async ({ page }) => {
   await page.goto("/?demo=1&imageUpload=1");
   await expect(page.getByRole("button", { name: /Quiet Notes/ })).toBeVisible({ timeout: 20_000 });
+  await page.evaluate(async () => {
+    const modulePath = "/src/platform/tauri.ts";
+    const { platform } = await import(/* @vite-ignore */ modulePath);
+    let releaseUpload!: () => void;
+    const uploadGate = new Promise<void>((resolve) => (releaseUpload = resolve));
+    (window as unknown as { releaseImageUpload: () => void }).releaseImageUpload = releaseUpload;
+    platform.uploadCachedEditorImage = async (_projectId: string, _sessionGeneration: number, _articleId: string, uploadId: string) => {
+      document.documentElement.dataset.imageUploadStarted = "1";
+      await uploadGate;
+      return { fileName: "image.png", uploadId, url: "https://img.example.com/blog/$asset-ready.png" };
+    };
+  });
   const editor = page.locator(".cm-content");
   await editor.click();
   await editorBoundary(page, "end");
@@ -101,6 +201,7 @@ test("粘贴图片先保存本地地址，上传后只替换链接并清理缓�
   });
 
   await expect(editor).toContainText("old.png");
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.imageUploadStarted)).toBe("1");
   const localUrl = "http://hlex-asset.localhost/0f5845c7-a9d8-40e9-97af-f770331f5000";
   await editorBoundary(page, "end");
   for (let index = 0; index < localUrl.length + 3; index += 1) {
@@ -113,6 +214,7 @@ test("粘贴图片先保存本地地址，上传后只替换链接并清理缓�
   await page.keyboard.press("ControlOrMeta+Shift+P");
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
 
+  await page.evaluate(() => (window as unknown as { releaseImageUpload: () => void }).releaseImageUpload());
   await expect(editor).toContainText("![用户描述](https://img.example.com/blog/$asset-ready.png)", { timeout: 15_000 });
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.imageCacheFinalized)).toBe("1");
   expect(await page.evaluate(() => Number(document.documentElement.dataset.editorSaveCalls ?? "0"))).toBeGreaterThanOrEqual(2);
@@ -484,12 +586,24 @@ test("窄窗口中设置六组导航清晰，连接控件使用单列", async ({
   expect(geometry.overflow).toBe(false);
 });
 
-test("页面过渡在 200ms 内结束且离场页不拦截点击", async ({ page }) => {
+test("页面过渡配置不超过 200ms 且离场页不拦截点击", async ({ page }) => {
   await page.getByRole("button", { name: "设置" }).click();
-  await expect(page.locator('.page-transition[data-page-key="settings"]')).toBeVisible();
+  const settingsTransition = page.locator('.page-transition[data-page-key="settings"]');
+  await expect(settingsTransition).toBeVisible();
+  const durations = await settingsTransition.evaluate((element) => ({
+    enter: Number((element as HTMLElement).dataset.enterDurationMs),
+    leave: Number((element as HTMLElement).dataset.leaveDurationMs)
+  }));
+  expect(durations.enter).toBeLessThanOrEqual(200);
+  expect(durations.leave).toBeLessThanOrEqual(200);
+
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByRole("heading", { name: "关于" })).toBeVisible({ timeout: 200 });
-  await expect(page.locator('.page-transition[style*="pointer-events: none"]')).toHaveCount(0, { timeout: 250 });
+  await expect.poll(() => settingsTransition.evaluateAll((elements) => elements.every((element) =>
+    (element as HTMLElement).dataset.transitionState === "leaving"
+      && getComputedStyle(element).pointerEvents === "none"
+  ))).toBe(true);
+  await expect(page.getByRole("heading", { name: "关于" })).toBeVisible();
+  await expect(settingsTransition).toHaveCount(0);
 });
 
 test("深色模式光标 token 可见并生成双尺寸回归截图", async ({ page }) => {

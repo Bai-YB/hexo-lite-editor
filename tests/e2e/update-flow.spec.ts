@@ -45,7 +45,32 @@ test("未知总大小使用不确定进度，减少动态效果时停止循环�
 
 test("开启自动下载后后台完成，不打断编辑，切换页面保留已下载状态", async ({ page }) => {
   await page.goto("/?demo=1&updateAvailable=1&updateAutoDownload=1");
-  await expect(page.getByRole("button", { name: "安装更新", exact: true })).toBeVisible({ timeout: 10000 });
+  // Wait on the updater's state instead of repeatedly walking the very large
+  // editor accessibility tree. On WebKit that role query can starve the mock
+  // download timers during a cold start. Subscribe before reading the current
+  // snapshot so a completion event cannot be missed between the two calls.
+  await page.evaluate(async () => {
+    const modulePath = "/src/platform/tauri.ts";
+    const { platform } = await import(/* @vite-ignore */ modulePath);
+    let resolveDownloaded!: () => void;
+    let rejectDownloaded!: (error: Error) => void;
+    const downloaded = new Promise<void>((resolve, reject) => {
+      resolveDownloaded = resolve;
+      rejectDownloaded = reject;
+    });
+    const observe = (snapshot: Awaited<ReturnType<typeof platform.getUpdateSnapshot>>) => {
+      if (snapshot.status === "downloaded") resolveDownloaded();
+      else if (snapshot.status === "error") rejectDownloaded(new Error(snapshot.errorMessage ?? "更新失败"));
+    };
+    const unlisten = await platform.onUpdateSnapshot(observe);
+    try {
+      observe(await platform.getUpdateSnapshot());
+      await downloaded;
+    } finally {
+      unlisten();
+    }
+  });
+  await expect(page.locator(".notice-indicator").getByRole("button", { name: "安装更新", exact: true })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "关于", exact: true }).click();
   await expect(page.getByText("已准备好更新", { exact: true })).toBeVisible();
