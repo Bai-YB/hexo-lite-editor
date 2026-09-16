@@ -41,7 +41,7 @@
 
 ## 发布结果
 
-- 发布源码提交：[`cdbe357df32d14d00034eeeb01fcff6d6bd09d58`](https://github.com/Bai-YB/hexo-lite-editor/commit/cdbe357df32d14d00034eeeb01fcff6d6bd09d58)；`main`、`v1.0.6.3`、Windows/macOS 清单和 Release target 均指向该提交。
+- 发布源码提交：[`cdbe357df32d14d00034eeeb01fcff6d6bd09d58`](https://github.com/Bai-YB/hexo-lite-editor/commit/cdbe357df32d14d00034eeeb01fcff6d6bd09d58)；发布构建时的 `main`、`v1.0.6.3`、Windows/macOS 清单和 Release target 均指向该提交。发布后的归档提交不改变已验证的标签或二进制来源。
 - [CI 35084070674](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/35084070674)、[Windows 35084075028](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/35084075028)、[macOS 35084074945](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/35084074945) 全部成功；Windows 便携包、NSIS、MSI smoke test 及 macOS WebKit parity 均通过。
 - [Finalize 35086218276](https://github.com/Bai-YB/hexo-lite-editor/actions/runs/35086218276) 验证双平台构建、11 项平台/清单文件 SHA256、更新包大小和 Minisign 签名后，于 2026-09-16 18:40（Asia/Shanghai）公开 [v1.0.6.3 Release](https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.3)。
 - Release 为 Latest、非草稿、非预发布，共 14 个资产：Windows Setup/MSI/便携 ZIP、macOS Universal DMG/APP ZIP/更新包、签名、双平台清单与校验和，以及三平台 `latest.json`。
