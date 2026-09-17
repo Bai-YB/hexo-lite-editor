@@ -41,7 +41,7 @@ test("keeps binary files read-only with an explicit explanation", async ({ page 
   await page.getByRole("textbox", { name: "打开文件路径" }).press("Enter");
   await expect(page.getByText("这是二进制文件，无法作为文本编辑。", { exact: true })).toBeVisible();
   await expect(page.locator(".text-file-editor .cm-content")).toHaveAttribute("contenteditable", "false");
-  await expect(page.getByRole("button", { name: "保存", exact: true })).toBeDisabled();
+  await expect(page.getByLabel("文件编辑器").getByRole("button", { name: "保存", exact: true })).toBeDisabled();
 });
 
 test("rejects a stale save and compares disk contents before explicit replacement", async ({ page }) => {

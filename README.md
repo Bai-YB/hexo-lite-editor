@@ -10,10 +10,10 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/Hexo-Lite-Editor_1.0.6.3_windows-x64-setup.exe"><strong>下载安装版</strong></a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/Hexo-Lite-Editor_1.0.6.3_windows-x64-portable.zip">便携版</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/Hexo-Lite-Editor_1.0.6.3_macos-universal.dmg">macOS</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.3">v1.0.6.3</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64-setup.exe"><strong>下载安装版</strong></a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64-portable.zip">便携版</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_macos-universal.dmg">macOS</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.4">v1.0.6.4</a>
   </p>
 </div>
 
@@ -30,6 +30,7 @@
 - 管理 `source/` 下的图片，也可连接 Cloudflare-ImgBed；粘贴和拖放会先本地显示，再在后台完成上传。
 - 发布固定执行保存、clean、generate 和 deploy，避免部署旧缓存；浏览器预览可随时关闭后台服务。
 - 通过独立 GitHub 内容分支或标准 WebDAV 服务同步 Hexo 项目源文件、主题和配置；远端前进时可明确选择云端或本机版本。
+- 同步设置按选择方式、连接预检和首次合并逐步展开；GitHub 与 WebDAV 配置互斥显示，检查和传输始终在后台运行。
 - 每日自动检查并在后台下载经过签名验证的新版本，由用户确认后重启安装。
 - 支持浅色、深色和跟随系统主题。
 
@@ -53,18 +54,18 @@ WebDAV 地址、目录和用户名在启用后仍可修改。新凭据通过目�
 
 ## 安装
 
-`v1.0.6.3` 提供 Windows 10/11 x64 和 macOS 通用版本。界面版本为 **1.0.6.3**，内部使用兼容 Tauri 的 `1.0.6+3`，原 1.0.6 和 1.0.6-r1 可以识别这一更新。
+`v1.0.6.4` 提供 Windows 10/11 x64 和 macOS 通用版本。界面版本为 **1.0.6.4**，内部使用兼容 Tauri 的 `1.0.6+4`，1.0.6.x 可以识别这一更新。
 
-本次补齐 Markdown 内 HTML 的对齐、字体与图片尺寸渲染，修复 HTML 表格的源码滚动定位，并统一 Windows/macOS 设置控件、分类滚动和快捷键保存行为。两种浏览器引擎运行相同交互回归；macOS 发布增加原平台 WebKit 检查。验证范围见 [1.0.6.3 验证记录](docs/validation-1.0.6.3.md)。
+本次让启动首屏不再等待更新查询与项目扫描，原生项目打开移至后台线程；即时预览支持经过隔离和过滤的文章 CSS/class，并合并重复解析；双向滚动同步修复长文反复滚动与首尾边界偏差；文件同步改为清晰的 GitHub/WebDAV 单选配置流程。验证范围见 [1.0.6.4 验证记录](docs/validation-1.0.6.4.md)，模块职责与调用链见 [模块文档](docs/modules/README.md)。
 
 | 安装包 | 用途 |
 | --- | --- |
-| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/Hexo-Lite-Editor_1.0.6.3_windows-x64-setup.exe) | 推荐；按向导安装 |
-| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/Hexo-Lite-Editor_1.0.6.3_windows-x64-portable.zip) | 解压后直接运行 |
-| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/Hexo-Lite-Editor_1.0.6.3_windows-x64.msi) | 企业或批量部署 |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/Hexo-Lite-Editor_1.0.6.3_macos-universal.dmg) | Intel 与 Apple Silicon 通用 |
+| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64-setup.exe) | 推荐；按向导安装 |
+| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64-portable.zip) | 解压后直接运行 |
+| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64.msi) | 企业或批量部署 |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_macos-universal.dmg) | Intel 与 Apple Silicon 通用 |
 
-Windows 安装包尚未使用商业代码签名证书，SmartScreen 可能显示“未知发布者”。校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/SHA256SUMS.txt) 和 [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.3/SHA256SUMS-macos.txt)。应用默认静默检查更新，由用户点击下载与安装；可在设置中开启后台下载，更新包经过 Tauri 签名验证。
+Windows 安装包尚未使用商业代码签名证书，SmartScreen 可能显示“未知发布者”。校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/SHA256SUMS.txt) 和 [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/SHA256SUMS-macos.txt)。应用默认静默检查更新，由用户点击下载与安装；可在设置中开启后台下载，更新包经过 Tauri 签名验证。
 
 ## 使用
 

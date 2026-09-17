@@ -2,7 +2,7 @@ import { expect, test } from "./fixtures";
 
 test("默认只后台检查，手动下载显示真实进度和五条日志，点击直接安装", async ({ page }) => {
   await page.goto("/?demo=1&updateAvailable=1");
-  await expect(page.getByRole("button", { name: "查看更新", exact: true })).toBeVisible({ timeout: 8000 });
+  await expect(page.getByRole("button", { name: "查看更新", exact: true })).toBeVisible({ timeout: 15000 });
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "查看更新", exact: true }).click();
   await expect(page.locator(".release-summary > ul > li")).toHaveCount(5);

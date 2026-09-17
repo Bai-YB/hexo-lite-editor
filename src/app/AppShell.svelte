@@ -68,6 +68,8 @@
   let unlistenUpdate: (() => void) | undefined;
   let updateCheckTimer: ReturnType<typeof setTimeout> | undefined;
   let configTimer: ReturnType<typeof setTimeout> | undefined;
+  let pageWarmupCanceled = false;
+  let pageWarmupIdle: number | undefined;
   let notice = "";
   let noticeSeverity: "info" | "error" = "info";
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -118,19 +120,6 @@
 
   onMount(async () => {
     window.addEventListener("keydown", handleShortcut);
-    // Warm the small page modules so the first navigation is as quick as later ones.
-    void Promise.all(Object.values(pageLoaders).map((load) => load()));
-    try {
-      let receivedUpdateEvent = false;
-      unlistenUpdate = await platform.onUpdateSnapshot((snapshot) => {
-        receivedUpdateEvent = true;
-        updateStore.set(snapshot);
-      });
-      const initialUpdate = await platform.getUpdateSnapshot();
-      if (!receivedUpdateEvent) updateStore.set(initialUpdate);
-    } catch (error) {
-      console.info("更新状态暂不可用", normalizeError(error).message);
-    }
     try {
       const loaded = await platform.loadConfig();
       config = loaded.config;
@@ -138,31 +127,6 @@
       applyTheme(config.appearance.themeMode);
       configLoaded = true;
       if (loaded.warnings.length) showNotice(loaded.warnings[0]);
-      if (config.update.checkOnStart) {
-        const lastCheckKey = "hexo-lite-editor:update-last-auto-check";
-        const lastCheck = Number(localStorage.getItem(lastCheckKey) ?? "0");
-        if (!Number.isFinite(lastCheck) || Date.now() - lastCheck >= 86_400_000) {
-          updateCheckTimer = setTimeout(() => {
-            void (async () => {
-              try {
-                const update = await platform.checkUpdate();
-                updateStore.set(update);
-                localStorage.setItem(lastCheckKey, String(Date.now()));
-                if (shouldAutoDownload(update, config.update.autoDownload)) {
-                  updateStore.set(await platform.downloadUpdate());
-                }
-              } catch (error) {
-                console.info("后台更新未完成", normalizeError(error).message);
-              }
-            })();
-          }, 3000);
-        }
-      }
-      recentProjects = await platform.listRecentProjects();
-      if (config.general.openRecentProjectOnStart) {
-        const recent = await platform.reopenRecentProject();
-        if (recent) acceptProject(recent.session, recent.articles);
-      }
     } catch (error) {
       configLoaded = true;
       showNotice(normalizeError(error).message);
@@ -224,9 +188,85 @@
         requestClose();
       });
     }
+    // The shell is interactive before update IPC or project scanning starts.
+    // Native project opening also runs on a blocking worker.
+    requestAnimationFrame(() => setTimeout(() => {
+      void initializeUpdateState();
+      void initializeRecentWorkspace();
+      schedulePageWarmup();
+    }, 0));
   });
 
+  async function initializeUpdateState() {
+    try {
+      let receivedUpdateEvent = false;
+      unlistenUpdate = await platform.onUpdateSnapshot((snapshot) => {
+        receivedUpdateEvent = true;
+        updateStore.set(snapshot);
+      });
+      const initialUpdate = await platform.getUpdateSnapshot();
+      if (!receivedUpdateEvent) updateStore.set(initialUpdate);
+    } catch (error) {
+      console.info("更新状态暂不可用", normalizeError(error).message);
+    }
+    if (!config.update.checkOnStart) return;
+    const lastCheckKey = "hexo-lite-editor:update-last-auto-check";
+    const lastCheck = Number(localStorage.getItem(lastCheckKey) ?? "0");
+    if (Number.isFinite(lastCheck) && Date.now() - lastCheck < 86_400_000) return;
+    updateCheckTimer = setTimeout(() => {
+      void (async () => {
+        try {
+          const update = await platform.checkUpdate();
+          updateStore.set(update);
+          localStorage.setItem(lastCheckKey, String(Date.now()));
+          if (shouldAutoDownload(update, config.update.autoDownload)) {
+            updateStore.set(await platform.downloadUpdate());
+          }
+        } catch (error) {
+          console.info("后台更新未完成", normalizeError(error).message);
+        }
+      })();
+    }, 3000);
+  }
+
+  async function initializeRecentWorkspace() {
+    try {
+      const recentProjectsTask = platform.listRecentProjects();
+      const reopened = config.general.openRecentProjectOnStart
+        ? await platform.reopenRecentProject()
+        : null;
+      recentProjects = await recentProjectsTask;
+      if (reopened && !session) acceptProject(reopened.session, reopened.articles);
+    } catch (error) {
+      showNotice(normalizeError(error).message);
+    }
+  }
+
+  function schedulePageWarmup() {
+    const warm = async () => {
+      for (const [name, load] of Object.entries(pageLoaders)) {
+        if (pageWarmupCanceled || name === "editor") continue;
+        await load();
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+    };
+    const idleWindow = window as unknown as {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    };
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      pageWarmupIdle = idleWindow.requestIdleCallback(() => void warm(), { timeout: 1200 });
+    } else {
+      pageWarmupIdle = setTimeout(() => void warm(), 500) as unknown as number;
+    }
+  }
+
   onDestroy(() => {
+    pageWarmupCanceled = true;
+    if (pageWarmupIdle !== undefined) {
+      const idleWindow = window as unknown as { cancelIdleCallback?: (handle: number) => void };
+      if (typeof idleWindow.cancelIdleCallback === "function") idleWindow.cancelIdleCallback(pageWarmupIdle);
+      else clearTimeout(pageWarmupIdle);
+    }
     window.removeEventListener("keydown", handleShortcut);
     unlistenTask?.();
     unlistenPreview?.();

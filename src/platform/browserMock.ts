@@ -42,6 +42,7 @@ const session = {
 
 const demoFlag = (name: string) =>
   typeof location !== "undefined" && new URLSearchParams(location.search).get(name) === "1";
+const demoDelay = (duration: number) => new Promise((resolve) => setTimeout(resolve, duration));
 let mockUpdate: import("$shared/types/app").UpdateSnapshot = { currentVersion: appVersion, status: "idle" };
 const mockUpdateListeners = new Set<(snapshot: import("$shared/types/app").UpdateSnapshot) => void>();
 function emitMockUpdate(snapshot: import("$shared/types/app").UpdateSnapshot) {
@@ -232,7 +233,14 @@ export const browserMock = {
   saveConfig: async (next: AppConfigV3) => (config = structuredClone(next)),
   resetConfig: async () => (config = structuredClone(defaultConfig)),
   pickProject: async () => project(),
-  reopenRecentProject: async () => typeof location !== "undefined" && new URLSearchParams(location.search).get("welcome") === "1" ? null : project(),
+  reopenRecentProject: async () => {
+    if (demoFlag("startupDelay")) {
+      document.documentElement.dataset.startupProjectPending = "true";
+      await demoDelay(1500);
+      delete document.documentElement.dataset.startupProjectPending;
+    }
+    return demoFlag("welcome") ? null : project();
+  },
   listRecentProjects: async () => structuredClone(recent),
   openRecentProject: async (recentId: string) => {
     if (recentId !== "demo-recent") throw { code: "recent_unavailable", message: "项目位置已不可用。", recoverable: true };
@@ -378,7 +386,14 @@ export const browserMock = {
     if (item) item.directory = request.targetDirectory;
   },
   downloadCloudflareAsset: async (_assetId: string) => [],
-  getUpdateSnapshot: async () => structuredClone(mockUpdate),
+  getUpdateSnapshot: async () => {
+    if (demoFlag("startupDelay")) {
+      document.documentElement.dataset.startupUpdatePending = "true";
+      await demoDelay(1500);
+      delete document.documentElement.dataset.startupUpdatePending;
+    }
+    return structuredClone(mockUpdate);
+  },
   checkUpdate: async () => {
     // Match the native operation lock and retain packages ready for installation.
     if (["downloading", "verifying", "downloaded", "installing"].includes(mockUpdate.status)) {

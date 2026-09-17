@@ -314,6 +314,11 @@
     const targetDocument = view.state.doc;
     const sequence = ++scrollTargetSequence;
     const safeLine = Math.max(1, Math.min(line, view.state.doc.lines + 1));
+    if (safeLine <= 1) {
+      view.scrollDOM.scrollTop = 0;
+      handleScroll();
+      return;
+    }
     const whole = Math.min(Math.floor(safeLine), view.state.doc.lines);
     const pos = view.state.doc.line(whole).from;
     // CodeMirror must first render the destination viewport; offscreen wrapped

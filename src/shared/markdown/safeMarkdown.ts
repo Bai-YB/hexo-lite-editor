@@ -105,7 +105,12 @@ const allowedStyleProperties = new Set([
   "width", "min-width", "max-width", "height", "min-height", "max-height",
   "inline-size", "min-inline-size", "max-inline-size", "block-size", "min-block-size", "max-block-size",
   "margin-inline", "margin-block", "padding-inline", "padding-block",
-  "overflow", "overflow-x", "overflow-y", "object-fit", "object-position", "aspect-ratio"
+  "overflow", "overflow-x", "overflow-y", "object-fit", "object-position", "aspect-ratio",
+  "background-image", "box-shadow", "box-sizing", "content", "cursor", "filter",
+  "backdrop-filter", "-webkit-backdrop-filter", "position", "inset", "inset-inline", "inset-block",
+  "top", "right", "bottom", "left", "z-index", "pointer-events",
+  "transform", "transform-origin", "transition", "transition-property", "transition-duration",
+  "transition-delay", "transition-timing-function"
 ]);
 
 const safeSemanticAttributes = new Set([
@@ -122,9 +127,23 @@ export function renderSafeMarkdown(
   imagePending = false,
   sourceLines = false
 ): string {
+  return renderMarkdownPreview(source, imageResults, imagePending, sourceLines).html;
+}
+
+export function renderMarkdownPreview(
+  source: string,
+  imageResults: Record<string, PreviewImageResult> = {},
+  imagePending = false,
+  sourceLines = false
+): { html: string; imageSources: string[] } {
   const rendered = sourceLines ? renderMarkdownWithSourceLines(source) : markdown.render(stripFrontMatter(source));
   const renderedDocument = new DOMParser().parseFromString(rendered, "text/html");
+  const embeddedStyles = [...renderedDocument.querySelectorAll("style")]
+    .map((style) => sanitizeStyleSheet(style.textContent ?? ""))
+    .filter(Boolean);
+  renderedDocument.querySelectorAll("style").forEach((style) => style.remove());
   sanitizeSourceAttributes(renderedDocument);
+  const imageSources = new Set<string>();
   renderedDocument.querySelectorAll("img").forEach((image) => {
     const original = image.getAttribute("src") ?? "";
     image.dataset.imageSource = original;
@@ -138,6 +157,7 @@ export function renderSafeMarkdown(
       image.setAttribute("src", original);
       return;
     }
+    if (original) imageSources.add(original);
     const result = imageResults[original];
     if (result?.state === "ready" && result.previewUrl) image.setAttribute("src", result.previewUrl);
     else image.replaceWith(imagePlaceholder(renderedDocument, image, result, imagePending));
@@ -168,7 +188,13 @@ export function renderSafeMarkdown(
     const src = image.getAttribute("src") ?? "";
     if (isSafeImageSource(src)) image.setAttribute("loading", "lazy");
   });
-  return document.body.innerHTML;
+  if (embeddedStyles.length) {
+    const style = document.createElement("style");
+    style.dataset.markdownStyle = "true";
+    style.textContent = embeddedStyles.join("\n");
+    document.body.prepend(style);
+  }
+  return { html: document.body.innerHTML, imageSources: [...imageSources] };
 }
 
 /** Block maps use original, one-based document lines, including front matter. */
@@ -237,7 +263,7 @@ export function chunkPreviewImageSources(sources: string[], size = 32): string[]
 function sanitizeSourceAttributes(document: Document) {
   normalizePresentationAttributes(document);
   document.querySelectorAll<HTMLElement>("[class]").forEach((element) => {
-    const safe = [...element.classList].filter((name) => /^language-[a-z0-9_-]+$/i.test(name));
+    const safe = [...element.classList].filter((name) => /^[^\s"'<>/=]{1,128}$/u.test(name));
     if (safe.length) element.className = safe.join(" ");
     else element.removeAttribute("class");
   });
@@ -297,11 +323,132 @@ export function sanitizeInlineStyle(value: string): string {
     .split(";")
     .map((declaration) => declaration.split(/:(.*)/s).slice(0, 2).map((part) => part.trim()))
     .filter(([property, cssValue]) => {
-      if (!property || !cssValue || !allowedStyleProperties.has(property.toLowerCase())) return false;
-      return !/(?:url\s*\(|expression\s*\(|@import|!important|\\)/i.test(cssValue);
+      if (!property || !cssValue) return false;
+      const normalized = property.toLowerCase();
+      if (!allowedStyleProperties.has(normalized) && !/^--[a-z_][a-z0-9_-]{0,63}$/i.test(normalized)) return false;
+      if (normalized === "position" && /^(?:fixed|sticky)$/i.test(cssValue)) return false;
+      if (normalized === "z-index" && (!/^-?\d+$/.test(cssValue) || Math.abs(Number(cssValue)) > 100)) return false;
+      return !/(?:url\s*\(|expression\s*\(|@import|javascript\s*:|!important|\\)/i.test(cssValue);
     })
     .map(([property, cssValue]) => `${property.toLowerCase()}: ${cssValue}`)
     .join("; ");
+}
+
+/** Keep article CSS inside the quick-preview surface and discard active or escaping rules. */
+export function sanitizeStyleSheet(value: string): string {
+  return parseCssBlocks(removeCssComments(value))
+    .map(sanitizeCssBlock)
+    .filter(Boolean)
+    .join("\n");
+}
+
+interface CssBlock {
+  prelude: string;
+  body: string;
+}
+
+function removeCssComments(value: string): string {
+  let output = "";
+  let index = 0;
+  while (index < value.length) {
+    if (value[index] === "/" && value[index + 1] === "*") {
+      const end = value.indexOf("*/", index + 2);
+      index = end < 0 ? value.length : end + 2;
+    } else {
+      output += value[index];
+      index += 1;
+    }
+  }
+  return output;
+}
+
+function parseCssBlocks(value: string): CssBlock[] {
+  const blocks: CssBlock[] = [];
+  let index = 0;
+  while (index < value.length) {
+    while (/\s/.test(value[index] ?? "")) index += 1;
+    const preludeStart = index;
+    let quote = "";
+    let round = 0;
+    let square = 0;
+    while (index < value.length) {
+      const character = value[index];
+      if (quote) {
+        if (character === quote && value[index - 1] !== "\\") quote = "";
+      } else if (character === '"' || character === "'") quote = character;
+      else if (character === "(") round += 1;
+      else if (character === ")") round = Math.max(0, round - 1);
+      else if (character === "[") square += 1;
+      else if (character === "]") square = Math.max(0, square - 1);
+      else if (character === ";" && round === 0 && square === 0) {
+        index += 1;
+        break;
+      } else if (character === "{" && round === 0 && square === 0) {
+        const prelude = value.slice(preludeStart, index).trim();
+        const bodyStart = index + 1;
+        index += 1;
+        let depth = 1;
+        quote = "";
+        while (index < value.length && depth > 0) {
+          const inner = value[index];
+          if (quote) {
+            if (inner === quote && value[index - 1] !== "\\") quote = "";
+          } else if (inner === '"' || inner === "'") quote = inner;
+          else if (inner === "{") depth += 1;
+          else if (inner === "}") depth -= 1;
+          index += 1;
+        }
+        if (prelude && depth === 0) blocks.push({ prelude, body: value.slice(bodyStart, index - 1) });
+        break;
+      }
+      index += 1;
+    }
+  }
+  return blocks;
+}
+
+function sanitizeCssBlock(block: CssBlock): string {
+  const group = block.prelude.match(/^@(media|supports)\s+([\s\S]+)$/i);
+  if (group) {
+    const condition = group[2].trim();
+    if (!condition || /[{};\\]|url\s*\(|expression\s*\(|javascript\s*:/i.test(condition)) return "";
+    const children = parseCssBlocks(block.body).map(sanitizeCssBlock).filter(Boolean).join(" ");
+    return children ? `@${group[1].toLowerCase()} ${condition} { ${children} }` : "";
+  }
+  if (block.prelude.startsWith("@")) return "";
+  const selectors = splitTopLevelSelectors(block.prelude)
+      .map((selector) => selector.trim())
+      .filter((selector) => !/[{};@\\]/.test(selector))
+      .filter((selector) => selector && !/(?:^|[\s>+~])(?:html|body|head)(?=$|[\s.#:\[>+~])/i.test(selector))
+      .map((selector) => `.markdown-preview ${selector}`);
+  const declarations = sanitizeInlineStyle(block.body);
+  return selectors.length && declarations ? `${selectors.join(", ")} { ${declarations} }` : "";
+}
+
+function splitTopLevelSelectors(value: string): string[] {
+  const selectors: string[] = [];
+  let start = 0;
+  let round = 0;
+  let square = 0;
+  let quote = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote && value[index - 1] !== "\\") quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "(") round += 1;
+    else if (character === ")") round = Math.max(0, round - 1);
+    else if (character === "[") square += 1;
+    else if (character === "]") square = Math.max(0, square - 1);
+    else if (character === "," && round === 0 && square === 0) {
+      selectors.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  selectors.push(value.slice(start));
+  return selectors;
 }
 
 function imagePlaceholder(

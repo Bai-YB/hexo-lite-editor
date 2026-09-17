@@ -513,15 +513,27 @@ fn preflight_content_sync_blocking(
 }
 
 #[tauri::command]
-pub fn webdav_credential_status(endpoint: String) -> AppResult<crate::domain::CredentialStatus> {
-    let endpoint = normalize_webdav_endpoint(&endpoint)?;
-    Ok(webdav_status(&endpoint))
+pub async fn webdav_credential_status(
+    endpoint: String,
+) -> AppResult<crate::domain::CredentialStatus> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = normalize_webdav_endpoint(&endpoint)?;
+        Ok(webdav_status(&endpoint))
+    })
+    .await
+    .map_err(|error| AppError::invalid(format!("读取 WebDAV 凭据状态失败：{error}")))?
 }
 
 #[tauri::command]
-pub fn webdav_credential_delete(endpoint: String) -> AppResult<crate::domain::CredentialStatus> {
-    let endpoint = normalize_webdav_endpoint(&endpoint)?;
-    delete_webdav_credentials(&endpoint)
+pub async fn webdav_credential_delete(
+    endpoint: String,
+) -> AppResult<crate::domain::CredentialStatus> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let endpoint = normalize_webdav_endpoint(&endpoint)?;
+        delete_webdav_credentials(&endpoint)
+    })
+    .await
+    .map_err(|error| AppError::invalid(format!("删除 WebDAV 凭据失败：{error}")))?
 }
 
 #[tauri::command]
@@ -958,19 +970,25 @@ fn has_sync_baseline(record: &SyncRecord) -> bool {
 }
 
 #[tauri::command]
-pub fn get_content_sync_status(
+pub async fn get_content_sync_status(
     project_id: String,
     session_generation: u64,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> AppResult<ContentSyncView> {
-    let root = project_root(&state, &project_id, session_generation)?;
-    let registry = load_registry(&state)?;
-    Ok(registry
-        .records
-        .iter()
-        .find(|record| record.project_path == path_key(&root))
-        .map(view_from_record)
-        .unwrap_or_else(off_view))
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let root = project_root(&state, &project_id, session_generation)?;
+        let registry = load_registry(&state)?;
+        Ok(registry
+            .records
+            .iter()
+            .find(|record| record.project_path == path_key(&root))
+            .map(view_from_record)
+            .unwrap_or_else(off_view))
+    })
+    .await
+    .map_err(|error| AppError::invalid(format!("读取同步状态失败：{error}")))?
 }
 
 #[tauri::command]
@@ -1242,31 +1260,37 @@ fn enable_webdav_content_sync_blocking(
 }
 
 #[tauri::command]
-pub fn disable_content_sync(
+pub async fn disable_content_sync(
     project_id: String,
     session_generation: u64,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> AppResult<ContentSyncView> {
-    let root = project_root(&state, &project_id, session_generation)?;
-    let operation_lock = state.content_sync_lock(&path_key(&root))?;
-    let _operation_guard = operation_lock.try_lock().map_err(|_| {
-        AppError::new(
-            "sync_busy",
-            "此项目已有同步任务正在运行，请完成后重试。",
-            true,
-        )
-    })?;
-    let mut registry = load_registry(&state)?;
-    registry
-        .records
-        .retain(|item| item.project_path != path_key(&root));
-    save_registry(&state, &mut registry)?;
-    if let Ok(mut schedules) = state.sync_schedules.lock() {
-        if let Some((_, cancel)) = schedules.remove(&path_key(&root)) {
-            let _ = cancel.send(());
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let root = project_root(&state, &project_id, session_generation)?;
+        let operation_lock = state.content_sync_lock(&path_key(&root))?;
+        let _operation_guard = operation_lock.try_lock().map_err(|_| {
+            AppError::new(
+                "sync_busy",
+                "此项目已有同步任务正在运行，请完成后重试。",
+                true,
+            )
+        })?;
+        let mut registry = load_registry(&state)?;
+        registry
+            .records
+            .retain(|item| item.project_path != path_key(&root));
+        save_registry(&state, &mut registry)?;
+        if let Ok(mut schedules) = state.sync_schedules.lock() {
+            if let Some((_, cancel)) = schedules.remove(&path_key(&root)) {
+                let _ = cancel.send(());
+            }
         }
-    }
-    Ok(off_view())
+        Ok(off_view())
+    })
+    .await
+    .map_err(|error| AppError::invalid(format!("关闭同步失败：{error}")))?
 }
 
 #[tauri::command]

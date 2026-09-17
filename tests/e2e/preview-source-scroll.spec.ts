@@ -61,6 +61,16 @@ async function previewOffset(page: Page, section: number) {
     element.getBoundingClientRect().top - element.closest(".markdown-preview")!.getBoundingClientRect().top);
 }
 
+async function previewAlignmentError(page: Page, section: number) {
+  return page.locator(`.markdown-preview h2[data-source-line="${sectionLine(section)}"]`).evaluate((element) => {
+    const preview = element.closest<HTMLElement>(".markdown-preview")!;
+    const currentOffset = element.getBoundingClientRect().top - preview.getBoundingClientRect().top;
+    const contentTop = currentOffset + preview.scrollTop;
+    const target = Math.max(0, Math.min(preview.scrollHeight - preview.clientHeight, contentTop - 16));
+    return Math.abs(currentOffset - (contentTop - target));
+  });
+}
+
 test("editor and preview keep the same section with tall images, wrapped paragraphs and code blocks", async ({ page }) => {
   await prepare(page);
   await scrollEditorToSection(page, 7);
@@ -97,4 +107,31 @@ test("scrolling preview moves the editor to the same source block without feedba
   // A source→editor→preview round trip crosses fractional CodeMirror and WebKit
   // line metrics. Keep a three CSS pixel bound while requiring the same source line above.
   await expect.poll(async () => Math.abs(await previewOffset(page, 5) - 16)).toBeLessThan(3);
+});
+
+test("repeated long-document scrolling does not accumulate alignment drift", async ({ page }) => {
+  await prepare(page);
+  for (const section of [2, 5, 9, 4, 11, 3, 8]) {
+    await test.step(`align section ${section}`, async () => {
+      await scrollEditorToSection(page, section);
+      await expect.poll(() => previewAlignmentError(page, section)).toBeLessThan(2);
+    });
+  }
+
+  const editor = page.locator(".cm-editor");
+  const preview = page.locator(".markdown-preview");
+  await editor.evaluate((node) => {
+    const scroller = node.querySelector<HTMLElement>(".cm-scroller")!;
+    scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+  await expect.poll(() => preview.evaluate((node) => Math.abs(
+    node.scrollTop - (node.scrollHeight - node.clientHeight)
+  ))).toBeLessThan(2);
+
+  await preview.evaluate((node) => {
+    node.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
+    node.scrollTop = 0;
+  });
+  await expect.poll(async () => (await editorPosition(page)).top).toBeLessThan(2);
 });

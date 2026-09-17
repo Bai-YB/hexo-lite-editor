@@ -19,7 +19,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
@@ -33,10 +33,7 @@ struct RecentProjectRecord {
 }
 
 #[tauri::command]
-pub fn pick_project(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<Option<OpenProjectResult>> {
+pub async fn pick_project(app: AppHandle) -> AppResult<Option<OpenProjectResult>> {
     let Some(selection) = app
         .dialog()
         .file()
@@ -48,39 +45,45 @@ pub fn pick_project(
     let path = selection
         .into_path()
         .map_err(|error| AppError::invalid(error.to_string()))?;
-    let result = open_project_path(&state, &path)?;
-    super::sync::schedule_sync_after_open(
-        app,
-        result.session.project_id.clone(),
-        result.session.generation,
-    );
-    Ok(Some(result))
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = open_project_path(&app.state::<AppState>(), &path)?;
+        super::sync::schedule_sync_after_open(
+            app,
+            result.session.project_id.clone(),
+            result.session.generation,
+        );
+        Ok(Some(result))
+    })
+    .await
+    .map_err(|error| AppError::io("打开项目任务失败", error))?
 }
 
 #[tauri::command]
-pub fn reopen_recent_project(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> AppResult<Option<OpenProjectResult>> {
-    let records = load_recent_records(&state)?;
-    let Some(record) = records
-        .into_iter()
-        .find(|record| recent_available(&record.path))
-    else {
-        return Ok(None);
-    };
-    match open_project_path(&state, &record.path) {
-        Ok(project) => {
-            super::sync::schedule_sync_after_open(
-                app,
-                project.session.project_id.clone(),
-                project.session.generation,
-            );
-            Ok(Some(project))
+pub async fn reopen_recent_project(app: AppHandle) -> AppResult<Option<OpenProjectResult>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let records = load_recent_records(&state)?;
+        let Some(record) = records
+            .into_iter()
+            .find(|record| recent_available(&record.path))
+        else {
+            return Ok(None);
+        };
+        match open_project_path(&state, &record.path) {
+            Ok(project) => {
+                super::sync::schedule_sync_after_open(
+                    app,
+                    project.session.project_id.clone(),
+                    project.session.generation,
+                );
+                Ok(Some(project))
+            }
+            Err(error) if error.recoverable => Ok(None),
+            Err(error) => Err(error),
         }
-        Err(error) if error.recoverable => Ok(None),
-        Err(error) => Err(error),
-    }
+    })
+    .await
+    .map_err(|error| AppError::io("恢复最近项目任务失败", error))?
 }
 
 #[tauri::command]
@@ -98,29 +101,35 @@ pub fn list_recent_projects(state: State<'_, AppState>) -> AppResult<Vec<RecentP
 }
 
 #[tauri::command]
-pub fn open_recent_project(
+pub async fn open_recent_project(
     recent_id: String,
     app: AppHandle,
-    state: State<'_, AppState>,
 ) -> AppResult<OpenProjectResult> {
-    let record = load_recent_records(&state)?
-        .into_iter()
-        .find(|record| record.recent_id == recent_id)
-        .ok_or_else(|| AppError::new("recent_project_not_found", "最近项目记录不存在。", true))?;
-    if !recent_available(&record.path) {
-        return Err(AppError::new(
-            "recent_project_unavailable",
-            "项目目录已移动或不可用，请重新选择项目文件夹。",
-            true,
-        ));
-    }
-    let result = open_project_path(&state, &record.path)?;
-    super::sync::schedule_sync_after_open(
-        app,
-        result.session.project_id.clone(),
-        result.session.generation,
-    );
-    Ok(result)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let record = load_recent_records(&state)?
+            .into_iter()
+            .find(|record| record.recent_id == recent_id)
+            .ok_or_else(|| {
+                AppError::new("recent_project_not_found", "最近项目记录不存在。", true)
+            })?;
+        if !recent_available(&record.path) {
+            return Err(AppError::new(
+                "recent_project_unavailable",
+                "项目目录已移动或不可用，请重新选择项目文件夹。",
+                true,
+            ));
+        }
+        let result = open_project_path(&state, &record.path)?;
+        super::sync::schedule_sync_after_open(
+            app,
+            result.session.project_id.clone(),
+            result.session.generation,
+        );
+        Ok(result)
+    })
+    .await
+    .map_err(|error| AppError::io("打开最近项目任务失败", error))?
 }
 
 #[tauri::command]

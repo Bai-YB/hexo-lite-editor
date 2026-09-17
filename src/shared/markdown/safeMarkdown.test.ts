@@ -4,9 +4,11 @@ import {
   isSafeImageSource,
   chunkPreviewImageSources,
   extractPreviewImageSources,
+  renderMarkdownPreview,
   renderSafeMarkdown,
   rewriteLocalImage,
   sanitizeInlineStyle,
+  sanitizeStyleSheet,
   stripFrontMatter,
 } from "./safeMarkdown";
 
@@ -155,6 +157,38 @@ describe("safe markdown", () => {
     expect(html).toContain("background: linear-gradient(to right, #ff4b2b, #4facfe)");
     expect(html).toContain("-webkit-background-clip: text");
     expect(html).toContain("-webkit-text-fill-color: transparent");
+  });
+
+  it("renders scoped article styles and keeps the classes and variables they target", () => {
+    const html = renderSafeMarkdown(
+      '<style>.hexo-card,.hexo-card:hover{position:relative;background:linear-gradient(135deg,var(--start),#fff);' +
+      'box-shadow:0 4px 12px rgba(0,0,0,.2);transform:translateY(-2px)}' +
+      '@media (max-width:640px){.hexo-card{padding:12px}}' +
+      'body{display:none}@import url(https://example.com/x.css);</style>\n' +
+      '<div class="hexo-card" style="--start:#667eea;position:fixed">卡片</div>'
+    );
+    expect(html).toContain('class="hexo-card"');
+    expect(html).toContain('--start: #667eea');
+    expect(html).not.toContain("position: fixed");
+    expect(html).toContain(".markdown-preview .hexo-card");
+    expect(html).toContain("@media (max-width:640px)");
+    expect(html).not.toContain("body{");
+    expect(html).not.toContain("@import");
+  });
+
+  it("builds preview HTML and local image work from a single parse result", () => {
+    const preview = renderMarkdownPreview('![本地](/images/local.png) ![远程](https://example.com/remote.png)');
+    expect(preview.imageSources).toEqual(["/images/local.png"]);
+    expect(preview.html).toContain("data-image-source");
+  });
+
+  it("scopes every selector and removes escaping stylesheet declarations", () => {
+    const css = sanitizeStyleSheet('.one,.two:is(.a,.b){position:absolute;z-index:10;background:url(x)}');
+    expect(css).toContain(".markdown-preview .one");
+    expect(css).toContain(".markdown-preview .two:is(.a,.b)");
+    expect(css).toContain("position: absolute");
+    expect(css).toContain("z-index: 10");
+    expect(css).not.toContain("url(");
   });
 
 });

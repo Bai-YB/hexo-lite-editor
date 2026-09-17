@@ -39,14 +39,36 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("settings interaction recovery", () => {
+  it("defers project scanning until file sync opens and shows only the chosen provider form", async () => {
+    vi.mocked(platform.getContentSyncStatus).mockResolvedValue({ enabled: false, provider: "github", status: "off", conflicts: [] });
+    vi.mocked(platform.detectContentSync).mockResolvedValue({
+      requiresSelection: false,
+      candidates: [{ repository: "https://github.com/example/blog.git", source: "Hexo deploy 配置", visibility: "private" }]
+    });
+    const view = render(SettingsPage, {
+      config: structuredClone(defaultConfig),
+      session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] },
+      initialSection: "general"
+    });
+    await tick();
+    expect(platform.detectContentSync).not.toHaveBeenCalled();
+    await fireEvent.click(view.getByRole("button", { name: "文件同步" }));
+    const webDavChoice = await waitFor(() => view.getByRole("radio", { name: /^WebDAV/ }));
+    expect(view.getByRole("radio", { name: /^GitHub/ }).getAttribute("aria-checked")).toBe("true");
+    expect(view.queryByLabelText("WebDAV 服务器地址")).toBeNull();
+    await fireEvent.click(webDavChoice);
+    expect(view.getByLabelText("WebDAV 服务器地址")).toBeTruthy();
+    expect(view.queryByLabelText("内容分支")).toBeNull();
+  });
+
   it("does not replace a newer WebDAV form with a late connection test", async () => {
     const status: ContentSyncView = { enabled: false, provider: "webdav", status: "off", conflicts: [] };
     vi.mocked(platform.getContentSyncStatus).mockResolvedValue(status);
     let finish!: (value: import("$shared/types/app").WebDavConnectionTestResult) => void;
     vi.mocked(platform.testWebDavContentSync).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync" });
-    await waitFor(() => expect(platform.getContentSyncStatus).toHaveBeenCalled());
-    await fireEvent.change(view.getByLabelText("同步方式"), { target: { value: "webdav" } });
+    const webDavChoice = await waitFor(() => view.getByRole("radio", { name: /^WebDAV/ }));
+    await fireEvent.click(webDavChoice);
     await fireEvent.input(view.getByLabelText("WebDAV 服务器地址"), { target: { value: "https://old.example/dav" } });
     await fireEvent.input(view.getByLabelText("WebDAV 用户名"), { target: { value: "writer" } });
     await fireEvent.input(view.getByLabelText("WebDAV 密码"), { target: { value: "old-password" } });

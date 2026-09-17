@@ -1,6 +1,15 @@
 import { editorBoundary } from "./keyboard";
 import { expect, test } from "./fixtures";
 
+test("the shell stays interactive while startup services and the recent project are still loading", async ({ page }) => {
+  await page.goto("/?demo=1&startupDelay=1");
+  await expect(page.locator("html")).toHaveAttribute("data-startup-project-pending", "true");
+  await expect(page.getByRole("button", { name: "设置", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "设置", exact: true })).toBeVisible();
+  await expect(page.locator("html")).not.toHaveAttribute("data-startup-project-pending", "true", { timeout: 3000 });
+});
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/?demo=1");
   await page.locator(".cm-content").waitFor();

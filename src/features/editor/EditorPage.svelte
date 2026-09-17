@@ -32,7 +32,7 @@
     chunkPreviewImageSources,
     extractPreviewImageSources,
     isRemoteImageSource,
-    renderSafeMarkdown,
+    renderMarkdownPreview,
     replacePreviewImageWithPlaceholder
   } from "$shared/markdown/safeMarkdown";
   import { isTauri, platform, normalizeError } from "$platform/tauri";
@@ -94,6 +94,10 @@
   let failedArticle: ArticleSummary | null = null;
   let previewHtml = "";
   let previewImageResults: Record<string, import("$shared/types/app").PreviewImageResult> = {};
+  let previewRendering = false;
+  let previewRenderTimer: ReturnType<typeof setTimeout> | undefined;
+  let previewRenderFrame = 0;
+  let previewRenderSequence = 0;
   let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let lastProjectKey: string | null = store.getState().snapshot
     ? `${store.getState().snapshot!.projectId}:${store.getState().snapshot!.sessionGeneration}`
@@ -122,10 +126,14 @@
   let imageValidationSequence = 0;
   let articleLoadSequence = 0;
   let editorScrollTop = 0;
+  let editorScrollHeight = 0;
+  let editorClientHeight = 0;
   let previewScrollSync = true;
   let markdownPreview: HTMLElement;
   let markdownEditor: MarkdownEditor | undefined;
   let previewAnchors: SourceAnchor[] = [];
+  let previewScrollPending = false;
+  let previewInteractionFrame = 0;
   // Incremented whenever the preview DOM is replaced or remeasured.  Scroll
   // alignment must never consume coordinates collected from the previous DOM.
   let previewLayoutSequence = 0;
@@ -133,6 +141,7 @@
   const scrollOwner = new ScrollSyncOwner();
   const editorScrollByArticle = new Map<string, number>();
   const previewScrollByArticle = new Map<string, number>();
+
   let componentAlive = true;
   let pendingImageUploads = 0;
   const activeImageUploads = new Set<string>();
@@ -190,6 +199,9 @@
     unsubscribe();
     previewAssets.clear();
     clearTimeout(autoSaveTimer);
+    clearTimeout(previewRenderTimer);
+    cancelAnimationFrame(previewRenderFrame);
+    cancelAnimationFrame(previewInteractionFrame);
     window.removeEventListener("focus", handleWindowFocus);
     window.removeEventListener("pointerdown", closeFilterMenu);
     window.removeEventListener("keydown", closeFilterMenu);
@@ -258,18 +270,18 @@
     filterMenuOpen = false;
   }
 
-  $: previewImageSources = extractPreviewImageSources(editorState.content);
+  $: schedulePreviewRender(
+    editorState.content,
+    previewImageResults,
+    previewImagesPending,
+    config.layout.previewVisible,
+    previewMode
+  );
   $: previewImageKey = `${activeArticleId ?? ""}\u0000${previewImageSources.join("\u0000")}`;
   $: if (session && editorState.snapshot && previewImageKey !== lastValidatedImageKey) {
     lastValidatedImageKey = previewImageKey;
     void refreshPreviewImages();
   }
-  $: previewHtml = renderSafeMarkdown(
-    editorState.content,
-    previewImageResults,
-    previewImagesPending,
-    true
-  );
   $: availableCategories = [...new Set(articles.flatMap((article) => article.categories))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   $: availableTags = [...new Set(articles.flatMap((article) => article.tags))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   $: filteredArticles = articles
@@ -286,6 +298,35 @@
       const field = sortMode === "createdDesc" ? "createdAt" : sortMode === "dateDesc" ? "frontMatterDate" : "modifiedAt";
       return Date.parse(b[field] ?? "") - Date.parse(a[field] ?? "");
     });
+
+  function schedulePreviewRender(
+    source: string,
+    imageResults: Record<string, import("$shared/types/app").PreviewImageResult>,
+    imagePending: boolean,
+    previewVisible: boolean,
+    mode: PreviewMode
+  ) {
+    const sequence = ++previewRenderSequence;
+    clearTimeout(previewRenderTimer);
+    cancelAnimationFrame(previewRenderFrame);
+    if (!previewVisible || mode !== "quick") {
+      previewRendering = false;
+      return;
+    }
+    previewRendering = true;
+    // Let the editor and shell paint first. Rapid input replaces this job, so
+    // long documents are parsed once after a typing burst instead of per key.
+    previewRenderFrame = requestAnimationFrame(() => {
+      previewRenderTimer = setTimeout(() => {
+        if (!componentAlive || sequence !== previewRenderSequence) return;
+        const rendered = renderMarkdownPreview(source, imageResults, imagePending, true);
+        if (!componentAlive || sequence !== previewRenderSequence) return;
+        previewHtml = rendered.html;
+        previewImageSources = rendered.imageSources;
+        previewRendering = false;
+      }, 32);
+    });
+  }
   $: wordCount = countWords(editorState.content);
   $: if (`${session?.projectId ?? ""}:${session?.generation ?? 0}` !== lastProjectKey) {
     lastProjectKey = session ? `${session.projectId}:${session.generation}` : null;
@@ -346,7 +387,7 @@
         || snapshot.sessionGeneration !== expectedGeneration
       ) return;
       activeArticleId = article.articleId;
-      scrollOwner.claim("editor");
+      claimEditorScroll();
       editorScrollTop = editorScrollByArticle.get(article.articleId) ?? 0;
       store.load(snapshot);
       resumePendingImageUploads(snapshot.content, article.articleId);
@@ -745,8 +786,10 @@
     }
   }
 
-  function recordEditorScroll(value: number, _scrollHeight: number, _clientHeight: number, line = 1) {
+  function recordEditorScroll(value: number, scrollHeight: number, clientHeight: number, line = 1) {
     editorScrollTop = value;
+    editorScrollHeight = scrollHeight;
+    editorClientHeight = clientHeight;
     if (activeArticleId) editorScrollByArticle.set(activeArticleId, value);
     if (scrollOwner.canDrive("editor")) {
       scrollSourceLine = line;
@@ -757,24 +800,55 @@
   function recordPreviewScroll() {
     if (activeArticleId && markdownPreview) {
       previewScrollByArticle.set(activeArticleId, markdownPreview.scrollTop);
-      if (previewScrollSync && scrollOwner.canDrive("preview") && previewAnchors.length) {
-        scrollSourceLine = sourceLineForPreviewTop(previewAnchors, markdownPreview.scrollTop + SCROLL_ANCHOR_INSET);
-        markdownEditor?.scrollToLine(scrollSourceLine);
-      }
+      if (previewScrollSync && scrollOwner.canDrive("preview")) previewScrollPending = !alignEditorToPreview();
     }
   }
 
-  function alignPreviewToSource() {
+  function claimEditorScroll() {
+    cancelAnimationFrame(previewInteractionFrame);
+    previewScrollPending = false;
+    scrollOwner.claim("editor");
+  }
+
+  function claimPreviewScroll() {
+    // Input events run before the browser applies their scroll offset. Mark
+    // the preview as authoritative immediately so an intervening HTML/layout
+    // rebuild cannot snap it back to the editor's previous line.
+    previewScrollPending = true;
+    scrollOwner.claim("preview");
+    cancelAnimationFrame(previewInteractionFrame);
+    previewInteractionFrame = requestAnimationFrame(() => {
+      if (!scrollOwner.canDrive("preview") || !previewScrollPending) return;
+      previewScrollPending = !alignEditorToPreview();
+    });
+  }
+
+  function alignEditorToPreview(): boolean {
+    if (!previewScrollSync || !markdownPreview?.isConnected || !previewAnchors.length) return false;
+    const maxScroll = Math.max(0, markdownPreview.scrollHeight - markdownPreview.clientHeight);
+    if (markdownPreview.scrollTop <= 1) scrollSourceLine = 1;
+    else if (markdownPreview.scrollTop >= maxScroll - 1) scrollSourceLine = Number.POSITIVE_INFINITY;
+    else scrollSourceLine = sourceLineForPreviewTop(previewAnchors, markdownPreview.scrollTop + SCROLL_ANCHOR_INSET);
+    markdownEditor?.scrollToLine(scrollSourceLine);
+    return true;
+  }
+
+  function alignPreviewToSource(useEditorBounds = true) {
     if (!previewScrollSync || !markdownPreview?.isConnected || !previewAnchors.length) return;
-    const target = scrollSourceLine <= previewAnchors[0].line && editorScrollTop === 0
-      ? 0 : Math.max(0, previewTopForSourceLine(previewAnchors, scrollSourceLine) - SCROLL_ANCHOR_INSET);
+    const editorMaxScroll = Math.max(0, editorScrollHeight - editorClientHeight);
+    const previewMaxScroll = Math.max(0, markdownPreview.scrollHeight - markdownPreview.clientHeight);
+    const target = scrollSourceLine <= 1 || (useEditorBounds && editorScrollTop <= 1)
+      ? 0
+      : !Number.isFinite(scrollSourceLine) || (useEditorBounds && editorScrollTop >= editorMaxScroll - 1)
+        ? previewMaxScroll
+        : Math.max(0, Math.min(previewMaxScroll, previewTopForSourceLine(previewAnchors, scrollSourceLine) - SCROLL_ANCHOR_INSET));
     if (Math.abs(markdownPreview.scrollTop - target) > 0.5) markdownPreview.scrollTop = target;
   }
 
   function togglePreviewScrollSync() {
     previewScrollSync = !previewScrollSync;
     if (previewScrollSync) {
-      scrollOwner.claim("editor");
+      claimEditorScroll();
       scrollSourceLine = markdownEditor?.sourceLineAtScroll() ?? 1;
       alignPreviewToSource();
     }
@@ -794,9 +868,22 @@
         // synchronizer during that window, then align once the new layout is
         // measured.
         previewAnchors = nextAnchors;
-        if (scrollOwner.canDrive("editor")) scrollSourceLine = markdownEditor?.sourceLineAtScroll() ?? scrollSourceLine;
-        // Preserve the source location when images, fonts or pane widths change.
-        alignPreviewToSource();
+        if (scrollOwner.canDrive("editor")) {
+          previewScrollPending = false;
+          scrollSourceLine = markdownEditor?.sourceLineAtScroll() ?? scrollSourceLine;
+          // Preserve the source location when images, fonts or pane widths change.
+          alignPreviewToSource();
+        } else if (previewScrollPending) {
+          // A user can scroll in the frame between Svelte replacing the HTML
+          // and the next anchor measurement. Keep that input authoritative
+          // instead of snapping the preview back to the editor's old line.
+          previewScrollPending = !alignEditorToPreview();
+        } else {
+          // The editor may still be completing its asynchronous jump from a
+          // preview-driven scroll. Use the stored source line here; its old
+          // scrollTop boundary would otherwise snap the preview back to the end.
+          alignPreviewToSource(false);
+        }
       });
     };
     const resize = new ResizeObserver(rebuild);
@@ -808,8 +895,7 @@
     };
     const mutation = new MutationObserver(observeBlocks);
     mutation.observe(node, { childList: true, subtree: true });
-    const claim = () => scrollOwner.claim("preview");
-    for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) node.addEventListener(event, claim, { passive: true });
+    for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) node.addEventListener(event, claimPreviewScroll, { passive: true });
     node.addEventListener("load", rebuild, true);
     observeBlocks();
     return {
@@ -829,8 +915,9 @@
         resize.disconnect();
         mutation.disconnect();
         node.removeEventListener("load", rebuild, true);
-        for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) node.removeEventListener(event, claim);
+        for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) node.removeEventListener(event, claimPreviewScroll);
         previewAnchors = [];
+        previewScrollPending = false;
       }
     };
   }
@@ -1225,7 +1312,7 @@
               onChange={(content, changes) => store.update(content, changes)}
               onSelectionChange={(from, to) => store.setSelection(from, to)}
               onScroll={recordEditorScroll}
-              onScrollInteraction={() => scrollOwner.claim("editor")}
+              onScrollInteraction={claimEditorScroll}
               onImageFiles={(files) => void handleImageFiles(files)}
               onSave={saveCurrent}
               onNewArticle={openCreateDialog}
@@ -1253,7 +1340,7 @@
           <section class="preview-pane" aria-label={$ui("文章预览")}>
             <div class="preview-mode-bar">
               <PreviewModeSwitcher mode={previewMode} onChange={(mode) => (previewMode = mode)} />
-              <span>{previewMode === "quick" ? (previewImagesPending ? $ui("正在读取图片") : $ui("HTML 已安全渲染")) : $ui("当前 Hexo 项目")}</span>
+              <span>{previewMode === "quick" ? (previewRendering ? $ui("正在渲染 HTML") : previewImagesPending ? $ui("正在读取图片") : $ui("HTML 已安全渲染")) : $ui("当前 Hexo 项目")}</span>
               <button
                 class:active={previewScrollSync}
                 class="icon-button small"

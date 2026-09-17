@@ -54,11 +54,15 @@ test("真实编辑输入的 HTML 排版、折叠与代码在两种引擎一致",
   await page.goto("/?demo=1");
   await page.locator('[data-article-id="summer"]').click();
   const editor = page.locator(".cm-content");
-  await editor.fill('<div align="center"><font color="red" size="5">HTML 标题</font></div>\n\n' +
+  await editor.fill('<style>.html-card{padding:18px;background:linear-gradient(135deg,#667eea,#8058b5);color:white;border-radius:14px}.html-card:hover{transform:translateY(-2px)}body{display:none}</style>\n' +
+    '<div class="html-card">HTML 样式卡片</div>\n\n' +
+    '<div align="center"><font color="red" size="5">HTML 标题</font></div>\n\n' +
     '<table><tr><td align="right">合计</td></tr></table>\n\n' +
     '<details><summary>展开正文</summary><p>折叠内容</p></details>\n\n' +
     '```html\n<div onclick="alert(1)">源码</div>\n```\n\n<script>window.htmlExecuted = true</script>');
   const preview = page.locator(".markdown-preview");
+  await expect(preview.locator(".html-card")).toHaveCSS("border-radius", "14px");
+  await expect(preview.locator(".html-card")).toHaveCSS("color", "rgb(255, 255, 255)");
   await expect(preview.locator("div").filter({ hasText: "HTML 标题" })).toHaveCSS("text-align", "center");
   await expect(preview.locator("td")).toHaveCSS("text-align", "right");
   await expect(preview.getByText("折叠内容", { exact: true })).toBeHidden();

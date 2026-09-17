@@ -355,11 +355,14 @@ test("内容同步向导要求公开仓库确认并展示首次同步预检", as
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByRole("button", { name: /文件同步/ }).click();
   const panel = page.locator(".settings-content-panel");
-  await expect(panel.getByRole("heading", { name: "本次变化", level: 3 })).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "同步规划", level: 3 })).toBeVisible();
+  await expect(panel.getByRole("radio", { name: /^GitHub/ })).toHaveAttribute("aria-checked", "true");
+  await expect(panel.getByRole("radio", { name: /^WebDAV/ })).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "本次变化", level: 3 })).toHaveCount(0);
   await expect(panel.getByText(/我同意将草稿、配置和主题上传到公开仓库/)).toBeVisible();
   const enable = panel.getByRole("button", { name: "合并并开始同步" });
   await expect(enable).toBeDisabled();
-  await panel.getByRole("button", { name: "预检" }).click();
+  await panel.getByRole("button", { name: "检查连接与差异" }).click();
   await expect(panel.getByText("启用预检")).toBeVisible();
   await expect(panel.getByText(/本地 12 个文件/)).toBeVisible();
   await panel.locator(".sync-warning input").check();
@@ -373,7 +376,7 @@ test("WebDAV 真实测试通过后启用且配置表单始终可编辑", async (
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByRole("button", { name: /文件同步/ }).click();
   const panel = page.locator(".settings-content-panel");
-  await panel.getByLabel("同步方式").selectOption("webdav");
+  await panel.getByRole("radio", { name: /^WebDAV/ }).click();
   await panel.getByLabel("WebDAV 服务器地址").fill("https://dav.example.com/remote.php/dav/files/blogger");
   await panel.getByLabel("WebDAV 远端目录").fill("hexo/my-blog");
   await panel.getByLabel("WebDAV 用户名").fill("blogger");
@@ -403,7 +406,7 @@ test("WebDAV 认证失败后保留表单和输入并可直接修正", async ({ p
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByRole("button", { name: /文件同步/ }).click();
   const panel = page.locator(".settings-content-panel");
-  await panel.getByLabel("同步方式").selectOption("webdav");
+  await panel.getByRole("radio", { name: /^WebDAV/ }).click();
   await panel.getByLabel("WebDAV 服务器地址").fill("https://dav.example.com/dav");
   await panel.getByLabel("WebDAV 远端目录").fill("hexo/my-blog");
   await panel.getByLabel("WebDAV 用户名").fill("blogger");
@@ -426,7 +429,7 @@ test("多个 deploy 仓库必须由用户明确选择", async ({ page }) => {
   await expect(repository).toHaveValue("");
   await expect(page.getByText("选择目标仓库后才能预检和启用内容同步。")).toBeVisible();
   await repository.selectOption("git@github.com:example/quiet-mirror.git");
-  await expect(page.getByRole("button", { name: "预检" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "检查连接与差异" })).toBeVisible();
 });
 
 test("内容同步冲突逐文件展示 Markdown 差异与二进制哈希选择", async ({ page }) => {
@@ -488,7 +491,7 @@ test("维护页不向普通用户显示任务日志或终端输出，关于页�
   await expect(page.getByText("任务日志")).toHaveCount(0);
   await expect(page.locator(".diagnostic-log-view")).toHaveCount(0);
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByText("版本 1.0.6.3")).toBeVisible();
+  await expect(page.getByText("版本 1.0.6.4")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);
   await expect(page.getByText("操作系统")).toHaveCount(0);
 });
@@ -572,8 +575,8 @@ test("窄窗口中设置六组导航清晰，连接控件使用单列", async ({
   await expect(nav.getByRole("button")).toHaveText(["常规", "编辑器", "图片", "预览与发布", "文件同步", "更新与恢复"]);
   await nav.getByRole("button", { name: "文件同步", exact: true }).click();
   const panel = page.locator(".settings-content-panel");
-  await expect(panel.getByText("主题与模块", { exact: true })).toBeVisible();
-  await panel.getByLabel("同步方式").selectOption("webdav");
+  await expect(panel.getByText("同步规划", { exact: true })).toBeVisible();
+  await panel.getByRole("radio", { name: /^WebDAV/ }).click();
   const address = panel.getByLabel("WebDAV 服务器地址");
   await expect(address).toBeVisible();
   const geometry = await address.evaluate((element) => {

@@ -6,6 +6,7 @@
   import ModalDialog from "$shared/components/ModalDialog.svelte";
   import SettingsHeader from "./SettingsHeader.svelte";
   import SettingsNavigation from "./SettingsNavigation.svelte";
+  import SyncProviderPicker from "./SyncProviderPicker.svelte";
   import CloudflareImageBedSettings from "./CloudflareImageBedSettings.svelte";
   import { syncStatusLabel } from "$features/editor/syncStatusLabel";
   import { defaultConfig } from "$shared/types/app";
@@ -62,6 +63,8 @@
   let disposed = false;
   let credentialRequest = 0;
   let syncRevision = 0;
+  let syncLoaded = false;
+  let syncLoading = false;
   let unlistenSync: (() => void) | null = null;
   let unlistenSyncPhase: (() => void) | null = null;
   let syncProgress: import("$shared/types/app").ContentSyncEvent | null = null;
@@ -147,7 +150,7 @@
       if (!session || disposed || status.projectId !== session.projectId || status.sessionGeneration !== session.generation) return;
       syncRevision += 1;
       syncStatus = status;
-      if (!syncBusy) {
+      if (!syncBusy && activeSection === "sync") {
         void refreshSyncConflicts().catch((error) => { if (!disposed) syncError = normalizeError(error).message; });
         void refreshSyncSummary();
       }
@@ -159,13 +162,19 @@
         if (backgroundSyncBusy) {
           backgroundSyncBusy = false; endSync();
           if (syncStatus.status === "conflict") void refreshSyncConflicts().catch((error) => { if (!disposed) syncError = normalizeError(error).message; });
-          void refreshSyncSummary();
+          if (activeSection === "sync") void refreshSyncSummary();
         }
         syncProgress = null; return;
       }
       if (!syncBusy) { beginSync(); backgroundSyncBusy = true; }
       syncProgress = event;
-    }).then((unlisten) => { if (disposed) unlisten(); else { unlistenSyncPhase = unlisten; void refreshSync(); } })
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else {
+        unlistenSyncPhase = unlisten;
+        if (activeSection === "sync" && !syncLoaded) void refreshSync();
+      }
+    })
       .catch((error) => { if (!disposed) syncError = normalizeError(error).message; });
     syncTimer = setInterval(() => { if (syncBusy) syncElapsed = Math.floor((Date.now() - syncStartedAt) / 1000); }, 1000);
   });
@@ -183,6 +192,7 @@
   function selectSection(section: SettingsSectionId) {
     activeSection = section;
     localStorage.setItem(sectionStorageKey, section);
+    if (section === "sync" && !syncLoaded && !syncLoading) void refreshSync();
     void tick().then(() => {
       if (disposed || !pageElement) return;
       pageElement.scrollTop = 0;
@@ -227,13 +237,18 @@
       syncStatus = { enabled: false, status: "off", provider: "github", conflicts: [] };
       return;
     }
+    if (syncLoading) return;
+    syncLoading = true;
     const identity = { ...session };
     const revision = syncRevision;
     try {
-      const detection = await platform.detectContentSync(identity.projectId, identity.generation);
-      const status = await platform.getContentSyncStatus(identity.projectId, identity.generation);
-      const activeProgress = await platform.getContentSyncProgress(identity.projectId);
+      const [detection, status, activeProgress] = await Promise.all([
+        platform.detectContentSync(identity.projectId, identity.generation),
+        platform.getContentSyncStatus(identity.projectId, identity.generation),
+        platform.getContentSyncProgress(identity.projectId)
+      ]);
       if (!sameSession(identity)) return;
+      syncLoaded = true;
       if (activeProgress && activeProgress.sessionGeneration === identity.generation && !syncBusy) { beginSync(); backgroundSyncBusy = true; syncProgress = activeProgress; }
       syncCandidates = detection.candidates;
       if (revision === syncRevision) syncStatus = status;
@@ -246,12 +261,23 @@
       syncBranch = syncStatus.branch || "hexo-lite-content";
       webDavEndpoint = syncStatus.endpoint || webDavEndpoint;
       webDavRemoteDir = syncStatus.remoteDir || webDavRemoteDir;
-      if (webDavEndpoint) await refreshWebDavCredential();
-      await refreshSyncConflicts();
-      await refreshSyncSummary();
+      if (syncStatus.provider === "webdav" && webDavEndpoint) void refreshWebDavCredential();
+      void refreshSyncConflicts().catch((error) => { if (!disposed) syncError = normalizeError(error).message; });
+      void refreshSyncSummary();
     } catch (error) {
       onNotice(normalizeError(error).message);
+    } finally {
+      syncLoading = false;
     }
+  }
+
+  function chooseSyncProvider(provider: ContentSyncProvider) {
+    syncProvider = provider;
+    syncPreflight = null;
+    webDavPreflight = null;
+    publicAcknowledged = false;
+    syncError = "";
+    webDavConnectionError = "";
   }
 
   async function configureSync() {
@@ -259,7 +285,8 @@
     if (syncProvider === "github" && !syncCandidate) return;
     const identity = { ...session };
     if (!await onBeforeSync() || !sameSession(identity) || syncBusy) return;
-    beginSync();
+    beginSync(syncProvider === "github" ? "正在连接 GitHub 并准备首次合并。" : "正在连接 WebDAV 并准备首次合并。");
+    await tick();
     try {
       let result: import("$shared/types/app").ContentSyncView;
       if (syncProvider === "github" && syncCandidate) {
@@ -296,7 +323,8 @@
     const identity = { ...session };
     const branch = syncBranch;
     const repository = syncCandidate?.repository;
-    beginSync();
+    beginSync("正在检查 GitHub 连接和两端文件差异。");
+    await tick();
     try {
       if (syncProvider === "github" && syncCandidate) {
         const result = await platform.preflightContentSync(identity.projectId, identity.generation, syncCandidate.repository, branch);
@@ -330,7 +358,8 @@
     if (!session || syncBusy || !webDavEndpoint.trim() || !webDavRemoteDir.trim() || !webDavUsername.trim()) return;
     const identity = { ...session };
     const submitted = { endpoint: webDavEndpoint, remoteDir: webDavRemoteDir, username: webDavUsername, password: webDavPassword };
-    beginSync();
+    beginSync("正在测试 WebDAV 连接并读取远端清单。");
+    await tick();
     webDavConnectionError = "";
     try {
       const result = await platform.testWebDavContentSync({
@@ -368,7 +397,8 @@
   async function applyWebDavConnection() {
     if (!session || syncBusy || !webDavTestMatches) return;
     const identity = { ...session };
-    beginSync();
+    beginSync("正在应用 WebDAV 连接设置。");
+    await tick();
     webDavConnectionError = "";
     try {
       const result = await platform.updateWebDavContentSync({
@@ -443,7 +473,8 @@
     if (!session || syncBusy) return;
     const identity = { ...session };
     if (!await onBeforeSync() || !sameSession(identity) || syncBusy) return;
-    beginSync();
+    beginSync("正在检查本机与远端变化，请保持此页面打开。");
+    await tick();
     syncError = "";
     try {
       const result = await platform.runContentSync(identity.projectId, identity.generation, direction, confirmScope);
@@ -828,6 +859,23 @@
         {#if !session}
           <div class="settings-block"><p class="muted-line">{$ui("请先打开一个 Hexo 项目。")}</p></div>
         {:else}
+          <div class="settings-block sync-plan-block">
+            <div class="settings-block-heading"><h3>{$ui("同步规划")}</h3><p>{$ui("先确认通道和范围，再建立连接；日常保存后自动排队同步。")}</p></div>
+            <ol class="sync-plan">
+              <li><span>1</span><div><strong>{$ui("选择通道")}</strong><p>{$ui("GitHub 使用独立内容分支；WebDAV 使用你指定的远端目录。")}</p></div></li>
+              <li><span>2</span><div><strong>{$ui("检查连接与差异")}</strong><p>{$ui("预检只读取本机和远端清单，不会覆盖文件。")}</p></div></li>
+              <li><span>3</span><div><strong>{$ui("合并并持续同步")}</strong><p>{$ui("首次合并保留两端独有文件；冲突由你选择。保存后约 30 秒自动上传，也可手动同步。")}</p></div></li>
+            </ol>
+          </div>
+          {#if syncLoading && !syncLoaded}
+            <div class="settings-block sync-loading" role="status">{$ui("正在读取同步设置和项目范围...")}</div>
+          {:else}
+          {#if !syncStatus.enabled}
+            <div class="settings-block sync-provider-block">
+              <SyncProviderPicker value={syncProvider} disabled={syncBusy} on:change={(event) => chooseSyncProvider(event.detail)} />
+            </div>
+          {/if}
+          {#if syncStatus.enabled || syncBusy || syncError}
           <div class="settings-block sync-state-block">
             <div class="sync-state-heading">
               <div><h3>{session.name}</h3><span class={`sync-status ${syncStatus.status}`}>{$ui(syncStatusLabel(syncStatus))}</span>{#if syncStatus.enabled}<span class="sync-provider">{syncStatus.provider === "webdav" ? "WebDAV" : "GitHub"}</span>{/if}</div>
@@ -877,6 +925,8 @@
               <p class="muted-line">{$ui("连接 GitHub 或 WebDAV，开始跨设备同步。")}</p>
             {/if}
           </div>
+          {/if}
+          {#if syncStatus.enabled}
           <div class="settings-block">
             <div class="setting-subsection-heading"><h3>{$ui("本次变化")}</h3><button class="button" type="button" disabled={syncBusy || summaryBusy} on:click={refreshSyncSummary}>{summaryBusy ? $ui("正在扫描...") : $ui("刷新")}</button></div>
             {#if summaryError}<p class="sync-error" role="alert">{summaryError}</p>{/if}
@@ -891,12 +941,14 @@
             {:else if summaryBusy}<p class="muted-line" role="status">{$ui("正在统计站点源码...")}</p>{/if}
             <div class="sync-publish-row"><div class="setting-copy"><strong>{$ui("发布网站")}</strong><span>{$ui("同步只保存源码。要让线上网站生效，请发布。")}</span></div><button class="button" type="button" disabled={syncBusy || taskBusy || syncStatus.status === "conflict" || syncStatus.status === "remoteAhead"} on:click={publishSite}>{$ui("发布网站")}</button></div>
           </div>
+          {/if}
           <div class="settings-block sync-connection-block">
+            <div class="settings-block-heading">
+              <h3>{syncStatus.enabled ? $ui("当前连接") : syncProvider === "github" ? $ui("设置 GitHub") : $ui("设置 WebDAV")}</h3>
+              <p>{syncStatus.enabled ? $ui("当前只显示正在使用的同步通道。") : $ui("完成检查后才能启用，不会直接覆盖任何一端。")}</p>
+            </div>
             {#if syncStatus.enabled && syncProvider === "github"}
               <details class="settings-disclosure"><summary>{$ui("连接详情")} <span>GitHub</span></summary><p class="sync-location">{syncStatus.repository} · {syncStatus.branch}</p><p class="muted-line">{$ui("保存后自动同步，也可点击立即同步。")}</p></details>
-            {/if}
-            {#if !syncStatus.enabled}
-              <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-19">{$ui("同步方式")}</label><span id="setting-field-19-hint">{$ui("连接设置立即生效。")}</span></div><select id="setting-field-19" aria-describedby="setting-field-19-hint" aria-label={$ui("同步方式")} class="select compact-control" disabled={syncBusy} bind:value={syncProvider} on:change={() => { syncPreflight = null; webDavPreflight = null; }}><option value="github">GitHub</option><option value="webdav">WebDAV</option></select></div>
             {/if}
             {#if !syncStatus.enabled && syncProvider === "github"}
               {#if !syncCandidates.length}
@@ -912,7 +964,7 @@
                   <details class="settings-disclosure sync-advanced-branch"><summary>{$ui("高级连接选项")}</summary><div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-21">{$ui("项目同步分支")}</label><span id="setting-field-21-hint">{$ui("独立保存源码，不影响网站发布分支。")}</span></div><input id="setting-field-21" aria-describedby="setting-field-21-hint" aria-label={$ui("内容分支")} class="input compact-control" value={syncBranch} disabled={syncBusy} on:input={(event) => { syncBranch = event.currentTarget.value; syncPreflight = null; }} /></div></details>
                   {#if syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown"}<label class="sync-warning"><input type="checkbox" bind:checked={publicAcknowledged} /><span>{$ui("我同意将草稿、配置和主题上传到公开仓库。")}</span></label>{/if}
                   {#if syncPreflight}<div class="sync-summary"><strong>{$ui("启用预检")}</strong><span>{$ui("本地")} {syncPreflight.fileCount} {$ui("个文件 ·")} {(syncPreflight.totalBytes / 1024 / 1024).toFixed(2)} MB</span>{#if syncPreflight.remoteBranchExists && syncPreflight.remoteManifestValid}<span>{$ui("远端")} {syncPreflight.remoteFileCount} {$ui("个文件 ·")} {(syncPreflight.remoteTotalBytes / 1024 / 1024).toFixed(2)} MB</span><span>{$ui("仅本地")} {syncPreflight.localOnlyCount} {$ui("· 仅远端")} {syncPreflight.remoteOnlyCount} {$ui("· 内容不同")} {syncPreflight.differentCount}</span>{:else}<span>{syncPreflight.remoteBranchExists ? $ui("远端分支没有合法清单，不能接管") : $ui("将创建新的孤立分支")}</span>{/if}</div>{/if}
-                  <div class="button-row"><button class="button" type="button" disabled={syncBusy} on:click={preflightSync}>{$ui("预检")}</button><button class="button primary" type="button" disabled={syncBusy || !syncPreflight || (syncPreflight.remoteBranchExists && !syncPreflight.remoteManifestValid) || ((syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown") && !publicAcknowledged)} on:click={() => configureSync()}>{$ui("合并并开始同步")}</button></div>
+                  <div class="button-row"><button class="button" type="button" disabled={syncBusy} on:click={preflightSync}>{syncBusy ? $ui("正在检查...") : $ui("检查连接与差异")}</button><button class="button primary" type="button" disabled={syncBusy || !syncPreflight || (syncPreflight.remoteBranchExists && !syncPreflight.remoteManifestValid) || ((syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown") && !publicAcknowledged)} on:click={() => configureSync()}>{$ui("合并并开始同步")}</button></div>
                 {/if}
               {/if}
             {:else if syncProvider === "webdav"}
@@ -941,6 +993,7 @@
             <details class="settings-block settings-disclosure sync-danger-zone"><summary>{$ui("高级操作")}</summary><p class="muted-line">{$ui("覆盖会丢弃一端的修改，请优先使用合并同步。")}</p>
               <div class="button-row"><button class="button danger" type="button" disabled={syncBusy || webDavConnectionDirty || syncStatus.requiresScopeConfirmation} on:click={() => (pendingSyncOverwrite = "overwriteLocal")}>{$ui("用云端项目覆盖本机")}</button><button class="button danger" type="button" disabled={syncBusy || webDavConnectionDirty || syncStatus.requiresScopeConfirmation} on:click={() => (pendingSyncOverwrite = "overwriteRemote")}>{$ui("用本机项目覆盖云端")}</button><button class="button" type="button" disabled={syncBusy} on:click={() => session && platform.openContentSyncBackups(session.projectId, session.generation)}>{$ui("打开备份目录")}</button><button class="button danger" type="button" disabled={syncBusy} on:click={disableSync}>{$ui("关闭同步")}</button></div>
             </details>
+          {/if}
           {/if}
         {/if}
       {:else}
@@ -996,6 +1049,12 @@
 <style>
   .setting-title { font-weight: 600; cursor: pointer; }
   .sync-decisions { border: 0; margin: 0; padding: 0; min-width: 0; }
+  .sync-plan { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
+  .sync-plan li { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; min-width: 0; padding: 13px; border-radius: 10px; background: var(--bg-control); }
+  .sync-plan li > span { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; color: var(--accent); background: var(--accent-soft); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .sync-plan strong { display: block; margin: 2px 0 4px; font-size: 12px; }
+  .sync-plan p { margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.55; }
+  .sync-loading { color: var(--text-secondary); font-size: 12px; }
   .sync-progress { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border-subtle); border-radius: 10px; margin-block: 12px; overflow-wrap: anywhere; }
   .sync-progress progress { width: 100%; }
   .sync-progress span { font-size: 12px; color: var(--text-secondary); }
@@ -1022,6 +1081,7 @@
   .sync-advanced-branch { padding-block: 10px; }
   .publish-sequence { margin: 12px 0 16px; }
   @media (max-width: 660px) {
+    .sync-plan { grid-template-columns: 1fr; }
     .sync-publish-row { align-items: stretch; flex-direction: column; gap: 12px; }
     .sync-scope dl > div { flex-wrap: wrap; gap: 4px 12px; }
     .sync-connection-details > summary span { display: block; margin: 4px 0 0; }

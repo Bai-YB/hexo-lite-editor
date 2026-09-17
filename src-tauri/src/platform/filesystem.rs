@@ -19,6 +19,12 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> AppResult<()> {
 /// Copies data from the provisional 1.0.x application identifier without
 /// deleting the old directory, so a downgrade remains recoverable.
 pub fn migrate_legacy_app_data(config_dir: &Path) -> AppResult<bool> {
+    let marker = config_dir.join(".legacy-migration-v1-complete");
+    // Existing installations have already completed this migration. Walking
+    // old caches again on every launch delays the native window for no benefit.
+    if marker.is_file() || config_dir.join("config-v3.json").is_file() {
+        return Ok(false);
+    }
     let Some(parent) = config_dir.parent() else {
         return Ok(false);
     };
@@ -27,6 +33,7 @@ pub fn migrate_legacy_app_data(config_dir: &Path) -> AppResult<bool> {
         return Ok(false);
     }
     copy_missing_tree(&legacy_dir, config_dir)?;
+    atomic_write(&marker, b"complete")?;
     Ok(true)
 }
 
@@ -69,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn copies_legacy_identifier_data_without_overwriting_or_deleting() {
+    fn copies_legacy_identifier_data_once_without_deleting_the_source() {
         let temp = TempDir::new().unwrap();
         let legacy = temp.path().join(LEGACY_APP_IDENTIFIER);
         let current = temp.path().join("io.github.bai-yb.hexo-lite-editor");
@@ -77,17 +84,36 @@ mod tests {
         fs::create_dir_all(&current).unwrap();
         fs::write(legacy.join("config-v3.json"), "legacy").unwrap();
         fs::write(legacy.join("task-logs").join("one.log"), "log").unwrap();
-        fs::write(current.join("config-v3.json"), "current").unwrap();
 
         assert!(migrate_legacy_app_data(&current).unwrap());
         assert_eq!(
             fs::read_to_string(current.join("config-v3.json")).unwrap(),
-            "current"
+            "legacy"
         );
         assert_eq!(
             fs::read_to_string(current.join("task-logs").join("one.log")).unwrap(),
             "log"
         );
+        assert!(current.join(".legacy-migration-v1-complete").is_file());
+        assert!(!migrate_legacy_app_data(&current).unwrap());
         assert!(legacy.join("config-v3.json").is_file());
+    }
+
+    #[test]
+    fn skips_recursive_legacy_scan_for_an_established_installation() {
+        let temp = TempDir::new().unwrap();
+        let legacy = temp.path().join(LEGACY_APP_IDENTIFIER);
+        let current = temp.path().join("io.github.bai-yb.hexo-lite-editor");
+        fs::create_dir_all(legacy.join("task-logs")).unwrap();
+        fs::create_dir_all(&current).unwrap();
+        fs::write(legacy.join("task-logs").join("old.log"), "old").unwrap();
+        fs::write(current.join("config-v3.json"), "current").unwrap();
+
+        assert!(!migrate_legacy_app_data(&current).unwrap());
+        assert!(!current.join("task-logs").exists());
+        assert_eq!(
+            fs::read_to_string(current.join("config-v3.json")).unwrap(),
+            "current"
+        );
     }
 }

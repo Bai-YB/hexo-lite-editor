@@ -24,7 +24,7 @@ for (const viewport of [
     await settings("常规");
     await capture("settings-general");
     await settings("文件同步");
-    await expect(page.getByText("主题与模块", { exact: true })).toBeVisible();
+    await expect(page.getByText("同步规划", { exact: true })).toBeVisible();
     await capture("sync-disconnected");
     await page.goto("/?demo=1&syncRemoteAhead=1");
     await settings("文件同步");
