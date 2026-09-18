@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { setLanguage } from "$shared/i18n";
 import {
   isSafeExternalLink,
   isSafeImageSource,
@@ -13,6 +14,7 @@ import {
 } from "./safeMarkdown";
 
 describe("safe markdown", () => {
+  beforeAll(() => setLanguage("zh-CN"));
   it("preserves legacy alignment, font styling and declared image dimensions", () => {
     const root = document.createElement("article");
     root.innerHTML = renderSafeMarkdown('<div align="center"><font color="red" face="serif" size="5">标题</font>' +

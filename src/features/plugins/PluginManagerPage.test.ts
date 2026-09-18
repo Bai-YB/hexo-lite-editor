@@ -47,7 +47,7 @@ describe("plugin manager interactions", () => {
     const input = await screen.findByDisplayValue("https://example.com");
     await fireEvent.input(input, { target: { value: "" } });
     await fireEvent.click(screen.getByRole("button", { name: "保存" }));
-    expect(screen.getByRole("alert").textContent).toContain("请填写");
+    expect(screen.getByRole("alert").textContent).toContain("要填");
     expect(mocks.api.savePluginSettings).not.toHaveBeenCalled();
   });
   it("preserves edited settings when continuing and closes only after explicit discard", async () => {
@@ -82,7 +82,7 @@ describe("plugin manager interactions", () => {
     render(PluginManagerPage, { onNotice: notice });
 
     expect((await screen.findByRole("alert")).textContent).toContain("无法读取插件目录");
-    expect(notice).toHaveBeenCalledWith("无法读取插件目录");
+    expect(notice).toHaveBeenCalledWith("无法读取插件目录", "error");
     expect(screen.queryByText("Example")).toBeNull();
 
     await fireEvent.click(screen.getByRole("button", { name: "重试" }));
@@ -109,7 +109,7 @@ describe("plugin manager interactions", () => {
     render(PluginManagerPage, { onNotice: notice });
     await screen.findByText("Example");
     await fireEvent.click(screen.getByRole("button", { name: "禁用" }));
-    expect(notice).toHaveBeenCalledWith("文件正在使用");
+    expect(notice).toHaveBeenCalledWith("文件正在使用", "error");
     expect(screen.getByRole("button", { name: "禁用" })).toBeTruthy();
     expect(mocks.dispose).not.toHaveBeenCalled();
   });

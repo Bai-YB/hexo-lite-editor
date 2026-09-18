@@ -3,10 +3,11 @@
   import { cubicIn, quintOut } from "svelte/easing";
   import { fade } from "svelte/transition";
   import { isTopModal, registerModal } from "./modalStack";
+  import { ui } from "$shared/i18n/ui";
 
   export let title: string;
   export let description = "";
-  export let closeLabel = "取消";
+  export let closeLabel = "";
   export let onClose: () => void;
 
   let dialog: HTMLDivElement;
@@ -109,7 +110,7 @@
     <slot></slot>
     <div class="modal-actions">
       <slot name="actions">
-        <button class="button" type="button" on:click={onClose}>{closeLabel}</button>
+        <button class="button" type="button" on:click={onClose}>{closeLabel || $ui("取消")}</button>
       </slot>
     </div>
   </div>

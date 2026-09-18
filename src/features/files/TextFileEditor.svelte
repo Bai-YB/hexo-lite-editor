@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+import { uiText } from "$shared/i18n/ui";
   import { EditorState, Compartment } from "@codemirror/state";
   import { EditorView, lineNumbers, keymap, drawSelection, highlightActiveLine } from "@codemirror/view";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
@@ -56,7 +57,7 @@
   function state() {
     return EditorState.create({ doc: content, extensions: [
       history(), drawSelection(), search({ top: true }), highlightSelectionMatches(), language(), syntaxHighlighting(highlight), options.of(editorOptions()),
-      EditorView.contentAttributes.of({ "aria-label": "文件内容" }),
+      EditorView.contentAttributes.of({ "aria-label": uiText("文件内容") }),
       keymap.of([{ key: "Mod-s", preventDefault: true, run: () => { onSave(); return true; } }, indentWithTab, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       EditorView.updateListener.of(update => { if (update.docChanged) onChange(update.state.doc.toString()); }),
       EditorView.theme({ "&": { height: "100%", color: "var(--text-primary)", backgroundColor: "var(--bg-panel)" }, ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono, monospace)" }, ".cm-content": { padding: "16px 0" }, ".cm-gutters": { border: "none", color: "var(--text-tertiary)", backgroundColor: "transparent" }, ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "var(--accent-soft)" }, "&.cm-focused": { outline: "none" } })

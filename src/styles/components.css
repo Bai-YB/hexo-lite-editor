@@ -326,7 +326,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(25, 29, 32, 0.36);
+  background: var(--backdrop);
 }
 
 .modal-dialog {

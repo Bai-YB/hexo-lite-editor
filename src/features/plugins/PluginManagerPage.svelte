@@ -7,7 +7,7 @@
   import { contributedImageBedProviders, disposePluginWorker, reconcilePluginWorkers, imageBedProviderId, testPluginConnection, validatePluginConfig } from "$shared/plugins/PluginProviderRuntime";
   import { initializeSettings, settingFields, validateSettings } from "$shared/plugins/settings";
 
-  export let onNotice: (message: string) => void = () => {};
+  export let onNotice: (message: string, severity?: "info" | "error") => void = () => {};
   export let selectedProvider = "local";
   export let onProviderChange: (provider: string) => void = () => {};
 
@@ -35,7 +35,7 @@
     loadError = "";
     loading = true;
     try { plugins = await platform.listPlugins(); }
-    catch (error) { loadError = normalizeError(error).message; onNotice(loadError); }
+    catch (error) { loadError = normalizeError(error).message; onNotice(loadError, "error"); }
     finally { loading = false; }
   }
 
@@ -43,7 +43,7 @@
     if (!pendingEnable || busy) return;
     busy = true;
     try { plugins = await platform.enablePlugin(pendingEnable.manifest.id); pendingEnable = null; }
-    catch (error) { onNotice(normalizeError(error).message); }
+    catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { busy = false; }
   }
 
@@ -54,8 +54,8 @@
       plugins = await platform.disablePlugin(plugin.manifest.id);
       disposePluginWorker(plugin.manifest.id);
       if (selectedProvider === imageBedProviderId(plugin.manifest.id)) onProviderChange("local");
-      onNotice("插件已禁用。");
-    } catch (error) { onNotice(normalizeError(error).message); }
+      onNotice($ui("插件已禁用。"));
+    } catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { busy = false; }
   }
 
@@ -68,8 +68,8 @@
       disposePluginWorker(plugin.manifest.id);
       if (selectedProvider === imageBedProviderId(plugin.manifest.id)) onProviderChange("local");
       pendingUninstall = null;
-      onNotice(preserveSettings ? "插件已卸载，设置已保留，重新安装后恢复。" : "插件及其设置已卸载。");
-    } catch (error) { onNotice(normalizeError(error).message); }
+      onNotice(preserveSettings ? $ui("插件卸载了，设置还留着，重装后自动恢复。") : $ui("插件和设置都卸载了。"));
+    } catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { busy = false; }
   }
 
@@ -77,7 +77,7 @@
     if (busy || loading) return;
     busy = true;
     try { plugins = await platform.chooseAndInstallPlugin(); }
-    catch (error) { onNotice(normalizeError(error).message); }
+    catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { busy = false; }
   }
 
@@ -95,7 +95,7 @@
       settingsError = "";
       confirmSettingsDiscard = false;
       editing = plugin;
-    } catch (error) { onNotice(normalizeError(error).message); }
+    } catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { busy = false; }
   }
 
@@ -108,13 +108,13 @@
     try {
       if (plugin.enabled) {
         const validation = await validatePluginConfig(plugin, settings);
-        if (!validation?.ok) throw new Error(validation?.message || "插件配置无效。");
+        if (!validation?.ok) throw new Error(validation?.message || $ui("插件配置有问题。"));
       }
       await platform.savePluginSettings(plugin.manifest.id, settings);
       initialSettings = structuredClone(settings);
       editing = null;
       confirmSettingsDiscard = false;
-      onNotice("插件设置已保存。");
+      onNotice($ui("插件设置已保存。"));
     }
     catch (error) { settingsError = normalizeError(error).message; }
     finally { busy = false; }
@@ -128,9 +128,9 @@
     busy = true;
     try {
       const validation = await validatePluginConfig(plugin, settings);
-      if (!validation.ok) throw new Error(validation.message || "插件配置无效。");
+      if (!validation.ok) throw new Error(validation.message || $ui("插件配置有问题。"));
       const result = await testPluginConnection(plugin, settings);
-      onNotice(result.ok ? (result.message || "插件连接正常。") : (result.message || "插件连接测试失败。"));
+      if (result.ok) onNotice(result.message || $ui("插件连接正常。")); else onNotice(result.message || $ui("插件连接测试失败。"), "error");
     } catch (error) { settingsError = normalizeError(error).message; }
     finally { busy = false; }
   }
@@ -191,7 +191,7 @@
           {:else if !schema.type || ["string", "number", "integer"].includes(String(schema.type))}
             <input class="input" disabled={busy} aria-invalid={!!fieldErrors[key]} type={schema.type === "number" || schema.type === "integer" ? "number" : "text"} value={String(settings[key] ?? "")} on:input={(event) => (settings = { ...settings, [key]: schema.type === "number" || schema.type === "integer" ? (event.currentTarget.value === "" ? undefined : Number(event.currentTarget.value)) : event.currentTarget.value })} />
           {:else}<span class="muted-line">{$ui("此设置类型暂不支持编辑，已保存的值将保留。")}</span>{/if}
-          {#if fieldErrors[key]}<span class="form-error" role="alert">{fieldErrors[key]}</span>{/if}
+          {#if fieldErrors[key]}<span class="form-error" role="alert">{$ui(fieldErrors[key])}</span>{/if}
         </label>
       {/each}</div>
     {:else}<p class="muted-line">{$ui("此插件没有可编辑的设置。")}</p>{/if}
@@ -202,7 +202,7 @@
 
 {#if confirmSettingsDiscard}
   <ModalDialog title={$ui("放弃插件设置？")} description={$ui("当前设置尚未保存，关闭后输入内容将丢失。")} onClose={() => (confirmSettingsDiscard = false)}>
-    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (confirmSettingsDiscard = false)}>{$ui("继续编辑")}</button><button class="button danger" type="button" data-autofocus on:click={discardSettings}>{$ui("放弃修改")}</button></svelte:fragment>
+    <svelte:fragment slot="actions"><button class="button" type="button" data-autofocus on:click={() => (confirmSettingsDiscard = false)}>{$ui("继续编辑")}</button><button class="button danger" type="button" on:click={discardSettings}>{$ui("放弃修改")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 

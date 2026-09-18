@@ -1,4 +1,5 @@
 import type { EditorSessionStore } from "$features/editor/EditorSessionStore";
+import { uiText } from "$shared/i18n/ui";
 import type { ArticleSummary, CreateArticleRequest, DocumentSnapshot, ProjectSessionView, SaveDocumentRequest, SaveDocumentResult } from "$shared/types/app";
 
 export interface RecoveryIdentity {
@@ -30,7 +31,7 @@ export async function waitForRecovery(identity: RecoveryIdentity, context: Recov
 
 function assertSnapshot(snapshot: DocumentSnapshot, projectId: string, generation: number, articleId: string) {
   if (snapshot.projectId !== projectId || snapshot.sessionGeneration !== generation || snapshot.articleId !== articleId) {
-    throw new Error("文章读取结果已过期，请重新核对内容。");
+    throw new Error(uiText("文章读取结果过期了，重新核对一下。"));
   }
 }
 
@@ -55,7 +56,7 @@ export async function persistRecoveryDraft(input: {
 }) {
   const { identity, context } = input;
   const assertCurrent = () => {
-    if (!matchesRecovery(identity, context)) throw new Error("文章版本已变化，请重新核对后继续另存草稿。");
+    if (!matchesRecovery(identity, context)) throw new Error(uiText("文章版本变了，核对之后再存草稿。"));
   };
   assertCurrent();
   const article = input.article ?? await input.createArticle(input.request);
@@ -70,6 +71,6 @@ export async function persistRecoveryDraft(input: {
   const saved = await context.loadDocument(identity.projectId, article.articleId, identity.generation);
   assertCurrent();
   assertSnapshot(saved, identity.projectId, identity.generation, article.articleId);
-  if (saved.content !== input.content) throw new Error("恢复草稿的内容又有变化，本地内容已保留，请重新核对后继续。");
+  if (saved.content !== input.content) throw new Error(uiText("恢复草稿的内容又变了，本地内容已保留，核对后再继续。"));
   return saved;
 }

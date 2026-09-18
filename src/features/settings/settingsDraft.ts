@@ -18,10 +18,10 @@ export function mergeSavedDraft<T>(submitted: T, current: T, persisted: T): T {
 
 export function validateSettings(config: AppConfigV3): { section: SettingsSectionId; field: string; message: string } | null {
   const limits: Array<[SettingsSectionId, string, number, number, number, boolean, string]> = [
-    ["general", "autoSaveDelayMs", config.general.autoSaveDelayMs, 500, 30000, true, "自动保存延迟必须在 500–30000 毫秒之间。"],
-    ["editing", "fontSize", config.editor.fontSize, 12, 28, true, "字号必须是 12–28 之间的整数。"],
-    ["editing", "lineHeight", config.editor.lineHeight, 1.2, 2.2, false, "行高必须在 1.2–2.2 之间。"],
-    ["hexoPublish", "previewPort", config.hexo.previewPort, 300, 65535, true, "预览端口必须是 300–65535 之间的整数。"]
+    ["general", "autoSaveDelayMs", config.general.autoSaveDelayMs, 500, 30000, true, "自动保存延迟要在 500–30000 毫秒之间。"],
+    ["editing", "fontSize", config.editor.fontSize, 12, 28, true, "字号要填 12–28 之间的整数。"],
+    ["editing", "lineHeight", config.editor.lineHeight, 1.2, 2.2, false, "行高要在 1.2–2.2 之间。"],
+    ["hexoPublish", "previewPort", config.hexo.previewPort, 300, 65535, true, "预览端口要填 300–65535 之间的整数。"]
   ];
   for (const [section, field, value, min, max, integer, message] of limits) {
     if (!Number.isFinite(value) || value < min || value > max || integer && !Number.isInteger(value)) return { section, field, message };

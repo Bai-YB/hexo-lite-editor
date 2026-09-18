@@ -98,8 +98,8 @@
 }
 
 .window-control.close:hover {
-  color: #fff;
-  background: #c42b1c;
+  color: var(--overlay-text-bright);
+  background: var(--window-close-hover);
 }
 
 .restore-window-icon {

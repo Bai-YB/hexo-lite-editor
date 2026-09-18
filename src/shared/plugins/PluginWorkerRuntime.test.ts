@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { setLanguage } from "$shared/i18n";
+
+beforeAll(() => setLanguage("zh-CN"));
 import { PluginWorkerRuntime } from "./PluginWorkerRuntime";
 import { disposePluginWorkers, reconcilePluginWorkers, validatePluginConfig } from "./PluginProviderRuntime";
 import type { PluginView } from "./types";

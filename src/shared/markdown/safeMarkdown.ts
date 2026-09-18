@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import type { PreviewImageResult } from "$shared/types/app";
+import { uiText } from "$shared/i18n/ui";
 
 const markdown = new MarkdownIt({
   html: true,
@@ -117,6 +118,19 @@ const safeSemanticAttributes = new Set([
   "abbr", "cite", "dir", "high", "lang", "low", "max", "min", "optimum"
 ]);
 
+export const PREVIEW_SANITIZE_OPTIONS = {
+  ALLOWED_TAGS: allowedTags,
+  ALLOWED_ATTR: [
+    "abbr", "alt", "aria-label", "cite", "class", "colspan", "datetime", "dir", "height",
+    "high", "href", "lang", "low", "max", "min", "open", "optimum", "reversed", "role",
+    "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry", "data-source-line", "data-source-end", "rowspan", "scope", "src", "start", "style", "tabindex", "title", "value", "width"
+  ],
+  ADD_ATTR: [...safeSemanticAttributes, "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry", "data-source-line", "data-source-end"],
+  ALLOW_DATA_ATTR: false,
+  FORBID_TAGS: ["form", "iframe", "object", "script", "style", "svg", "math"],
+  ALLOWED_URI_REGEXP: /^(?:(?:https?|hlex-asset):|blob:|data:image\/(?:png|jpeg|gif|webp);base64,|(?:\.{0,2}\/|\/)?[^:/?#][^:]*)/i
+};
+
 DOMPurify.addHook("uponSanitizeAttribute", (_node, event) => {
   if (safeSemanticAttributes.has(event.attrName)) event.forceKeepAttr = true;
 });
@@ -130,21 +144,24 @@ export function renderSafeMarkdown(
   return renderMarkdownPreview(source, imageResults, imagePending, sourceLines).html;
 }
 
-export function renderMarkdownPreview(
-  source: string,
+export interface PreviewDocumentStats {
+  imageSources: Set<string>;
+  embeddedStyles: string[];
+}
+
+/** Sanitization pre-pass: style extraction, source-attribute scrubbing, image rewrites. */
+export function prepareRenderedDocument(
+  document: Document,
   imageResults: Record<string, PreviewImageResult> = {},
-  imagePending = false,
-  sourceLines = false
-): { html: string; imageSources: string[] } {
-  const rendered = sourceLines ? renderMarkdownWithSourceLines(source) : markdown.render(stripFrontMatter(source));
-  const renderedDocument = new DOMParser().parseFromString(rendered, "text/html");
-  const embeddedStyles = [...renderedDocument.querySelectorAll("style")]
+  imagePending = false
+): PreviewDocumentStats {
+  const embeddedStyles = [...document.querySelectorAll("style")]
     .map((style) => sanitizeStyleSheet(style.textContent ?? ""))
     .filter(Boolean);
-  renderedDocument.querySelectorAll("style").forEach((style) => style.remove());
-  sanitizeSourceAttributes(renderedDocument);
+  document.querySelectorAll("style").forEach((style) => style.remove());
+  sanitizeSourceAttributes(document);
   const imageSources = new Set<string>();
-  renderedDocument.querySelectorAll("img").forEach((image) => {
+  document.querySelectorAll("img").forEach((image) => {
     const original = image.getAttribute("src") ?? "";
     image.dataset.imageSource = original;
     const uploadId = editorUploadId(original);
@@ -160,22 +177,14 @@ export function renderMarkdownPreview(
     if (original) imageSources.add(original);
     const result = imageResults[original];
     if (result?.state === "ready" && result.previewUrl) image.setAttribute("src", result.previewUrl);
-    else image.replaceWith(imagePlaceholder(renderedDocument, image, result, imagePending));
+    else image.replaceWith(imagePlaceholder(document, image, result, imagePending));
   });
-  const clean = DOMPurify.sanitize(renderedDocument.body.innerHTML, {
-    ALLOWED_TAGS: allowedTags,
-    ALLOWED_ATTR: [
-      "abbr", "alt", "aria-label", "cite", "class", "colspan", "datetime", "dir", "height",
-      "high", "href", "lang", "low", "max", "min", "open", "optimum", "reversed", "role",
-      "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry", "data-source-line", "data-source-end", "rowspan", "scope", "src", "start", "style", "tabindex", "title", "value", "width"
-    ],
-    ADD_ATTR: [...safeSemanticAttributes, "data-image-source", "data-image-state", "data-upload-id", "data-preview-image-retry", "data-source-line", "data-source-end"],
-    ALLOW_DATA_ATTR: false,
-    FORBID_TAGS: ["form", "iframe", "object", "script", "style", "svg", "math"],
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|hlex-asset):|blob:|data:image\/(?:png|jpeg|gif|webp);base64,|(?:\.{0,2}\/|\/)?[^:/?#][^:]*)/i
-  });
-  const document = new DOMParser().parseFromString(clean, "text/html");
-  document.querySelectorAll("a").forEach((anchor) => {
+  return { imageSources, embeddedStyles };
+}
+
+/** Post-sanitization pass: safe-link downgrade and lazy loading. Order after sanitize is load-bearing. */
+export function finalizeRenderedContainer(container: Document | DocumentFragment) {
+  container.querySelectorAll("a").forEach((anchor) => {
     const href = anchor.getAttribute("href") ?? "";
     anchor.removeAttribute("href");
     if (isSafeExternalLink(href)) {
@@ -184,21 +193,47 @@ export function renderMarkdownPreview(
       anchor.setAttribute("tabindex", "0");
     }
   });
-  document.querySelectorAll("img").forEach((image) => {
+  container.querySelectorAll("img").forEach((image) => {
     const src = image.getAttribute("src") ?? "";
     if (isSafeImageSource(src)) image.setAttribute("loading", "lazy");
   });
-  if (embeddedStyles.length) {
-    const style = document.createElement("style");
-    style.dataset.markdownStyle = "true";
-    style.textContent = embeddedStyles.join("\n");
-    document.body.prepend(style);
-  }
+}
+
+export function prependEmbeddedStyles(container: Document | DocumentFragment, styles: string[]) {
+  if (!styles.length) return;
+  const target: HTMLElement | DocumentFragment = "body" in container ? container.body : container;
+  const style = target.ownerDocument.createElement("style");
+  style.dataset.markdownStyle = "true";
+  style.textContent = styles.join("\n");
+  target.prepend(style);
+}
+
+export function renderMarkdownPreview(
+  source: string,
+  imageResults: Record<string, PreviewImageResult> = {},
+  imagePending = false,
+  sourceLines = false
+): { html: string; imageSources: string[] } {
+  const rendered = sourceLines ? renderMarkdownWithSourceLines(source) : markdown.render(stripFrontMatter(source));
+  const renderedDocument = new DOMParser().parseFromString(rendered, "text/html");
+  const { imageSources, embeddedStyles } = prepareRenderedDocument(renderedDocument, imageResults, imagePending);
+  const clean = DOMPurify.sanitize(renderedDocument.body.innerHTML, PREVIEW_SANITIZE_OPTIONS);
+  const document = new DOMParser().parseFromString(clean, "text/html");
+  finalizeRenderedContainer(document);
+  prependEmbeddedStyles(document, embeddedStyles);
   return { html: document.body.innerHTML, imageSources: [...imageSources] };
 }
 
+export interface PreviewTokenized {
+  tokens: ReturnType<typeof markdown.parse>;
+  renderer: typeof markdown.renderer;
+  env: Record<string, unknown>;
+  /** Lines removed from the head of the document (front matter), in lines. */
+  offset: number;
+}
+
 /** Block maps use original, one-based document lines, including front matter. */
-export function renderMarkdownWithSourceLines(source: string): string {
+export function tokenizeWithSourceLines(source: string): PreviewTokenized {
   const env: Record<string, unknown> = {};
   const body = stripFrontMatter(source);
   const offset = source.slice(0, source.length - body.length).split("\n").length - 1;
@@ -232,6 +267,15 @@ export function renderMarkdownWithSourceLines(source: string): string {
         ? `${prefix}${tag} data-source-line="${token.attrGet("data-source-line")}" data-source-end="${token.attrGet("data-source-end")}"`
         : opening);
   };
+  return { tokens, renderer, env, offset };
+}
+
+export function renderTokenizedBlock(block: Pick<PreviewTokenized, "renderer" | "env">, tokens: PreviewTokenized["tokens"]): string {
+  return block.renderer.render(tokens, markdown.options, block.env);
+}
+
+export function renderMarkdownWithSourceLines(source: string): string {
+  const { tokens, renderer, env } = tokenizeWithSourceLines(source);
   return renderer.render(tokens, markdown.options, env);
 }
 
@@ -462,15 +506,17 @@ function imagePlaceholder(
   const source = image.getAttribute("src") ?? "";
   placeholder.className = `preview-image-error${hasDeclaredImageSize(image) ? " declared-size" : " default-size"}`;
   placeholder.setAttribute("role", "img");
-  placeholder.setAttribute("aria-label", alt ? `${alt}：${pending ? "正在读取图片" : "图片不可用"}` : pending ? "正在读取图片" : "图片不可用");
+  const pendingLabel = uiText("正在读取图片");
+  const unavailableLabel = uiText("图片不可用");
+  placeholder.setAttribute("aria-label", alt ? `${alt}：${pending ? pendingLabel : unavailableLabel}` : pending ? pendingLabel : unavailableLabel);
   placeholder.dataset.imageSource = source;
   copyImageDimensions(image, placeholder);
 
   const heading = document.createElement("strong");
-  heading.textContent = pending ? "正在读取图片…" : alt ? `图片不可用：${alt}` : "图片不可用";
+  heading.textContent = pending ? `${pendingLabel}…` : alt ? `${unavailableLabel}：${alt}` : unavailableLabel;
   const reason = document.createElement("span");
   reason.className = "preview-image-reason";
-  reason.textContent = pending ? "正在检查图片返回的实际内容。" : result?.message ?? "图片尚未成功解析。";
+  reason.textContent = pending ? uiText("正在读取图片内容。") : result?.message ?? uiText("图片还没有加载成功。");
   const address = document.createElement("code");
   address.textContent = source;
   placeholder.append(heading, reason, address);
@@ -480,7 +526,7 @@ function imagePlaceholder(
     retry.setAttribute("role", "button");
     retry.setAttribute("tabindex", "0");
     retry.dataset.previewImageRetry = "true";
-    retry.textContent = "重新加载";
+    retry.textContent = uiText("重新加载");
     placeholder.append(retry);
   }
   return placeholder;
@@ -488,7 +534,7 @@ function imagePlaceholder(
 
 export function replacePreviewImageWithPlaceholder(image: HTMLImageElement, message: string) {
   const result: PreviewImageResult = {
-    originalSource: image.dataset.imageSource || image.getAttribute("src") || "未知地址",
+    originalSource: image.dataset.imageSource || image.getAttribute("src") || uiText("未知地址"),
     state: "unavailable",
     failureKind: "notImage",
     message

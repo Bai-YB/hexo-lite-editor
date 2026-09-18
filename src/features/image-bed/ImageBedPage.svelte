@@ -47,7 +47,7 @@
 
   export let session: ProjectSessionView | null;
   export let config: AppConfigV3;
-  export let onNotice: (message: string) => void = () => {};
+  export let onNotice: (message: string, severity?: "info" | "error") => void = () => {};
   export let onOpenSettings: () => void = () => {};
 
   type Provider = "local" | "cloudflare-imgbed";
@@ -59,7 +59,7 @@
   let sourceMenuOpen = false;
   let localImages: LocalImage[] = [];
   let remoteAssets: RemoteAssetItem[] = [];
-  let breadcrumbs: RemoteAssetBreadcrumb[] = [{ name: "根目录", directory: "" }];
+  let breadcrumbs: RemoteAssetBreadcrumb[] = [{ name: $ui("根目录"), directory: "" }];
   let remoteTotal = 0;
   let remoteOffset = 0;
   const pageSize = 48;
@@ -291,18 +291,17 @@
         const result = await platform.importLocalImages(session.projectId, session.generation);
         if (!alive || sessionKey !== currentSession || result.canceled) return;
         localImages = result.images;
-        onNotice(result.failures.length
-          ? `${result.importedCount} 张图片已导入，${result.failures.length} 张失败：${result.failures.map((failure) => `${failure.fileName}：${failure.error.message}`).join("；")}`
-          : `${result.importedCount} 张图片已导入 ${config.imageBed.localImageDir}。`);
+        if (result.failures.length) onNotice($ui("{p0} 张图片已导入，{p1} 张失败：{p2}", { p0: result.importedCount, p1: result.failures.length, p2: result.failures.map((failure) => `${failure.fileName}：${failure.error.message}`).join("；") }), "error");
+        else onNotice($ui("{p0} 张图片已导入 {p1}。", { p0: result.importedCount, p1: config.imageBed.localImageDir }));
       } else {
         const result = await platform.uploadCloudflareImage(session.projectId, session.generation, directory || "/");
         if (result && alive && sessionKey === currentSession) {
-          onNotice("图片已上传到 Cloudflare-ImgBed。");
+          onNotice($ui("图片已传到 Cloudflare-ImgBed。"));
           loadedKey = "";
         }
       }
     } catch (value) {
-      onNotice(normalizeError(value).message);
+      onNotice(normalizeError(value).message, "error");
     } finally {
       working = false;
     }
@@ -370,7 +369,7 @@
       opener?.focus();
       onNotice(message);
     } catch (value) {
-      onNotice(normalizeError(value).message);
+      onNotice(normalizeError(value).message, "error");
     }
   }
 
@@ -380,7 +379,7 @@
     try {
       await platform.revealLocalImage(session.projectId, session.generation, asset.item.imageId);
     } catch (value) {
-      onNotice(normalizeError(value).message);
+      onNotice(normalizeError(value).message, "error");
     }
   }
 
@@ -394,18 +393,18 @@
         await platform.deleteLocalImage(session.projectId, session.generation, target.item.imageId);
         if (!alive || sessionKey !== currentSession) return;
         localImages = localImages.filter((image) => image.imageId !== target.id);
-        onNotice("图片已移动到系统回收站。");
+        onNotice($ui("图片已移到回收站。"));
       } else {
         await platform.deleteCloudflareAsset(session.projectId, session.generation, target.item.assetId);
         if (!alive || sessionKey !== currentSession) return;
         remoteAssets = remoteAssets.filter((asset) => asset.assetId !== target.id);
         remoteTotal = Math.max(0, remoteTotal - 1);
-        onNotice("远程资源已删除。");
+        onNotice($ui("云端资源已删除。"));
       }
       if (deleting === target) deleting = null;
       loadedKey = "";
     } catch (value) {
-      onNotice(normalizeError(value).message);
+      onNotice(normalizeError(value).message, "error");
     } finally { working = false; }
   }
 
@@ -421,8 +420,8 @@
       remoteAssets = remoteAssets.map((item) => item.assetId === target.id ? { ...item, name: newName, fileName: newName } : item);
       renaming = null;
       loadedKey = "";
-      onNotice("远程资源已重命名。");
-    } catch (value) { onNotice(normalizeError(value).message); }
+      onNotice($ui("云端资源已重命名。"));
+    } catch (value) { onNotice(normalizeError(value).message, "error"); }
     finally { working = false; }
   }
 
@@ -436,8 +435,8 @@
       if (!alive || sessionKey !== currentSession) return;
       moving = null;
       loadedKey = "";
-      onNotice("远程资源已移动。");
-    } catch (value) { onNotice(normalizeError(value).message); }
+      onNotice($ui("云端资源已移动。"));
+    } catch (value) { onNotice(normalizeError(value).message, "error"); }
     finally { working = false; }
   }
 
@@ -453,8 +452,8 @@
       anchor.download = asset.name;
       anchor.click();
       URL.revokeObjectURL(url);
-      onNotice("下载已开始。");
-    } catch (value) { onNotice(normalizeError(value).message); }
+      onNotice($ui("开始下载。"));
+    } catch (value) { onNotice(normalizeError(value).message, "error"); }
   }
 
   function prepareMove(asset: AssetView) {
@@ -579,7 +578,7 @@
   <PageHeader title={$ui("图床")} description={$ui("按目录浏览本地图片和 Cloudflare-ImgBed 资源。")}>
     <div class="source-switcher-wrap">
       <button class="source-switcher" type="button" aria-expanded={sourceMenuOpen} on:click={() => (sourceMenuOpen = !sourceMenuOpen)}><span>{provider === "local" ? $ui("本地图片") : "Cloudflare-ImgBed"}</span><ChevronDown size={14} /></button>
-      {#if sourceMenuOpen}<div class="source-menu quiet-menu"><button class:active={provider === "local"} type="button" on:click={() => selectProvider("local")}>{$ui("本地图片")}<small>{config.imageBed.localImageDir}</small></button><button class:active={provider === "cloudflare-imgbed"} type="button" on:click={() => selectProvider("cloudflare-imgbed")}>Cloudflare-ImgBed<small>{$ui("远程目录与文件")}</small></button></div>{/if}
+      {#if sourceMenuOpen}<div class="source-menu quiet-menu"><button class:active={provider === "local"} type="button" on:click={() => selectProvider("local")}>{$ui("本地图片")}<small>{config.imageBed.localImageDir}</small></button><button class:active={provider === "cloudflare-imgbed"} type="button" on:click={() => selectProvider("cloudflare-imgbed")}>Cloudflare-ImgBed<small>{$ui("云端目录与文件")}</small></button></div>{/if}
     </div>
     <button class="icon-button" type="button" disabled={!session || loading} title={$ui("刷新")} aria-label={$ui("刷新资源")} on:click={() => { loadedKey = ""; }}><RefreshCw size={16} /></button>
     <button class="button primary" type="button" disabled={!session || working || (provider === "cloudflare-imgbed" && !credential.configured)} on:click={importOrUpload}>{#if working}<RefreshCw size={16} class="spin" />{provider === "local" ? $ui("导入中") : $ui("上传中")}{:else if provider === "local"}<Import size={16} />{$ui("导入")}{:else}<Upload size={16} />{$ui("上传图片")}{/if}</button>
@@ -589,16 +588,16 @@
   {/if}
 
   {#if !session}
-    <EmptyState title={$ui("请先打开项目")} description={$ui("图片工作区与当前 Hexo 项目会话绑定。")} />
+    <EmptyState title={$ui("请先打开项目")} description={$ui("打开博客项目后才能管理图片。")} />
   {:else}
     <form class="image-toolbar" on:submit|preventDefault={applySearch}>
-      <div class="search-control"><Search size={15} /><input bind:value={query} aria-label={$ui("搜索资源")} placeholder={$ui("搜索文件名（远程搜索会递归目录）")} />{#if query}<button class="search-clear" type="button" aria-label={$ui("清除搜索")} on:click={clearSearch}><X size={14} /></button>{/if}</div>
+      <div class="search-control"><Search size={15} /><input bind:value={query} aria-label={$ui("搜索资源")} placeholder={$ui("搜索文件名，云端会搜子目录")} />{#if query}<button class="search-clear" type="button" aria-label={$ui("清除搜索")} on:click={clearSearch}><X size={14} /></button>{/if}</div>
       {#if provider === "cloudflare-imgbed"}<button class="button quiet" type="submit">{$ui("搜索")}</button>{/if}
       <span class="image-count">{provider === "local" ? filteredLocal.length : remoteTotal} {$ui("项")}</span>
     </form>
 
     {#if provider === "cloudflare-imgbed" && breadcrumbs.length > 1 && !appliedQuery}
-      <nav class="asset-breadcrumbs" aria-label={$ui("远程资源路径")}>{#each breadcrumbs as crumb, index (crumb.directory)}{#if index}<ChevronRight size={13} />{/if}<button class:current={index === breadcrumbs.length - 1} type="button" on:click={() => enterDirectory(crumb.directory)}>{crumb.name}</button>{/each}</nav>
+      <nav class="asset-breadcrumbs" aria-label={$ui("云端资源路径")}>{#each breadcrumbs as crumb, index (crumb.directory)}{#if index}<ChevronRight size={13} />{/if}<button class:current={index === breadcrumbs.length - 1} type="button" on:click={() => enterDirectory(crumb.directory)}>{crumb.name}</button>{/each}</nav>
     {:else if provider === "cloudflare-imgbed" && appliedQuery}
       <div class="asset-search-state"><span>{$ui("搜索：")}{appliedQuery}</span><button type="button" on:click={clearSearch}>{$ui("清除")}</button></div>
     {/if}
@@ -636,30 +635,30 @@
 
 {#if context}
   <div bind:this={contextMenu} class="asset-context-menu quiet-menu" role="menu" style={`left:${context.x}px;top:${context.y}px`}>
-    {#if context.asset.kind === "image" && context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyMarkdown)}<button type="button" role="menuitem" on:click={() => copyText(markdownFor(context!.asset), "Markdown 已复制。") }><Copy size={14} />{$ui("复制 Markdown")}</button>{/if}
-    {#if context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyUrl)}<button type="button" role="menuitem" on:click={() => copyText(context!.asset.reference!, context!.asset.source === "remote" ? "链接已复制。" : "图片引用已复制。") }><Copy size={14} />{context.asset.source === "remote" ? $ui("复制链接") : $ui("复制 Markdown 路径")}</button>{/if}
+    {#if context.asset.kind === "image" && context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyMarkdown)}<button type="button" role="menuitem" on:click={() => copyText(markdownFor(context!.asset), $ui("已复制 Markdown。")) }><Copy size={14} />{$ui("复制 Markdown")}</button>{/if}
+    {#if context.asset.reference && (context.asset.source === "local" || context.asset.item.capabilities.copyUrl)}<button type="button" role="menuitem" on:click={() => copyText(context!.asset.reference!, context!.asset.source === "remote" ? $ui("链接已复制。") : $ui("已复制图片引用。")) }><Copy size={14} />{context.asset.source === "remote" ? $ui("复制链接") : $ui("复制 Markdown 路径")}</button>{/if}
     {#if context.asset.source === "local"}<button type="button" role="menuitem" on:click={() => revealLocal(context!.asset)}><FolderOpen size={14} />{$ui("在文件夹中显示")}</button>{/if}
     {#if context.asset.kind === "image" && (context.asset.source === "local" || context.asset.item.capabilities.preview)}<button type="button" role="menuitem" on:click={() => { const asset = context!.asset; const opener = context!.opener; context = null; void openLightbox(asset, opener); }}><Maximize2 size={14} />{$ui("查看大图")}</button>{/if}
     {#if context.asset.source === "remote" && context.asset.item.capabilities.download}<button type="button" role="menuitem" on:click={() => downloadAsset(context!.asset)}><Download size={14} />{$ui("下载")}</button>{/if}
     {#if context.asset.source === "remote" && context.asset.item.capabilities.rename}<button type="button" role="menuitem" on:click={() => { renaming = context!.asset; renameValue = context!.asset.name; context = null; }}><Pencil size={14} />{$ui("重命名")}</button>{/if}
     {#if context.asset.source === "remote" && context.asset.item.capabilities.move}<button type="button" role="menuitem" on:click={() => prepareMove(context!.asset)}><Move size={14} />{$ui("移动")}</button>{/if}
-    {#if (context.asset.source === "local" || context.asset.item.capabilities.delete)}<div class="menu-separator"></div><button class="danger" type="button" role="menuitem" on:click={() => { deleting = context!.asset; context = null; }}><Trash2 size={14} />{context.asset.source === "local" ? $ui("移到回收站") : $ui("删除远程资源")}</button>{/if}
+    {#if (context.asset.source === "local" || context.asset.item.capabilities.delete)}<div class="menu-separator"></div><button class="danger" type="button" role="menuitem" on:click={() => { deleting = context!.asset; context = null; }}><Trash2 size={14} />{context.asset.source === "local" ? $ui("移到回收站") : $ui("删除云端资源")}</button>{/if}
   </div>
 {/if}
 
 {#if renaming}
-  <ModalDialog title={$ui("重命名远程资源")} description={renaming.name} onClose={() => { if (!working) renaming = null; }}>
+  <ModalDialog title={$ui("重命名云端资源")} description={renaming.name} onClose={() => { if (!working) renaming = null; }}>
     <p class="muted-line">{$ui("重命名可能使已有文章中的图片链接失效，请同步检查并更新引用。")}</p>
     <label class="modal-form"><span>{$ui("新名称")}</span><input class="input" data-autofocus disabled={working} bind:value={renameValue} /></label>
-    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} on:click={() => (renaming = null)}>{$ui("取消")}</button><button class="button primary" type="button" disabled={working || !renameValue.trim()} on:click={renameAsset}>{working ? $ui("处理中…") : $ui("确认")}</button></svelte:fragment>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} on:click={() => (renaming = null)}>{$ui("取消")}</button><button class="button primary" type="button" disabled={working || !renameValue.trim()} on:click={renameAsset}>{working ? $ui("正在处理…") : $ui("确认")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if moving}
-  <ModalDialog title={$ui("移动远程资源")} description={$ui("填写目标目录；留空表示根目录。")} onClose={() => { if (!working) moving = null; }}>
+  <ModalDialog title={$ui("移动云端资源")} description={$ui("填目标目录，留空表示根目录。")} onClose={() => { if (!working) moving = null; }}>
     <p class="muted-line">{$ui("移动可能改变资源地址，请同步检查已有文章中的引用。")}</p>
     <label class="modal-form"><span>{$ui("目标目录")}</span><input class="input" data-autofocus disabled={working} bind:value={moveValue} placeholder={$ui("blog/目标目录")} /></label>
-    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} on:click={() => (moving = null)}>{$ui("取消")}</button><button class="button primary" type="button" disabled={working} on:click={moveAsset}>{working ? $ui("处理中…") : $ui("确认")}</button></svelte:fragment>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} on:click={() => (moving = null)}>{$ui("取消")}</button><button class="button primary" type="button" disabled={working} on:click={moveAsset}>{working ? $ui("正在处理…") : $ui("确认")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
@@ -674,7 +673,7 @@
 {/if}
 
 {#if deleting}
-  <ModalDialog title={deleting.source === "local" ? $ui("移到回收站？") : $ui("删除远程资源？")} description={deleting.source === "local" ? $ui("{p0} 将被移动到系统回收站。引用此图片的文章可能无法继续显示图片。", { p0: deleting.name }) : $ui("{p0} 将从 Cloudflare-ImgBed 永久删除。已有文章中的链接可能失效。", { p0: deleting.name })} onClose={() => { if (!working) deleting = null; }}>
-    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} data-autofocus={deleting.source === "remote" ? "" : undefined} on:click={() => (deleting = null)}>{$ui("取消")}</button><button class="button danger" type="button" disabled={working} data-autofocus={deleting.source === "local" ? "" : undefined} on:click={removeAsset}>{working ? $ui("处理中…") : deleting.source === "local" ? $ui("移到回收站") : $ui("确认删除")}</button></svelte:fragment>
+  <ModalDialog title={deleting.source === "local" ? $ui("移到回收站？") : $ui("删除云端资源？")} description={deleting.source === "local" ? $ui("{p0} 将被移动到系统回收站。引用此图片的文章可能无法继续显示图片。", { p0: deleting.name }) : $ui("{p0} 将从 Cloudflare-ImgBed 永久删除。已有文章中的链接可能失效。", { p0: deleting.name })} onClose={() => { if (!working) deleting = null; }}>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={working} data-autofocus on:click={() => (deleting = null)}>{$ui("取消")}</button><button class="button danger" type="button" disabled={working} on:click={removeAsset}>{working ? $ui("正在处理…") : deleting.source === "local" ? $ui("移到回收站") : $ui("确认删除")}</button></svelte:fragment>
   </ModalDialog>
 {/if}

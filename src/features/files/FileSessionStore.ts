@@ -1,4 +1,5 @@
 import type { ProjectFileSnapshot, ProjectSessionView } from "$shared/types/app";
+import { uiText } from "$shared/i18n/ui";
 
 export interface FileSessionState {
   snapshot: ProjectFileSnapshot | null;
@@ -45,7 +46,7 @@ export class FileSessionStore {
     const operation = async () => {
       try {
         do {
-          if (this.state.conflict) throw new Error("文件已在磁盘更改，请先比较两个版本。");
+          if (this.state.conflict) throw new Error(uiText("文件在磁盘上被改了，先比较两个版本。"));
           const snapshot = this.state.snapshot!;
           const content = this.state.content;
           const saved = await this.write(snapshot, content);
@@ -80,7 +81,7 @@ export class FileSessionStore {
     try { disk = await read(session, snapshot.path); }
     catch (error) {
       if (sequence !== this.refreshSequence || instance !== this.state.documentInstance) return;
-      this.state.error = `无法重新读取文件，当前输入已保留。请刷新文件树后重试：${error && typeof error === "object" && "message" in error ? String(error.message) : String(error)}`;
+      this.state.error = `${uiText("重新读取文件失败，你的输入还留着。刷新文件树后重试：")}${error && typeof error === "object" && "message" in error ? String(error.message) : String(error)}`;
       this.notify();
       throw error;
     }
@@ -90,7 +91,7 @@ export class FileSessionStore {
       this.state.error = null;
       this.state.conflict = null;
     } else if (!this.state.dirty) { this.load(disk); return; }
-    else { this.state.conflict = disk; this.state.error = "文件已在磁盘更改，当前输入已保留。"; }
+    else { this.state.conflict = disk; this.state.error = uiText("文件在磁盘上被改了，你的输入还留着。"); }
     this.notify();
   }
   acceptDisk(disk: ProjectFileSnapshot) { this.load(disk); }

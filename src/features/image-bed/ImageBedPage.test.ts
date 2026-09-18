@@ -44,7 +44,7 @@ describe("image bed interactions", () => {
     render(ImageBedPage, { session, config: config(), onNotice: notice });
     await screen.findByRole("button", { name: /one.png，Enter/ });
     await fireEvent.click(screen.getByRole("button", { name: "导入" }));
-    expect(notice).toHaveBeenCalledWith(expect.stringContaining("1 张图片已导入，1 张失败：large.png"));
+    expect(notice).toHaveBeenCalledWith(expect.stringContaining("1 张图片已导入，1 张失败：large.png"), "error");
   });
   it("returns to the last valid page when deletion empties page two", async () => {
     let total = 49;
@@ -55,7 +55,7 @@ describe("image bed interactions", () => {
     await fireEvent.click(screen.getByRole("button", { name: "下一页" }));
     await screen.findByRole("button", { name: /last.png，Enter/ });
     await fireEvent.click(screen.getByRole("button", { name: "打开 last.png 菜单" }));
-    await fireEvent.click(screen.getByRole("menuitem", { name: "删除远程资源" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "删除云端资源" }));
     await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
     await screen.findByRole("button", { name: /first.png，Enter/ });
     expect(screen.getByText("48 项")).toBeTruthy();
@@ -97,10 +97,10 @@ describe("image bed interactions", () => {
     render(ImageBedPage, { session, config: config(true) });
     await screen.findByRole("button", { name: /one.png，Enter/ });
     await fireEvent.click(screen.getByRole("button", { name: "打开 one.png 菜单" }));
-    await fireEvent.click(screen.getByRole("menuitem", { name: "删除远程资源" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "删除云端资源" }));
     await fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
     await fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.getByRole("dialog", { name: "删除远程资源？" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "删除云端资源？" })).toBeTruthy();
     api.listCloudflareAssets.mockResolvedValue(page(null, 0));
     deletion.resolve();
     await screen.findByText("当前目录为空");

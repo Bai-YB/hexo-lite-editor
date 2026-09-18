@@ -1,4 +1,5 @@
 import { platform } from "$platform/tauri";
+import { uiText } from "$shared/i18n/ui";
 import { PluginHost } from "./PluginHost";
 import { PluginWorkerRuntime, type WorkerLike } from "./PluginWorkerRuntime";
 import type { PluginHostRequest, PluginRequest, PluginResponse } from "./protocol";
@@ -63,7 +64,7 @@ function workerIdentity(plugin: PluginView) {
 }
 
 function workerFor(plugin: PluginView): HostedPluginWorker {
-  if (!plugin.enabled || !plugin.entryUrl) throw new Error("请先启用插件后再测试或上传。");
+  if (!plugin.enabled || !plugin.entryUrl) throw new Error(uiText("先启用插件，再测试或上传。"));
   const existing = workers.get(plugin.manifest.id);
   if (existing?.runtime.active && existing.identity === workerIdentity(plugin)) return existing;
   disposePluginWorker(plugin.manifest.id);

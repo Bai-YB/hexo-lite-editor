@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { setLanguage } from "$shared/i18n";
+
+beforeAll(() => setLanguage("zh-CN"));
 import { FileSessionStore } from "./FileSessionStore";
 import type { ProjectFileSnapshot, ProjectSessionView } from "$shared/types/app";
 

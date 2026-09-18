@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { setLanguage } from "$shared/i18n";
+
+beforeAll(() => setLanguage("zh-CN"));
 import {
   EditorSessionStore,
   findPendingEditorImages,
@@ -144,7 +147,7 @@ describe("EditorSessionStore", () => {
     store.load(snapshot);
     store.markExternalChange("deleted");
     expect(store.hasDirty()).toBe(true);
-    await expect(store.save()).rejects.toThrow("外部更改");
+    await expect(store.save()).rejects.toThrow("云端有更新");
     expect(calls).toEqual([]);
     store.allowExternalOverwrite();
     await store.saveUntilClean();
@@ -228,5 +231,65 @@ describe("EditorSessionStore", () => {
       { uploadId: first, localUrl: `http://hlex-asset.localhost/${first}` },
       { uploadId: second, localUrl: `hlex-asset://localhost/${second}` }
     ]);
+  });
+});
+
+describe("EditorSessionStore notification channels", () => {
+  const createStore = () =>
+    new EditorSessionStore(async (request) => ({
+      articleId: request.articleId,
+      acceptedRevision: request.revision,
+      savedAt: "now"
+    }));
+
+  it("does not notify content listeners when only the selection moves", () => {
+    const store = createStore();
+    store.load(snapshot);
+    let contentHits = 0;
+    let selectionHits = 0;
+    const offContent = store.subscribeContent(() => (contentHits += 1));
+    const offSelection = store.subscribeSelection(() => (selectionHits += 1));
+    contentHits = 0;
+    selectionHits = 0;
+    store.setSelection(1, 1);
+    expect(contentHits).toBe(0);
+    expect(selectionHits).toBe(1);
+    offContent();
+    offSelection();
+  });
+
+  it("does not notify selection listeners when only the content updates", () => {
+    const store = createStore();
+    store.load(snapshot);
+    let contentHits = 0;
+    let selectionHits = 0;
+    store.subscribeContent(() => (contentHits += 1));
+    store.subscribeSelection(() => (selectionHits += 1));
+    contentHits = 0;
+    selectionHits = 0;
+    store.update("changed body");
+    expect(contentHits).toBe(1);
+    expect(selectionHits).toBe(0);
+  });
+
+  it("keeps the legacy subscribe contract: every group reaches global listeners", () => {
+    const store = createStore();
+    store.load(snapshot);
+    let hits = 0;
+    const off = store.subscribe(() => (hits += 1));
+    hits = 0;
+    store.setSelection(0, 1);
+    store.update("another edit");
+    expect(hits).toBe(2);
+    off();
+  });
+
+  it("getSelection returns a defensive copy", () => {
+    const store = createStore();
+    store.load(snapshot);
+    store.setSelection(1, 2);
+    const selection = store.getSelection();
+    selection.from = 99;
+    expect(store.getSelection()).toEqual({ from: 1, to: 2 });
   });
 });

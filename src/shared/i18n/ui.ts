@@ -1,4 +1,4 @@
-import { derived } from "svelte/store";
+import { derived, get } from "svelte/store";
 import { language } from "./index";
 import type { ResolvedLanguage } from "./language";
 import { uiMessages } from "./uiMessages";
@@ -14,3 +14,8 @@ export function translateUi(source: string, locale: ResolvedLanguage, params: Ui
 
 export const ui = derived(language, ($language) =>
   (source: string, params: UiParams = {}) => translateUi(source, $language, params));
+
+/** For plain .ts modules that build DOM text outside components. */
+export function uiText(source: string, params: UiParams = {}): string {
+  return translateUi(source, get(language), params);
+}

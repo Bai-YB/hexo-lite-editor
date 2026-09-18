@@ -36,11 +36,14 @@
     replacePreviewImageWithPlaceholder
   } from "$shared/markdown/safeMarkdown";
   import { isTauri, platform, normalizeError } from "$platform/tauri";
+  import { hashPreviewText, PreviewBlockCache, renderPreviewBlocks, type PreviewBlock } from "$shared/markdown/previewBlocks";
+  import { countWords, lineAt } from "$shared/markdown/wordCount";
   import { previewStateLabel } from "./previewModel";
   import type {
     AppConfigV3,
     ArticleKind,
     ArticleSummary,
+    DocumentSnapshot,
     ProjectSessionView,
     RecentProjectView,
     SettingsSectionId,
@@ -49,13 +52,15 @@
   } from "$shared/types/app";
   import { PreviewAssetRegistry, replacePreviewAssetInPlace } from "./PreviewAssetRegistry";
   import PreviewModeSwitcher from "./preview/PreviewModeSwitcher.svelte";
+  import { previewSurface } from "./preview/previewSurface";
   import HexoThemePreview from "./preview/HexoThemePreview.svelte";
   import type { PreviewMode } from "./preview/previewSession";
+  import { createAdaptiveScheduler } from "./preview/renderScheduler";
   import { pluginForProvider, uploadWithPlugin } from "$shared/plugins/PluginProviderRuntime";
   import type { PluginView } from "$shared/plugins/types";
   import { articleFileName, localDateTime } from "./editorChanges";
   import { syncStatusLabel } from "./syncStatusLabel";
-  import { collectPreviewAnchors, previewTopForSourceLine, sourceLineForPreviewTop, ScrollSyncOwner, SCROLL_ANCHOR_INSET, type SourceAnchor } from "./preview/sourceScrollSync";
+  import { collectPreviewAnchors, previewTopForSourceLine, ScrollSyncOwner, SCROLL_ANCHOR_INSET, type SourceAnchor } from "./preview/sourceScrollSync";
 
   export let session: ProjectSessionView | null;
   export let articles: ArticleSummary[] = [];
@@ -66,7 +71,7 @@
   export let onOpenRecentProject: (recentId: string) => void = () => {};
   export let onArticlesChange: (articles: ArticleSummary[]) => void = () => {};
   export let onConfigChange: (config: AppConfigV3) => void = () => {};
-  export let onNotice: (message: string) => void = () => {};
+  export let onNotice: (message: string, severity?: "info" | "error") => void = () => {};
   export let onPublish: () => void = () => {};
   export let onPreview: (openInBrowser?: boolean) => Promise<string> = async () => "";
   export let onTogglePreviewServer: () => void = () => {};
@@ -80,7 +85,18 @@
   export let onBeforeSync: () => Promise<boolean> = async () => true;
 
   const store = editorStore;
-  let editorState: EditorSessionState = store.getState();
+  let content = "";
+  let documentInstance = 0;
+  let snapshot: DocumentSnapshot | null = null;
+  let dirty = false;
+  let saving = false;
+  let savedAt: string | null = null;
+  let sessionError: string | null = null;
+  let externalChange: "changed" | "deleted" | null = null;
+  let pendingCreate = false;
+  let imageUrlReplacements: Record<string, string> = {};
+  let selectionFrom = 0;
+  let selectionTo = 0;
   let activeArticleId: string | null = store.activeArticleId();
   let query = "";
   let filter: "all" | ArticleKind = "all";
@@ -92,12 +108,25 @@
   let loading = false;
   let loadError = "";
   let failedArticle: ArticleSummary | null = null;
-  let previewHtml = "";
+  let previewBlocks: PreviewBlock[] = [];
+  let previewStyles: string[] = [];
+  let previewLayoutToken = 0;
+  const previewBlockCache = new PreviewBlockCache();
+  let previewDocumentInstance = -1;
   let previewImageResults: Record<string, import("$shared/types/app").PreviewImageResult> = {};
   let previewRendering = false;
-  let previewRenderTimer: ReturnType<typeof setTimeout> | undefined;
-  let previewRenderFrame = 0;
   let previewRenderSequence = 0;
+  const previewJob = {
+    source: "",
+    instance: 0,
+    imageResults: {} as Record<string, import("$shared/types/app").PreviewImageResult>,
+    imagePending: false,
+    sequence: 0,
+    active: false
+  };
+  let previewScheduleKey = "";
+  let previewHasRendered = false;
+  const previewScheduler = createAdaptiveScheduler({ run: runPreviewRender });
   let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let lastProjectKey: string | null = store.getState().snapshot
     ? `${store.getState().snapshot!.projectId}:${store.getState().snapshot!.sessionGeneration}`
@@ -132,8 +161,6 @@
   let markdownPreview: HTMLElement;
   let markdownEditor: MarkdownEditor | undefined;
   let previewAnchors: SourceAnchor[] = [];
-  let previewScrollPending = false;
-  let previewInteractionFrame = 0;
   // Incremented whenever the preview DOM is replaced or remeasured.  Scroll
   // alignment must never consume coordinates collected from the previous DOM.
   let previewLayoutSequence = 0;
@@ -166,10 +193,27 @@
   let plugins: PluginView[] = [];
   let themePreviewBusy = false;
 
-  const unsubscribe = store.subscribe((state) => {
-    editorState = state;
+  function applySessionState(state: EditorSessionState) {
+    content = state.content;
+    documentInstance = state.documentInstance;
+    snapshot = state.snapshot;
+    dirty = state.dirty;
+    saving = state.saving;
+    savedAt = state.savedAt;
+    sessionError = state.error;
+    externalChange = state.externalChange;
+    imageUrlReplacements = state.imageUrlReplacements;
+    selectionFrom = state.selection.from;
+    selectionTo = state.selection.to;
     activeArticleId = state.snapshot?.articleId ?? null;
-  });
+  }
+
+  const unsubscribeStore = [
+    store.subscribeContent(applySessionState),
+    store.subscribeSelection(applySessionState),
+    store.subscribeSaving(applySessionState),
+    store.subscribeSession(applySessionState)
+  ];
 
   onMount(() => {
     window.addEventListener("focus", handleWindowFocus);
@@ -196,12 +240,10 @@
     componentAlive = false;
     unlistenFileDrop?.();
     unlistenSync?.();
-    unsubscribe();
+    unsubscribeStore.forEach((off) => off());
     previewAssets.clear();
     clearTimeout(autoSaveTimer);
-    clearTimeout(previewRenderTimer);
-    cancelAnimationFrame(previewRenderFrame);
-    cancelAnimationFrame(previewInteractionFrame);
+    previewScheduler.cancel();
     window.removeEventListener("focus", handleWindowFocus);
     window.removeEventListener("pointerdown", closeFilterMenu);
     window.removeEventListener("keydown", closeFilterMenu);
@@ -210,8 +252,8 @@
 
   async function refreshSyncStatus(run = false) {
     if (!session || syncBusy) return;
-    if (run && (pendingImageUploads > 0 || editorState.externalChange || showSwitchGuard)) {
-      onNotice("请先完成图片处理并解决文章外部更改，再同步。");
+    if (run && (pendingImageUploads > 0 || externalChange || showSwitchGuard)) {
+      onNotice($ui("等图片上传完成、云端更新处理完后再同步。"), "error");
       return;
     }
     const project = session;
@@ -227,9 +269,9 @@
         : await platform.getContentSyncStatus(project.projectId, project.generation);
       if (!componentAlive || session?.projectId !== project.projectId) return;
       if (statusSequence === syncStatusSequence && session.generation === project.generation) syncStatus = result;
-      if (run) onNotice(syncStatus.message || "同步检查完成。");
+      if (run) onNotice(syncStatus.message || $ui("检查完成。"));
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     } finally {
       syncBusy = false;
     }
@@ -271,14 +313,15 @@
   }
 
   $: schedulePreviewRender(
-    editorState.content,
+    content,
+    documentInstance,
     previewImageResults,
     previewImagesPending,
     config.layout.previewVisible,
     previewMode
   );
   $: previewImageKey = `${activeArticleId ?? ""}\u0000${previewImageSources.join("\u0000")}`;
-  $: if (session && editorState.snapshot && previewImageKey !== lastValidatedImageKey) {
+  $: if (session && snapshot && previewImageKey !== lastValidatedImageKey) {
     lastValidatedImageKey = previewImageKey;
     void refreshPreviewImages();
   }
@@ -301,33 +344,74 @@
 
   function schedulePreviewRender(
     source: string,
+    instance: number,
     imageResults: Record<string, import("$shared/types/app").PreviewImageResult>,
     imagePending: boolean,
     previewVisible: boolean,
     mode: PreviewMode
   ) {
-    const sequence = ++previewRenderSequence;
-    clearTimeout(previewRenderTimer);
-    cancelAnimationFrame(previewRenderFrame);
-    if (!previewVisible || mode !== "quick") {
+    previewJob.source = source;
+    previewJob.instance = instance;
+    previewJob.imageResults = imageResults;
+    previewJob.imagePending = imagePending;
+    previewJob.sequence = ++previewRenderSequence;
+    previewJob.active = previewVisible && mode === "quick";
+    if (!previewJob.active) {
       previewRendering = false;
+      previewScheduleKey = "";
+      previewScheduler.cancel();
       return;
     }
     previewRendering = true;
-    // Let the editor and shell paint first. Rapid input replaces this job, so
-    // long documents are parsed once after a typing burst instead of per key.
-    previewRenderFrame = requestAnimationFrame(() => {
-      previewRenderTimer = setTimeout(() => {
-        if (!componentAlive || sequence !== previewRenderSequence) return;
-        const rendered = renderMarkdownPreview(source, imageResults, imagePending, true);
-        if (!componentAlive || sequence !== previewRenderSequence) return;
-        previewHtml = rendered.html;
-        previewImageSources = rendered.imageSources;
-        previewRendering = false;
-      }, 32);
-    });
+    const key = `${instance}|${mode}`;
+    const rebind = key !== previewScheduleKey;
+    previewScheduleKey = key;
+    // A new article or re-opened pane paints immediately; keystrokes coalesce.
+    if (rebind && previewHasRendered) previewScheduler.force();
+    else previewScheduler.schedule();
   }
-  $: wordCount = countWords(editorState.content);
+
+  function runPreviewRender() {
+    if (!componentAlive || !previewJob.active || previewJob.sequence !== previewRenderSequence) return;
+    if (previewJob.instance !== previewDocumentInstance) {
+      previewDocumentInstance = previewJob.instance;
+      previewBlockCache.clear();
+    }
+    const startedAt = performance.now();
+    const incremental = renderPreviewBlocks(previewJob.source, previewJob.imageResults, previewJob.imagePending, previewBlockCache, document);
+    if (!componentAlive || previewJob.sequence !== previewRenderSequence) return;
+    if (incremental) {
+      previewBlocks = incremental.blocks;
+      previewStyles = incremental.styles;
+      previewImageSources = incremental.imageSources;
+    } else {
+      const rendered = renderMarkdownPreview(previewJob.source, previewJob.imageResults, previewJob.imagePending, true);
+      if (!componentAlive || previewJob.sequence !== previewRenderSequence) return;
+      previewBlocks = [{ key: `full:${hashPreviewText(rendered.html)}`, html: rendered.html }];
+      previewStyles = [];
+      previewImageSources = rendered.imageSources;
+    }
+    previewLayoutToken += 1;
+    previewHasRendered = true;
+    previewRendering = false;
+    if (import.meta.env.DEV) {
+      const durationMs = performance.now() - startedAt;
+      const stats = previewStats();
+      stats.renders += 1;
+      stats.totalMs += durationMs;
+      stats.maxMs = Math.max(stats.maxMs, durationMs);
+      stats.blocks = previewBlocks.length;
+      stats.reused = incremental?.reused ?? 0;
+    }
+  }
+
+  function previewStats() {
+    const scope = window as unknown as {
+      __previewStats?: { renders: number; totalMs: number; maxMs: number; blocks: number; reused: number };
+    };
+    return (scope.__previewStats ??= { renders: 0, totalMs: 0, maxMs: 0, blocks: 0, reused: 0 });
+  }
+  $: wordCount = countWords(content);
   $: if (`${session?.projectId ?? ""}:${session?.generation ?? 0}` !== lastProjectKey) {
     lastProjectKey = session ? `${session.projectId}:${session.generation}` : null;
     const currentSnapshot = store.getState().snapshot;
@@ -357,7 +441,7 @@
 
   $: {
     clearTimeout(autoSaveTimer);
-    if (!autoSaveSuspended && !showSwitchGuard && !switchBusy && !deletingArticle && !editorState.externalChange && config.general.autoSave && editorState.dirty && !editorState.saving) {
+    if (!autoSaveSuspended && !showSwitchGuard && !switchBusy && !deletingArticle && !externalChange && config.general.autoSave && dirty && !saving) {
       autoSaveTimer = setTimeout(() => void saveCurrent(), config.general.autoSaveDelayMs);
     }
   }
@@ -410,14 +494,14 @@
   function requestArticle(article: ArticleSummary) {
     if (article.articleId === activeArticleId) return;
     if (pendingImageUploads > 0) {
-      onNotice("图片正在上传并更新地址，请等待完成后再切换文章。");
+      onNotice($ui("图片还在上传，等完成后再切换文章。"));
       return;
     }
-    if (editorState.externalChange) {
-      onNotice("请先处理当前文章的外部更改，再切换文章。");
+    if (externalChange) {
+      onNotice($ui("云端有更新，先处理差异再切换文章。"), "error");
       return;
     }
-    if (editorState.dirty || editorState.saving) {
+    if (dirty) {
       clearTimeout(autoSaveTimer);
       pendingArticle = article;
       showSwitchGuard = true;
@@ -443,6 +527,7 @@
     if (switchBusy) return;
     if (action === "cancel") {
       pendingArticle = null;
+      pendingCreate = false;
       showSwitchGuard = false;
       return;
     }
@@ -453,9 +538,14 @@
       const next = pendingArticle;
       pendingArticle = null;
       showSwitchGuard = false;
+      if (pendingCreate) {
+        pendingCreate = false;
+        openCreateDialog();
+        return;
+      }
       if (next) await openArticle(next);
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     } finally {
       switchBusy = false;
     }
@@ -465,7 +555,7 @@
     try {
       await saveAndRefresh();
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     }
   }
 
@@ -481,8 +571,14 @@
 
   function openCreateDialog() {
     if (!session) return;
-    if (pendingImageUploads > 0 || editorState.externalChange) {
-      onNotice("请先等待图片处理完成并解决文章外部更改，再新建文章。");
+    if (pendingImageUploads > 0 || externalChange) {
+      onNotice($ui("等图片上传完成、云端更新处理完后再新建文章。"), "error");
+      return;
+    }
+    if (dirty) {
+      clearTimeout(autoSaveTimer);
+      pendingCreate = true;
+      showSwitchGuard = true;
       return;
     }
     createTitle = "";
@@ -503,7 +599,7 @@
   async function createArticle() {
     if (creating || pendingImageUploads > 0) return;
     if (!session || !createTitle.trim() || !createFileName.trim()) {
-      createError = "请填写标题和文件名。";
+      createError = $ui("标题和文件名不能为空。");
       return;
     }
     creating = true;
@@ -511,7 +607,7 @@
     try {
       const project = session;
       const token = store.documentToken();
-      if (editorState.snapshot) await store.saveUntilClean();
+      if (snapshot) await store.saveUntilClean();
       if (!componentAlive || session?.projectId !== project.projectId || session.generation !== project.generation) return;
       const summary = await platform.createArticle({
         projectId: project.projectId,
@@ -529,7 +625,7 @@
       onArticlesChange(next);
       showCreate = false;
       if (store.documentToken() === token && !store.hasDirty()) await openArticle(summary);
-      else onNotice("文章已创建；当前文章有新的编辑，已保留当前内容。");
+      else onNotice($ui("文章已创建，但当前文章还在编辑，没有切换过去。"));
     } catch (error) {
       createError = normalizeError(error).message;
     } finally {
@@ -548,9 +644,9 @@
 
   function requireImageTarget(bookmark: InsertionBookmark, project: ProjectSessionView) {
     if (!componentAlive || !store.matchesDocument(bookmark.documentInstance) || session?.projectId !== project.projectId || session.generation !== project.generation) {
-      throw new Error("文章会话已变化，图片未插入其他文章，请在原文章中重试。");
+      throw new Error($ui("文章已经切换，图片没有插入，请回到原来的文章重试。"));
     }
-    if (!bookmark.valid) throw new Error("插入位置的选中文字已被修改，已保留您的编辑，请重新选择图片插入位置。");
+    if (!bookmark.valid) throw new Error($ui("选中的文字变了，编辑没有丢，重新选一次插入位置。"));
   }
 
   async function importPluginImages(plugin: PluginView, files: Array<{ name: string; mime: string; bytes: number[] }>) {
@@ -566,7 +662,7 @@
   }
 
   async function handleImageFiles(files: File[]) {
-    if (!session || !editorState.snapshot || !files.length || showSwitchGuard || showCreate || deletingArticle || editorState.externalChange) return;
+    if (!session || !snapshot || !files.length || showSwitchGuard || showCreate || deletingArticle || externalChange) return;
     const project = session;
     const provider = config.imageBed.defaultProvider;
     const bookmark = store.createInsertionBookmark();
@@ -583,7 +679,7 @@
         : await platform.importEditorImages(project.projectId, project.generation, provider, ordered);
       await finishImageImport(results, bookmark, project);
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     } finally {
       store.releaseInsertionBookmark(bookmark);
       changePendingImages(-1);
@@ -596,8 +692,8 @@
     const articleId = store.activeArticleId()!;
     if (successes.length && !store.insertMarkdown(successes.map((result) => result.markdown).join("\n"), bookmark)) return;
     const failed = results.filter((result) => result.error);
-    if (failed.length) onNotice(`${successes.length} 张图片已处理，${failed.length} 张失败：${failed[0].error?.message}`);
-    else onNotice(`${successes.length} 张图片已插入文章。`);
+    if (failed.length) onNotice($ui("{p0} 张图片已处理，{p1} 张失败：{p2}", { p0: successes.length, p1: failed.length, p2: failed[0].error?.message ?? "" }), "error");
+    else onNotice($ui("{p0} 张图片已插入文章。", { p0: successes.length }));
     const pending = successes.filter((result) => result.uploadId && result.url);
     if (pending.length) {
       await store.save();
@@ -641,7 +737,7 @@
     try {
       await platform.revealArticle(session.projectId, session.generation, article.articleId);
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     }
   }
 
@@ -663,9 +759,9 @@
       articles = next;
       onArticlesChange(next);
       if (article.articleId === activeArticleId) void refreshPreviewImages(true);
-      onNotice(kind === "post" ? "文章已从草稿发布到文章列表。" : "文章已移到草稿。" );
+      onNotice(kind === "post" ? $ui("已转为正式文章。") : $ui("已移到草稿。"));
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     } finally {
       articleActionBusy = false;
     }
@@ -686,9 +782,9 @@
         activeArticleId = null;
         if (next.length) await openArticle(next[0]);
       }
-      onNotice("文章已移到系统回收站，可从回收站恢复。" );
+      onNotice($ui("已移到系统回收站，需要的话可以从回收站恢复。"));
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     } finally {
       articleActionBusy = false;
     }
@@ -696,7 +792,7 @@
 
   async function handleImagePaths(paths: string[]) {
     const imagePaths = paths.filter((path) => /\.(?:png|jpe?g|gif|webp)$/i.test(path));
-    if (!session || !editorState.snapshot || !imagePaths.length || showSwitchGuard || showCreate || deletingArticle || editorState.externalChange) return;
+    if (!session || !snapshot || !imagePaths.length || showSwitchGuard || showCreate || deletingArticle || externalChange) return;
     const project = session;
     const provider = config.imageBed.defaultProvider;
     const bookmark = store.createInsertionBookmark();
@@ -713,7 +809,7 @@
       }
       await finishImageImport(results, bookmark, project);
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     } finally {
       store.releaseInsertionBookmark(bookmark);
       changePendingImages(-1);
@@ -739,12 +835,12 @@
         if (!store.matchesDocument(token)) return;
         const savedGeneration = store.getState().snapshot?.sessionGeneration ?? generation;
         await platform.finalizeCachedEditorImage(projectId, savedGeneration, uploadId);
-        onNotice(replaced ? "图片已上传，文章中的地址已自动更新。" : "图片已上传。");
+        onNotice(replaced ? $ui("图片已上传，文章里的地址已更新。") : $ui("图片已上传。"));
         setTimeout(() => void refreshPreviewImages(true), 0);
       }
     } catch (error) {
       previewAssets.markFailed(uploadId);
-      onNotice(`图片上传失败，本地图片已保留：${normalizeError(error).message}`);
+      onNotice($ui("图片上传失败，本地文件还在：{p0}", { p0: normalizeError(error).message }), "error");
     } finally {
       activeImageUploads.delete(uploadId);
       changePendingImages(-1);
@@ -772,7 +868,7 @@
     try {
       const url = await onPreview(false);
       if (url && componentAlive && store.matchesDocument(token)) await platform.openHexoPreviewWebview(url);
-    } catch (error) { onNotice(normalizeError(error).message); }
+    } catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { themePreviewBusy = false; }
   }
 
@@ -780,9 +876,9 @@
     if (!session) return;
     try {
       await platform.startTask(session.projectId, kind);
-      onNotice(`${kind === "gitStatus" ? "Git 检查" : "任务"}已在后台开始。`);
+      onNotice(kind === "gitStatus" ? $ui("Git 检查已在后台开始。") : $ui("任务已在后台开始。"));
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     }
   }
 
@@ -798,39 +894,17 @@
   }
 
   function recordPreviewScroll() {
-    if (activeArticleId && markdownPreview) {
-      previewScrollByArticle.set(activeArticleId, markdownPreview.scrollTop);
-      if (previewScrollSync && scrollOwner.canDrive("preview")) previewScrollPending = !alignEditorToPreview();
-    }
+    if (activeArticleId && markdownPreview) previewScrollByArticle.set(activeArticleId, markdownPreview.scrollTop);
   }
 
   function claimEditorScroll() {
-    cancelAnimationFrame(previewInteractionFrame);
-    previewScrollPending = false;
     scrollOwner.claim("editor");
   }
 
   function claimPreviewScroll() {
-    // Input events run before the browser applies their scroll offset. Mark
-    // the preview as authoritative immediately so an intervening HTML/layout
-    // rebuild cannot snap it back to the editor's previous line.
-    previewScrollPending = true;
+    // Reading the preview is its own activity: until the editor scrolls again,
+    // layout rebuilds must leave the preview where the user put it.
     scrollOwner.claim("preview");
-    cancelAnimationFrame(previewInteractionFrame);
-    previewInteractionFrame = requestAnimationFrame(() => {
-      if (!scrollOwner.canDrive("preview") || !previewScrollPending) return;
-      previewScrollPending = !alignEditorToPreview();
-    });
-  }
-
-  function alignEditorToPreview(): boolean {
-    if (!previewScrollSync || !markdownPreview?.isConnected || !previewAnchors.length) return false;
-    const maxScroll = Math.max(0, markdownPreview.scrollHeight - markdownPreview.clientHeight);
-    if (markdownPreview.scrollTop <= 1) scrollSourceLine = 1;
-    else if (markdownPreview.scrollTop >= maxScroll - 1) scrollSourceLine = Number.POSITIVE_INFINITY;
-    else scrollSourceLine = sourceLineForPreviewTop(previewAnchors, markdownPreview.scrollTop + SCROLL_ANCHOR_INSET);
-    markdownEditor?.scrollToLine(scrollSourceLine);
-    return true;
   }
 
   function alignPreviewToSource(useEditorBounds = true) {
@@ -854,7 +928,7 @@
     }
   }
 
-  function observePreviewLayout(node: HTMLElement, _html: string) {
+  function observePreviewLayout(node: HTMLElement, _layoutToken: number) {
     let frame = 0;
     let alive = true;
     let layoutSequence = ++previewLayoutSequence;
@@ -869,20 +943,9 @@
         // measured.
         previewAnchors = nextAnchors;
         if (scrollOwner.canDrive("editor")) {
-          previewScrollPending = false;
           scrollSourceLine = markdownEditor?.sourceLineAtScroll() ?? scrollSourceLine;
           // Preserve the source location when images, fonts or pane widths change.
           alignPreviewToSource();
-        } else if (previewScrollPending) {
-          // A user can scroll in the frame between Svelte replacing the HTML
-          // and the next anchor measurement. Keep that input authoritative
-          // instead of snapping the preview back to the editor's old line.
-          previewScrollPending = !alignEditorToPreview();
-        } else {
-          // The editor may still be completing its asynchronous jump from a
-          // preview-driven scroll. Use the stored source line here; its old
-          // scrollTop boundary would otherwise snap the preview back to the end.
-          alignPreviewToSource(false);
         }
       });
     };
@@ -917,7 +980,6 @@
         node.removeEventListener("load", rebuild, true);
         for (const event of ["wheel", "pointerdown", "touchstart", "keydown"]) node.removeEventListener(event, claimPreviewScroll);
         previewAnchors = [];
-        previewScrollPending = false;
       }
     };
   }
@@ -999,14 +1061,7 @@
     const url = target?.dataset.externalHref;
     if (!url) return;
     event.preventDefault();
-    void platform.openMarkdownLink(url).catch((error) => onNotice(normalizeError(error).message));
-  }
-
-  function countWords(content: string) {
-    const body = content.replace(/^---[\s\S]*?---/, "");
-    const chinese = body.match(/[\u3400-\u9fff]/g)?.length ?? 0;
-    const words = body.match(/[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*/g)?.length ?? 0;
-    return chinese + words;
+    void platform.openMarkdownLink(url).catch((error) => onNotice(normalizeError(error).message, "error"));
   }
 
   function clamp(value: number, min: number, max: number) {
@@ -1014,8 +1069,8 @@
   }
 
   async function refreshPreviewImages(force = false) {
-    if (!session || !editorState.snapshot) return;
-    const sources = extractPreviewImageSources(editorState.content);
+    if (!session || !snapshot) return;
+    const sources = extractPreviewImageSources(content);
     const validationKey = `${activeArticleId ?? ""}\u0000${sources.join("\u0000")}`;
     if (!force && validationKey !== previewImageKey) return;
     const sequence = ++imageValidationSequence;
@@ -1078,7 +1133,7 @@
           return;
         }
         if (image.isConnected) {
-          replacePreviewImageWithPlaceholder(image, result?.message ?? "图片加载失败、返回为空或内容无法显示。");
+          replacePreviewImageWithPlaceholder(image, result?.message ?? $ui("图片加载失败或内容为空"));
         }
         return;
       } catch (error) {
@@ -1086,7 +1141,7 @@
         return;
       }
     }
-    replacePreviewImageWithPlaceholder(image, "图片加载失败、返回为空或内容无法显示。");
+    replacePreviewImageWithPlaceholder(image, $ui("图片加载失败或内容为空"));
   }
 
   function coverSource(article: ArticleSummary) {
@@ -1122,7 +1177,7 @@
         coverFallbackUrls = { ...coverFallbackUrls, [originalSource]: result.previewUrl };
         clearCoverError(originalSource);
       } else {
-        coverErrors = { ...coverErrors, [originalSource]: result?.message ?? "图片加载失败或返回为空" };
+        coverErrors = { ...coverErrors, [originalSource]: result?.message ?? $ui("图片加载失败或内容为空") };
       }
     } catch (error) {
       if (session?.projectId === expectedProjectId && session.generation === expectedGeneration) {
@@ -1136,7 +1191,7 @@
   function handleCoverError(article: ArticleSummary) {
     const originalSource = coverSource(article);
     if (!originalSource) return;
-    coverErrors = { ...coverErrors, [originalSource]: coverErrors[originalSource] ?? "图片加载失败，正在后台检查" };
+    coverErrors = { ...coverErrors, [originalSource]: coverErrors[originalSource] ?? $ui("图片加载失败，正在后台重试") };
     if (coverFallbackUrls[originalSource]) {
       const { [originalSource]: _removed, ...remaining } = coverFallbackUrls;
       coverFallbackUrls = remaining;
@@ -1211,9 +1266,12 @@
       {previewServer}
       {taskBusy}
       {previewBusy}
-      saving={editorState.saving}
-      saveDisabled={!editorState.dirty || editorState.saving}
-      imageDisabled={!editorState.snapshot}
+      saving={saving}
+      saveDisabled={!dirty || saving || Boolean(externalChange)}
+      saveTitle={externalChange ? $ui("云端有更新，先处理差异再保存。") : ""}
+      publishDisabled={Boolean(externalChange)}
+      publishTitle={externalChange ? $ui("云端有更新，处理后再发布。") : ""}
+      imageDisabled={!snapshot}
       {onOpenProject}
       {onOpenRecentProject}
       onPreview={() => void onPreview(true)}
@@ -1259,7 +1317,7 @@
           {/if}
           <div class="article-list">
             {#if !filteredArticles.length}
-              <EmptyState title={$ui("没有匹配的文章")} description={$ui("调整搜索或筛选条件，也可以新建一篇文章。")} icon={Search} />
+              <EmptyState title={$ui("没有匹配的文章")} description={$ui("换个搜索词或筛选条件试试。")} icon={Search} />
             {:else}
               {#each filteredArticles as article (article.articleId)}
                 <button
@@ -1283,7 +1341,7 @@
                     {/if}
                   {/if}
                   <span class="article-copy"><span class="article-title">{article.title}</span><span class="article-meta">{article.kind === "draft" ? $ui("草稿") : $ui("文章")} · {new Date(article.modifiedAt).toLocaleDateString()}</span></span>
-                  {#if activeArticleId === article.articleId && editorState.dirty}<span class="dirty-dot" title={$ui("未保存")}></span>{/if}
+                  {#if activeArticleId === article.articleId && dirty}<span class="dirty-dot" title={$ui("未保存")}></span>{/if}
                 </button>
               {/each}
             {/if}
@@ -1293,21 +1351,21 @@
           {#if loading}
             <LoadingState label={$ui("正在读取文章")} />
           {:else if loadError}
-            <ErrorState message={failedArticle ? `无法读取“${failedArticle.title}”：${loadError}` : loadError}><button class="button" type="button" disabled={!failedArticle} on:click={() => failedArticle && openArticle(failedArticle)}>{$ui("重试")}</button>{#if editorState.snapshot}<button class="button" type="button" on:click={() => { loadError = ""; failedArticle = null; }}>{$ui("返回当前文章")}</button>{/if}</ErrorState>
-          {:else if editorState.snapshot}
+            <ErrorState message={failedArticle ? $ui("读不了“{p0}”：{p1}", { p0: failedArticle.title, p1: loadError }) : loadError}><button class="button" type="button" disabled={!failedArticle} on:click={() => failedArticle && openArticle(failedArticle)}>{$ui("重试")}</button>{#if snapshot}<button class="button" type="button" on:click={() => { loadError = ""; failedArticle = null; }}>{$ui("返回当前文章")}</button>{/if}</ErrorState>
+          {:else if snapshot}
             <MarkdownEditor
               bind:this={markdownEditor}
-              content={editorState.content}
-              documentInstance={editorState.documentInstance}
-              imageUrlReplacements={editorState.imageUrlReplacements}
+              content={content}
+              documentInstance={documentInstance}
+              imageUrlReplacements={imageUrlReplacements}
               fontSize={config.editor.fontSize}
               lineHeight={config.editor.lineHeight}
               showLineNumbers={config.editor.showLineNumbers}
               lineWrapping={config.editor.lineWrapping}
               highlightLine={config.editor.highlightActiveLine}
               tabSize={config.editor.tabSize}
-              selectionFrom={editorState.selection.from}
-              selectionTo={editorState.selection.to}
+              selectionFrom={selectionFrom}
+              selectionTo={selectionTo}
               scrollTop={editorScrollTop}
               onChange={(content, changes) => store.update(content, changes)}
               onSelectionChange={(from, to) => store.setSelection(from, to)}
@@ -1318,7 +1376,7 @@
               onNewArticle={openCreateDialog}
             />
           {:else}
-            <EmptyState title={$ui("选择一篇文章")} description={$ui("文章内容会在这里打开，右侧同步显示安全预览。")} />
+            <EmptyState title={$ui("选择一篇文章")} description={$ui("从左侧列表选一篇文章，这里就会显示内容。")} />
           {/if}
         </main>
         {#if config.layout.previewVisible}
@@ -1340,27 +1398,27 @@
           <section class="preview-pane" aria-label={$ui("文章预览")}>
             <div class="preview-mode-bar">
               <PreviewModeSwitcher mode={previewMode} onChange={(mode) => (previewMode = mode)} />
-              <span>{previewMode === "quick" ? (previewRendering ? $ui("正在渲染 HTML") : previewImagesPending ? $ui("正在读取图片") : $ui("HTML 已安全渲染")) : $ui("当前 Hexo 项目")}</span>
+              <span>{previewMode === "quick" ? (previewRendering ? $ui("正在渲染…") : previewImagesPending ? $ui("正在读取图片…") : $ui("预览已就绪")) : $ui("主题预览中")}</span>
               <button
                 class:active={previewScrollSync}
                 class="icon-button small"
                 type="button"
                 aria-pressed={previewScrollSync}
                 disabled={previewMode !== "quick"}
-                title={previewScrollSync ? $ui("关闭编辑器与预览同步滚动") : $ui("开启编辑器与预览同步滚动")}
+                title={previewScrollSync ? $ui("停止预览跟随") : $ui("开启预览跟随")}
                 on:click={togglePreviewScrollSync}
               >
                 {#if previewScrollSync}<Link2 size={14} />{:else}<Unlink2 size={14} />{/if}
               </button>
             </div>
-            {#if !editorState.snapshot}
-              <EmptyState title={$ui("暂无预览")} description={$ui("打开文章后显示渲染结果。")} />
+            {#if !snapshot}
+              <EmptyState title={$ui("暂无预览")} description={$ui("打开文章后，这里会显示预览。")} />
             {:else if previewMode === "theme"}
               <HexoThemePreview running={previewServer?.state === "running"} busy={previewBusy || themePreviewBusy} onOpen={() => void openThemePreview()} onReload={() => void openThemePreview()} />
             {:else}
               <!-- Keyboard users need to focus the independently scrollable preview. -->
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
-              <article class="markdown-preview" bind:this={markdownPreview} use:observePreviewLayout={previewHtml} tabindex="0" aria-label={$ui("文章预览")} on:scroll={recordPreviewScroll} on:click={handlePreviewInteraction} on:keydown={handlePreviewInteraction} on:error|capture={handlePreviewImageError}>{@html previewHtml}</article>
+              <article class="markdown-preview" bind:this={markdownPreview} use:previewSurface={{ blocks: previewBlocks, styles: previewStyles, token: previewLayoutToken }} use:observePreviewLayout={previewLayoutToken} tabindex="0" aria-label={$ui("文章预览")} on:scroll={recordPreviewScroll} on:click={handlePreviewInteraction} on:keydown={handlePreviewInteraction} on:error|capture={handlePreviewImageError}></article>
             {/if}
           </section>
         {/if}
@@ -1384,14 +1442,14 @@
   {/if}
 
   <footer class="editor-status">
-    <span class:error={Boolean(editorState.error)} title={editorState.error || undefined}>{editorState.error ? $ui("保存失败") : editorState.saving ? $ui("正在保存") : editorState.dirty ? $ui("有未保存更改") : editorState.snapshot ? $ui("已保存") : $ui("就绪")}</span>
-    <span>{wordCount} {$ui("字")}</span>
-    {#if editorState.snapshot}<span>{$ui("第")} {editorState.content.slice(0, editorState.selection.from).split("\n").length} {$ui("行")}</span>{/if}
+    <span class:error={Boolean(sessionError)} title={sessionError || undefined}>{sessionError ? $ui("保存失败") : saving ? $ui("正在保存…") : dirty ? $ui("未保存") : snapshot ? $ui("已保存") : ""}</span>
+    <span>{$ui("{p0} 字", { p0: wordCount })}</span>
+    {#if snapshot}<span>{$ui("第 {p0} 行", { p0: lineAt(content, selectionFrom) })}</span>{/if}
     <span class="status-spacer"></span>
-    {#if session}<button class={`status-sync ${syncStatus.status}`} type="button" disabled={syncBusy || syncStatus.status === "checking"} title={syncStatus.message || $ui("内容同步")} on:click={handleSyncStatusClick}><RefreshCw size={12} class={syncBusy || syncStatus.status === "checking" ? "spin" : undefined} />{syncBusy ? $ui("同步中") : syncStatus.status === "conflict" ? $ui("{p0} 个文件需处理", { p0: syncStatus.conflicts.length }) : $ui(syncStatusLabel(syncStatus))}</button>{/if}
-    {#if session?.warnings.length}<span class="status-warning" title={session.warnings.join("；")}>{$ui("诊断")} {session.warnings.length} {$ui("项")}</span>{/if}
-    {#if editorState.savedAt}<span>{$ui("最后保存")} {new Date(editorState.savedAt).toLocaleTimeString()}</span>{/if}
-    {#if session}<span>{$ui("预览")} {previewStateLabel(previewServer?.state)}</span>{/if}
+    {#if session}<button class={`status-sync ${syncStatus.status}`} type="button" disabled={syncBusy || syncStatus.status === "checking"} title={syncStatus.message || $ui("云端同步")} on:click={handleSyncStatusClick}><RefreshCw size={12} class={syncBusy || syncStatus.status === "checking" ? "spin" : undefined} />{syncBusy ? $ui("正在同步…") : syncStatus.status === "conflict" ? $ui("{p0} 个文件有冲突", { p0: syncStatus.conflicts.length }) : $ui(syncStatusLabel(syncStatus))}</button>{/if}
+    {#if session?.warnings.length}<span class="status-warning" title={session.warnings.join("；")}>{$ui("{p0} 条诊断", { p0: session.warnings.length })}</span>{/if}
+    {#if savedAt}<span>{$ui("上次保存 {p0}", { p0: new Date(savedAt).toLocaleTimeString() })}</span>{/if}
+    {#if session}<span>{$ui("网站预览")} {$ui(previewStateLabel(previewServer?.state))}</span>{/if}
   </footer>
 </div>
 
@@ -1411,36 +1469,36 @@
 {/if}
 
 {#if deletingArticle}
-  <ModalDialog title={$ui("将文章移到回收站？")} description={$ui("“{p0}”将被移到系统回收站，可以从回收站恢复。文章的图片与同名资源目录会保留。{p1}", { p0: deletingArticle.title, p1: deletingArticle.articleId === activeArticleId && editorState.dirty ? " 当前未保存的修改也会丢失。" : "" })} onClose={() => !articleActionBusy && (deletingArticle = null)}>
-    <svelte:fragment slot="actions"><button class="button" type="button" disabled={articleActionBusy} on:click={() => (deletingArticle = null)}>{$ui("取消")}</button><button class="button danger" type="button" data-autofocus disabled={articleActionBusy} on:click={confirmDeleteArticle}>{articleActionBusy ? $ui("正在处理…") : $ui("移到回收站")}</button></svelte:fragment>
+  <ModalDialog title={$ui("将文章移到回收站？")} description={$ui("“{p0}”会移到系统回收站，可以找回；图片和资源目录保留。{p1}", { p0: deletingArticle.title, p1: deletingArticle.articleId === activeArticleId && dirty ? $ui("未保存的修改也会丢失。") : "" })} onClose={() => !articleActionBusy && (deletingArticle = null)}>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={articleActionBusy} data-autofocus on:click={() => (deletingArticle = null)}>{$ui("取消")}</button><button class="button danger" type="button" disabled={articleActionBusy} on:click={confirmDeleteArticle}>{articleActionBusy ? $ui("正在处理…") : $ui("移到回收站")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if showSwitchGuard}
-  <ModalDialog title={$ui("保存当前文章？")} description={$ui("切换文章前需要处理未保存的内容。")} onClose={() => resolveSwitch("cancel")}>
+  <ModalDialog title={$ui("保存当前文章？")} description={$ui("切换文章前，先处理未保存的内容。")} onClose={() => resolveSwitch("cancel")}>
     <svelte:fragment slot="actions">
       <button class="button" type="button" disabled={switchBusy} on:click={() => resolveSwitch("cancel")}>{$ui("取消")}</button>
-      <button class="button danger" type="button" disabled={switchBusy || editorState.saving} on:click={() => resolveSwitch("discard")}>{$ui("放弃更改")}</button>
-      <button class="button primary" type="button" data-autofocus disabled={switchBusy} on:click={() => resolveSwitch("save")}>{switchBusy ? $ui("处理中") : $ui("保存并继续")}</button>
+      <button class="button danger" type="button" disabled={switchBusy || saving} on:click={() => resolveSwitch("discard")}>{$ui("放弃修改")}</button>
+      <button class="button primary" type="button" data-autofocus disabled={switchBusy} on:click={() => resolveSwitch("save")}>{switchBusy ? $ui("正在保存…") : $ui("保存并继续")}</button>
     </svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if showCreate}
-  <ModalDialog title={$ui("新建文章")} description={$ui("中文文件名会被保留，只过滤跨平台不安全的字符。日期使用本机时间。")} onClose={() => !creating && (showCreate = false)}>
+  <ModalDialog title={$ui("新建文章")} description={$ui("文件名可以用中文，不安全的字符会自动去掉。日期按你电脑的时间。")} onClose={() => !creating && (showCreate = false)}>
     <div class="content-stack">
       <label class="field"><span>{$ui("标题")}</span><input class="input" bind:value={createTitle} data-autofocus placeholder={$ui("例如：我的第一篇文章")} /></label>
-      <label class="field"><span>{$ui("文件名")}</span><input class="input" bind:value={createFileName} on:input={() => (createFileNameEdited = true)} placeholder={$ui("支持中文，无需手动填写 .md")} /></label>
+      <label class="field"><span>{$ui("文件名")}</span><input class="input" bind:value={createFileName} on:input={() => (createFileNameEdited = true)} placeholder={$ui("不填就从标题生成")} /></label>
       {#if createFileNameEdited}<button class="button quiet" type="button" on:click={() => (createFileNameEdited = false)}>{$ui("由标题生成文件名")}</button>{/if}
       <label class="field"><span>{$ui("类型")}</span><select class="select" bind:value={createKind}><option value="post">{$ui("文章")}</option><option value="draft">{$ui("草稿")}</option></select></label>
       <label class="field"><span>{$ui("日期")}</span><input class="input" type="datetime-local" bind:value={createDate} /></label>
-      <label class="field"><span>{$ui("标签")}</span><input class="input" bind:value={createTags} placeholder={$ui("中文、逗号或回车分隔")} /></label>
-      <label class="field"><span>{$ui("分类")}</span><input class="input" bind:value={createCategories} placeholder={$ui("中文、逗号或回车分隔")} /></label>
+      <label class="field"><span>{$ui("标签")}</span><input class="input" bind:value={createTags} placeholder={$ui("逗号或换行分隔")} /></label>
+      <label class="field"><span>{$ui("分类")}</span><input class="input" bind:value={createCategories} placeholder={$ui("逗号或换行分隔")} /></label>
       {#if createError}<div class="badge warning" role="alert">{createError}</div>{/if}
     </div>
     <svelte:fragment slot="actions">
       <button class="button" type="button" disabled={creating} on:click={() => (showCreate = false)}>{$ui("取消")}</button>
-      <button class="button primary" type="button" disabled={creating} on:click={createArticle}>{creating ? $ui("创建中") : $ui("创建并打开")}</button>
+      <button class="button primary" type="button" disabled={creating} on:click={createArticle}>{creating ? $ui("正在创建…") : $ui("创建并打开")}</button>
     </svelte:fragment>
   </ModalDialog>
 {/if}

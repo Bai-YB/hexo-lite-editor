@@ -12,7 +12,7 @@ export function formatBytes(value?: number): string | null {
 const stageLabels: Record<UpdateStatus, string> = {
   idle: "尚未检查更新", checking: "正在检查更新", upToDate: "已是最新版本",
   available: "有新版本可下载", downloading: "正在下载", verifying: "正在验证更新包",
-  downloaded: "已准备好更新", installing: "正在安装，即将重启", error: "更新未完成"
+  downloaded: "更新已就绪", installing: "正在安装，马上重启", error: "更新未完成"
 };
 
 type UpdateTranslator = (key: string, values?: Record<string, string | number>) => string;

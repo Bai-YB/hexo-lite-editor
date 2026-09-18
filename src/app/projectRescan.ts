@@ -1,4 +1,5 @@
 import type { EditorSessionStore } from "$features/editor/EditorSessionStore";
+import { uiText } from "$shared/i18n/ui";
 import type { DocumentSnapshot, ProjectRescanResult, ProjectSessionView } from "$shared/types/app";
 
 export interface RescanContext {
@@ -42,7 +43,7 @@ export async function reconcileProjectRescan(project: ProjectRescanResult, conte
       return "changed";
     }
     if (snapshot.projectId !== project.projectId || snapshot.articleId !== articleId
-      || snapshot.sessionGeneration !== project.generation) throw new Error("文章刷新结果已过期，请重新读取。");
+      || snapshot.sessionGeneration !== project.generation) throw new Error(uiText("文章刷新结果过期了，重新读取一次。"));
     store.load(snapshot);
     return "refreshed";
   } catch (error) {

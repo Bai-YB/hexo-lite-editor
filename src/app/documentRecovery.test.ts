@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { setLanguage } from "$shared/i18n";
+
+beforeAll(() => setLanguage("zh-CN"));
 import { EditorSessionStore } from "$features/editor/EditorSessionStore";
 import type { ArticleSummary, DocumentSnapshot, ProjectSessionView, SaveDocumentRequest, SaveDocumentResult } from "$shared/types/app";
 import { checkRecoveryRemote, matchesRecovery, persistRecoveryDraft, waitForRecovery, type RecoveryIdentity } from "./documentRecovery";
@@ -57,7 +60,7 @@ describe("article recovery confirmation", () => {
   it("rejects a mismatched IPC document even when its content matches", async () => {
     const { context, identity } = setup();
     context.loadDocument.mockResolvedValue({ ...original, articleId: "other", content: "remote 1" });
-    await expect(checkRecoveryRemote(identity, context, "remote 1")).rejects.toThrow("读取结果已过期");
+    await expect(checkRecoveryRemote(identity, context, "remote 1")).rejects.toThrow("读取结果过期了");
   });
 
   it("checks the local revision again after an earlier save settles", async () => {
@@ -124,7 +127,7 @@ describe("recovery draft persistence", () => {
     const recovery = persistRecoveryDraft(input);
     input.store.update("new local edits");
     creating.resolve(article);
-    await expect(recovery).rejects.toThrow("文章版本已变化");
+    await expect(recovery).rejects.toThrow("文章版本变了");
     expect(input.article).toBe(article);
     expect(input.saveDocument).not.toHaveBeenCalled();
   });
@@ -132,7 +135,7 @@ describe("recovery draft persistence", () => {
   it("does not accept a draft overwritten between the save and verification read", async () => {
     const { input, draftSnapshot } = draftSetup();
     input.context.loadDocument.mockResolvedValueOnce(draftSnapshot).mockResolvedValueOnce({ ...draftSnapshot, content: "changed externally" });
-    await expect(persistRecoveryDraft(input)).rejects.toThrow("恢复草稿的内容又有变化");
+    await expect(persistRecoveryDraft(input)).rejects.toThrow("恢复草稿的内容又变了");
     expect(input.store.getState().content).toBe("local edits");
   });
 });

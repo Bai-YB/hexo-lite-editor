@@ -3,6 +3,7 @@ import type {
   SaveDocumentRequest,
   SaveDocumentResult
 } from "$shared/types/app";
+import { uiText } from "$shared/i18n/ui";
 import type { ChangeDesc } from "@codemirror/state";
 import { contentChanges } from "./editorChanges";
 
@@ -28,6 +29,12 @@ export interface InsertionBookmark {
   valid: boolean;
 }
 
+export type EditorStateGroup = "content" | "selection" | "saving" | "session";
+
+type StateListener = (state: EditorSessionState) => void;
+
+const ALL_GROUPS: readonly EditorStateGroup[] = ["content", "selection", "saving", "session"];
+
 export class EditorSessionStore {
   private state: EditorSessionState = {
     documentInstance: 0,
@@ -46,17 +53,38 @@ export class EditorSessionStore {
   private lastSavedContent = "";
   private cursorByArticle = new Map<string, { from: number; to: number }>();
   private queue: Promise<SaveDocumentResult | null> = Promise.resolve(null);
-  private listeners = new Set<(state: EditorSessionState) => void>();
+  private listeners = new Set<StateListener>();
+  private channels: Record<EditorStateGroup, Set<StateListener>> = {
+    content: new Set(),
+    selection: new Set(),
+    saving: new Set(),
+    session: new Set()
+  };
   private bookmarks = new Set<InsertionBookmark>();
 
   constructor(
     private readonly saveDocument: (request: SaveDocumentRequest) => Promise<SaveDocumentResult>
   ) {}
 
-  subscribe(listener: (state: EditorSessionState) => void) {
+  subscribe(listener: StateListener) {
     this.listeners.add(listener);
     listener(this.getState());
     return () => this.listeners.delete(listener);
+  }
+
+  subscribeContent(listener: StateListener) { return this.subscribeGroup("content", listener); }
+  subscribeSelection(listener: StateListener) { return this.subscribeGroup("selection", listener); }
+  subscribeSaving(listener: StateListener) { return this.subscribeGroup("saving", listener); }
+  subscribeSession(listener: StateListener) { return this.subscribeGroup("session", listener); }
+
+  private subscribeGroup(group: EditorStateGroup, listener: StateListener) {
+    this.channels[group].add(listener);
+    listener(this.getState());
+    return () => this.channels[group].delete(listener);
+  }
+
+  getSelection() {
+    return { ...this.state.selection };
   }
 
   getState(): EditorSessionState {
@@ -110,7 +138,7 @@ export class EditorSessionStore {
   rebaseSessionGeneration(sessionGeneration: number) {
     if (!this.state.snapshot || this.state.snapshot.sessionGeneration === sessionGeneration) return;
     this.state.snapshot = { ...this.state.snapshot, sessionGeneration };
-    this.notify();
+    this.notify("session");
   }
 
   documentToken() { return this.state.documentInstance; }
@@ -122,14 +150,14 @@ export class EditorSessionStore {
   markExternalChange(kind: "changed" | "deleted") {
     this.state.externalChange = kind;
     this.state.dirty = true;
-    this.notify();
+    this.notify(["content", "session"]);
   }
 
   allowExternalOverwrite() {
     this.state.externalChange = null;
     this.state.dirty = true;
     this.state.revision += 1;
-    this.notify();
+    this.notify(["content", "session"]);
   }
 
   createInsertionBookmark(): InsertionBookmark {
@@ -161,7 +189,7 @@ export class EditorSessionStore {
     this.state.revision += 1;
     this.state.dirty = Boolean(this.state.externalChange) || content !== this.lastSavedContent;
     this.state.error = null;
-    this.notify();
+    this.notify("content");
   }
 
   setSelection(from: number, to = from) {
@@ -177,7 +205,7 @@ export class EditorSessionStore {
     ) return;
     this.state.selection = selection;
     this.cursorByArticle.set(this.state.snapshot.articleId, selection);
-    this.notify();
+    this.notify("selection");
   }
 
   insertMarkdown(markdown: string, bookmark?: InsertionBookmark) {
@@ -202,7 +230,7 @@ export class EditorSessionStore {
     this.state.error = null;
     this.state.selection = selection;
     this.cursorByArticle.set(this.state.snapshot.articleId, this.state.selection);
-    this.notify();
+    this.notify(["content", "selection"]);
     return true;
   }
 
@@ -210,7 +238,7 @@ export class EditorSessionStore {
     if (!this.state.snapshot || this.state.snapshot.articleId !== articleId) return false;
     this.state.imageUrlReplacements = { ...this.state.imageUrlReplacements, [expectedUrl]: replacementUrl };
     const next = replaceMarkdownImageUrl(this.state.content, expectedUrl, replacementUrl);
-    if (next === this.state.content) { this.notify(); return false; }
+    if (next === this.state.content) { this.notify("content"); return false; }
     const changes = contentChanges(this.state.content, next);
     this.mapBookmarks(changes);
     this.state.selection = {
@@ -221,7 +249,7 @@ export class EditorSessionStore {
     this.state.revision += 1;
     this.state.dirty = true;
     this.state.error = null;
-    this.notify();
+    this.notify(["content", "selection"]);
     return true;
   }
 
@@ -243,11 +271,11 @@ export class EditorSessionStore {
     const cursor = Math.min(this.state.selection.from, this.lastSavedContent.length);
     this.state.selection = { from: cursor, to: cursor };
     this.cursorByArticle.set(this.state.snapshot.articleId, this.state.selection);
-    this.notify();
+    this.notify(["content", "selection"]);
   }
 
   save(): Promise<SaveDocumentResult | null> {
-    if (this.state.externalChange) return Promise.reject(new Error("文章已在外部更改，请先选择保留本地内容或使用远端版本。"));
+    if (this.state.externalChange) return Promise.reject(new Error(uiText("云端有更新，暂时不能保存。先选保留本地内容，还是用磁盘版本。")));
     const snapshot = this.state.snapshot;
     if (!snapshot || !this.state.dirty) return this.queue.catch(() => null);
     const request: SaveDocumentRequest = {
@@ -259,16 +287,16 @@ export class EditorSessionStore {
     };
     const token = this.documentToken();
     this.state.saving = true;
-    this.notify();
+    this.notify("saving");
     this.queue = this.queue
       .catch(() => null)
       .then(async () => {
         if (!this.matchesDocument(token)) return null;
         this.state.saving = true;
         this.state.error = null;
-        this.notify();
+        this.notify(["saving", "content"]);
         try {
-          if (this.state.externalChange) throw new Error("文章已在外部更改，请先处理版本冲突。");
+          if (this.state.externalChange) throw new Error(uiText("云端有更新，先处理差异再保存。"));
           const result = await this.saveDocument(request);
           const current = this.state.snapshot;
           if (
@@ -289,7 +317,7 @@ export class EditorSessionStore {
         } finally {
           if (this.matchesDocument(token)) {
             this.state.saving = false;
-            this.notify();
+            this.notify(["saving", "content"]);
           }
         }
       });
@@ -303,13 +331,23 @@ export class EditorSessionStore {
     if (!this.state.snapshot) return;
     do {
       await this.save();
-      if (!this.matchesDocument(token)) throw new Error("当前文章已切换，请重新操作。");
+      if (!this.matchesDocument(token)) throw new Error(uiText("文章已经切换了，重新操作一次。"));
     } while (this.state.dirty);
   }
 
-  private notify() {
+  private notify(groups: EditorStateGroup | readonly EditorStateGroup[] = ALL_GROUPS) {
     const copy = this.getState();
     this.listeners.forEach((listener) => listener(copy));
+    const list: readonly EditorStateGroup[] = typeof groups === "string" ? [groups] : groups;
+    for (const group of list) this.channels[group].forEach((listener) => listener(copy));
+    if (import.meta.env.DEV) {
+      const scope = globalThis as unknown as {
+        __editorStats?: { notifyCount: number; selectionNotify: number };
+      };
+      const stats = (scope.__editorStats ??= { notifyCount: 0, selectionNotify: 0 });
+      stats.notifyCount += 1;
+      if (list.includes("selection")) stats.selectionNotify += 1;
+    }
   }
 }
 

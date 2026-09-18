@@ -24,7 +24,7 @@ describe("explicit UI translations", () => {
     setLanguage("en-US");
     const name = "未保存的文章/中文-{p1}.png";
     expect(get(ui)("打开 {p0} 菜单", { p0: name, p1: "must not replace" })).toBe(`Open ${name} menu`);
-    expect(translateUi("二进制 · 本地 {p0} B / 远端 {p1} B", "en-US", { p0: 0, p1: 123 })).toBe("Binary · Local 0 B / Remote 123 B");
+    expect(translateUi("二进制 · 本地 {p0} B / 云端 {p1} B", "en-US", { p0: 0, p1: 123 })).toBe("Binary · Local 0 B / Cloud 123 B");
   });
   it("leaves unknown content unchanged instead of applying approximate replacements", () => {
     expect(translateUi("我的文章标题：已保存", "en-US")).toBe("我的文章标题：已保存");

@@ -11,7 +11,7 @@
   import { translate } from "$shared/i18n";
   import { appVersion } from "$shared/version";
 
-  export let onNotice: (message: string) => void = () => {};
+  export let onNotice: (message: string, severity?: "info" | "error") => void = () => {};
   export let onInstallUpdate: () => void = () => {};
 
   let version = appVersion;
@@ -35,14 +35,14 @@
     if (checking) return;
     checking = true;
     try { updateStore.set(await platform.checkUpdate()); }
-    catch (error) { onNotice(normalizeError(error).message); }
+    catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { checking = false; }
   }
   async function downloadUpdate() {
     if (downloading) return;
     downloading = true;
     try { updateStore.set(await platform.downloadUpdate()); }
-    catch (error) { onNotice(normalizeError(error).message); }
+    catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { downloading = false; }
   }
   $: updateModel = updateViewModel($updateStore, $ui);

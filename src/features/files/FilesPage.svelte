@@ -13,7 +13,7 @@
   export let articles: ArticleSummary[] = [];
   export let fileStore: FileSessionStore;
   export let onOpenProject: () => void;
-  export let onNotice: (message: string) => void = () => {};
+  export let onNotice: (message: string, severity?: "info" | "error") => void = () => {};
   export let onOpenArticle: (articleId: string) => void = () => {};
 
   let state = fileStore.getState();
@@ -110,7 +110,7 @@
     try {
       const latest = await platform.loadProjectFile(session.projectId, session.generation, shown.path);
       if (!alive || state.documentInstance !== instance) return;
-      if (latest.contentHash !== shown.contentHash) { compare = latest; error = "磁盘内容再次变化，请查看最新版本后重新选择。"; return; }
+      if (latest.contentHash !== shown.contentHash) { compare = latest; error = $ui("磁盘又变了，看清最新版本后再选一次。"); return; }
       if (keepLocal) { fileStore.keepLocalAgainst(latest); await fileStore.save(); }
       else fileStore.acceptDisk(latest);
       compare = null; error = "";
@@ -124,7 +124,7 @@
   async function revealFile() {
     if (!session || !state.snapshot) return;
     try { await platform.revealProjectFile(session.projectId, session.generation, state.snapshot.path); }
-    catch (reason) { error = normalizeError(reason).message; onNotice(error); }
+    catch (reason) { error = normalizeError(reason).message; onNotice(error, "error"); }
   }
 </script>
 
@@ -143,13 +143,13 @@
             <span>{entry.name}</span>{#if loading.has(entry.path)}<small>…</small>{/if}
           </button>
         {/each}
-        {#if loading.has("")}<p class="explorer-hint">{$ui("正在读取项目文件")}</p>{:else if !visible.length}<p class="explorer-hint">{$ui("目录为空")}</p>{/if}
+        {#if loading.has("")}<p class="explorer-hint">{$ui("正在读取项目文件")}</p>{:else if !visible.length}<p class="explorer-hint">{$ui("当前目录为空")}</p>{/if}
       </div>
       <p class="explorer-hint">{$ui("博文在写作页打开；其他 UTF-8 文本在此编辑。")}</p>
     </aside>
     <section class="file-workspace" aria-label={$ui("文件编辑器")}>
       {#if state.snapshot}
-        <header class="file-editor-heading"><div><strong title={state.snapshot.path}>{state.snapshot.path}</strong><span>{state.saving ? $ui("保存中") : state.dirty ? $ui("未保存") : state.snapshot.editable ? $ui("已保存") : $ui("只读")}</span></div><button class="button" type="button" on:click={reviewDisk} disabled={compareBusy || state.saving}>{$ui("比较磁盘版本")}</button><button class="button primary" type="button" on:click={save} disabled={!state.snapshot.editable || !state.dirty || state.saving || Boolean(state.conflict)}><Save size={15} />{$ui("保存")}</button></header>
+        <header class="file-editor-heading"><div><strong title={state.snapshot.path}>{state.snapshot.path}</strong><span>{state.saving ? $ui("正在保存…") : state.dirty ? $ui("未保存") : state.snapshot.editable ? $ui("已保存") : $ui("只读")}</span></div><button class="button" type="button" on:click={reviewDisk} disabled={compareBusy || state.saving}>{$ui("比较磁盘版本")}</button><button class="button primary" type="button" on:click={save} disabled={!state.snapshot.editable || !state.dirty || state.saving || Boolean(state.conflict)}><Save size={15} />{$ui("保存")}</button></header>
       {/if}
       {#if error || state.error}<div class="file-error" role="alert"><span>{$ui(error || state.error || "")}</span>{#if state.snapshot}<button class="button" type="button" disabled={compareBusy || state.saving} on:click={reviewDisk}>{$ui("比较磁盘版本")}</button>{/if}</div>{/if}
       {#if opening}<p class="explorer-hint" role="status">{$ui("正在打开文件")}</p>{/if}
@@ -164,7 +164,7 @@
 
 {#if pendingPath !== null}
   <ModalDialog title={$ui("有未保存的内容")} description={$ui("打开另一个文件前，请保存或放弃当前文件的修改。")} onClose={() => !switchBusy && (pendingPath = null)}>
-    <svelte:fragment slot="actions"><button class="button" type="button" disabled={switchBusy} on:click={() => (pendingPath = null)}>{$ui("取消")}</button><button class="button" type="button" disabled={switchBusy} on:click={() => resolveSwitch("discard")}>{$ui("放弃修改")}</button><button class="button primary" type="button" disabled={switchBusy} on:click={() => resolveSwitch("save")}>{$ui("保存后继续")}</button></svelte:fragment>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={switchBusy} on:click={() => (pendingPath = null)}>{$ui("取消")}</button><button class="button" type="button" disabled={switchBusy} on:click={() => resolveSwitch("discard")}>{$ui("放弃修改")}</button><button class="button primary" type="button" disabled={switchBusy} on:click={() => resolveSwitch("save")}>{$ui("保存并继续")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 {#if compare}

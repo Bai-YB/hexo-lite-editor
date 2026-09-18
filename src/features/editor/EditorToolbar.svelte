@@ -30,6 +30,9 @@
   export let previewBusy = false;
   export let saving = false;
   export let saveDisabled = true;
+  export let saveTitle = "";
+  export let publishDisabled = false;
+  export let publishTitle = "";
   export let imageDisabled = true;
   export let onOpenProject: () => void = () => {};
   export let onOpenRecentProject: (recentId: string) => void = () => {};
@@ -82,20 +85,20 @@
     {/if}
   </div>
   <div class="toolbar-spacer"></div>
-  <button class="button quiet" type="button" disabled={previewBusy} on:click={onPreview}><Server size={16} />{previewBusy ? $ui("正在处理预览") : $ui("浏览器预览")}</button>
+  <button class="button quiet" type="button" disabled={previewBusy} on:click={onPreview}><Server size={16} />{previewBusy ? $ui("正在打开…") : $ui("在浏览器中打开")}</button>
   {#if previewServer?.state === "running"}
-    <button class="button quiet" type="button" disabled={previewBusy} on:click={onTogglePreviewServer}>{$ui("关闭后台预览")}</button>
+    <button class="button quiet" type="button" disabled={previewBusy} on:click={onTogglePreviewServer}>{$ui("停止预览")}</button>
   {/if}
   <button class="button quiet" type="button" title={$ui("新建（{p0}）", { p0: shortcutLabel("N") })} on:click={onCreate}><FilePlus2 size={16} />{$ui("新建")}</button>
   <button class="icon-button" type="button" disabled={imageDisabled} title={$ui("选择图片并插入")} aria-label={$ui("选择图片并插入")} on:click={onSelectImages}><ImagePlus size={17} /></button>
-  <button class="button quiet" type="button" disabled={saveDisabled} title={$ui("保存（{p0}）", { p0: shortcutLabel("S") })} on:click={onSave}><Save size={16} />{saving ? $ui("保存中") : $ui("保存")}</button>
+  <button class="button quiet" type="button" disabled={saveDisabled} title={saveTitle || $ui("保存（{p0}）", { p0: shortcutLabel("S") })} on:click={onSave}><Save size={16} />{saving ? $ui("正在保存…") : $ui("保存")}</button>
   <button
     class:active={previewVisible}
     class="icon-button preview-toggle"
     type="button"
     aria-pressed={previewVisible}
     title={`${previewVisible ? $ui("隐藏即时预览") : $ui("显示即时预览")} (${shortcutLabel("\\")})`}
-    aria-label={previewVisible ? $ui("收起右侧即时预览") : $ui("展开右侧即时预览")}
+    aria-label={previewVisible ? $ui("隐藏即时预览") : $ui("显示即时预览")}
     on:click={onTogglePreview}
   >
     {#if previewVisible}<PanelRightClose size={17} />{:else}<PanelRightOpen size={17} />{/if}
@@ -110,11 +113,11 @@
         <button type="button" on:click={() => { advancedMenuOpen = false; onRunAdvanced("gitStatus"); }}>{$ui("检查 Git 状态")}</button>
         <div class="menu-separator"></div>
         <button type="button" on:click={() => { advancedMenuOpen = false; onTogglePreview(); }}>{previewVisible ? $ui("隐藏即时预览") : $ui("显示即时预览")}</button>
-        <button type="button" on:click={() => { advancedMenuOpen = false; onTogglePreviewServer(); }}>{previewServer?.state === "running" ? $ui("停止本地预览") : $ui("启动本地预览")}</button>
+        <button type="button" on:click={() => { advancedMenuOpen = false; onTogglePreviewServer(); }}>{previewServer?.state === "running" ? $ui("停止预览") : $ui("启动预览")}</button>
         <button type="button" on:click={() => { advancedMenuOpen = false; onOpenPreviewHome(); }}>{$ui("打开博客首页")}</button>
         <button type="button" on:click={() => { advancedMenuOpen = false; onOpenSettings("maintenance"); }}>{$ui("维护设置")}</button>
       </div>
     {/if}
   </div>
-  <button class="button primary" type="button" disabled={taskBusy} title={$ui("发布（{p0}）", { p0: shortcutLabel("⇧P") })} on:click={onPublish}><Rocket size={16} />{taskBusy ? $ui("处理中") : $ui("发布")}</button>
+  <button class="button primary" type="button" disabled={taskBusy || publishDisabled} title={publishTitle || $ui("发布（{p0}）", { p0: shortcutLabel("⇧P") })} on:click={onPublish}><Rocket size={16} />{taskBusy ? $ui("正在发布…") : $ui("发布")}</button>
 </header>

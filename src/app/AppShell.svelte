@@ -30,7 +30,6 @@
   } from "$shared/types/app";
   import { EditorSessionStore } from "$features/editor/EditorSessionStore";
   import { FileSessionStore } from "$features/files/FileSessionStore";
-  import type { SettingsController } from "$features/settings/controller";
   import { initI18n, t } from "$shared/i18n";
 
   const pageLoaders: Record<AppPage, () => Promise<{ default: any }>> = {
@@ -53,7 +52,6 @@
   let filesDirty = false;
   let activeFilePath = "";
   let fileArticleOpenSequence = 0;
-  let settingsController: SettingsController | null = null;
   let recentProjects: RecentProjectView[] = [];
   let dirty = false;
   let activeArticleId: string | null = null;
@@ -77,7 +75,7 @@
   let guardCompletion: ((accepted: boolean) => void) | null = null;
   let guardDescription = "";
   let guardBusy = false;
-  type GuardSource = "editor" | "files" | "documents" | "settings" | "both";
+  type GuardSource = "editor" | "files" | "documents" | "both";
   let guardSource: GuardSource = "editor";
   let guardIsClosing = false;
   let allowWindowClose = false;
@@ -129,7 +127,7 @@
       if (loaded.warnings.length) showNotice(loaded.warnings[0]);
     } catch (error) {
       configLoaded = true;
-      showNotice(normalizeError(error).message);
+      showNotice(normalizeError(error).message, "error");
     }
     unlistenTask = await platform.onTaskEvent((event) => {
       taskEvents = appendTaskEvent(taskEvents, event);
@@ -139,12 +137,12 @@
           const reason = latestTaskFailure(taskEvents, event.taskId);
           showNotice(
             isPublish
-              ? `发布失败：${reason || "请检查任务详情；若已进入部署阶段，请核对远端结果。"}`
-              : reason || "任务执行失败，请检查项目设置或网络连接后重试。",
+              ? $ui("发布失败：{p0}", { p0: reason || $ui("具体看任务详情。") })
+              : reason || $ui("任务失败了，检查一下项目设置和网络，再试一次。"),
             "error"
           );
         } else if (isPublish) {
-          showNotice("博客发布完成，新生成的站点已上传。" );
+          showNotice($ui("发布完成，站点已上传。"));
         }
         if (isPublish) {
           publishTaskId = "";
@@ -161,7 +159,7 @@
     unlistenSync = await platform.onContentSyncStatus((view) => {
       if (view.projectId !== session?.projectId || view.sessionGeneration !== session?.generation) return;
       if (["offline", "authRequired", "remoteAhead", "conflict", "error"].includes(view.status)) {
-        showNotice(view.message || `内容同步：${view.status}`, "error");
+        showNotice(view.message || $ui("云端同步：{p0}", { p0: view.status }), "error");
       }
     });
     unlistenSyncPhase = await platform.onContentSyncPhase((event) => {
@@ -175,12 +173,11 @@
         if (recoveryBusy) { event.preventDefault(); return; }
         if (pendingImageUploads > 0) {
           event.preventDefault();
-          showNotice(`还有 ${pendingImageUploads} 张图片正在上传，请等待完成后再退出。`, "error");
+          showNotice($ui("{p0} 张图片还在上传，等完成后再退出。", { p0: pendingImageUploads }), "error");
           return;
         }
-        const settingsDirty = settingsController?.hasDirty() ?? false;
         const editorDirty = editorStore.hasDirty() || editorStore.getState().saving;
-        if (!editorDirty && !filesDirty && !settingsDirty && !activeTask && !publishing) {
+        if (!editorDirty && !filesDirty && !activeTask && !publishing) {
           void platform.cleanupBeforeExit().catch(console.error);
           return;
         }
@@ -238,7 +235,7 @@
       recentProjects = await recentProjectsTask;
       if (reopened && !session) acceptProject(reopened.session, reopened.articles);
     } catch (error) {
-      showNotice(normalizeError(error).message);
+      showNotice(normalizeError(error).message, "error");
     }
   }
 
@@ -280,11 +277,31 @@
     clearTimeout(noticeTimer);
     unsubscribeEditor();
     unsubscribeFiles();
+    releaseThemeListener();
     disposePluginWorkers();
   });
 
+  let themeSystemMedia: MediaQueryList | undefined;
+  let themeSystemHandler: (() => void) | undefined;
+
+  function releaseThemeListener() {
+    if (themeSystemMedia && themeSystemHandler) themeSystemMedia.removeEventListener("change", themeSystemHandler);
+    themeSystemMedia = undefined;
+    themeSystemHandler = undefined;
+  }
+
   function applyTheme(mode: AppConfigV3["appearance"]["themeMode"]) {
-    document.documentElement.dataset.theme = mode;
+    releaseThemeListener();
+    let resolved = mode;
+    if (mode === "system" && typeof window.matchMedia === "function") {
+      themeSystemMedia = window.matchMedia("(prefers-color-scheme: dark)");
+      themeSystemHandler = () => {
+        document.documentElement.dataset.theme = themeSystemMedia?.matches ? "dark" : "light";
+      };
+      themeSystemMedia.addEventListener("change", themeSystemHandler);
+      resolved = themeSystemMedia.matches ? "dark" : "light";
+    }
+    document.documentElement.dataset.theme = resolved;
   }
 
   function handleShortcut(event: KeyboardEvent) {
@@ -308,9 +325,7 @@
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat) return;
-      if (page === "settings") {
-        void settingsController?.save().catch((error) => showNotice(normalizeError(error).message, "error"));
-      } else if (page === "editor") {
+      if (page === "editor") {
         void editorStore.save().catch((error) => showNotice(normalizeError(error).message, "error"));
       } else if (page === "files") {
         void fileStore.save().catch((error) => showNotice(normalizeError(error).message, "error"));
@@ -341,16 +356,12 @@
     if (recoveryBusy) return;
     if (next === page) return;
     if (pendingImageUploads > 0) {
-      showNotice("图片正在上传并更新地址，请等待完成后再离开写作页。", "error");
+      showNotice($ui("图片还在上传，等完成后再离开写作页。"), "error");
       return;
     }
     if (next === "settings") settingsInitialSection = settingsSection;
     if (page === "files" && fileStore.hasDirty()) {
-      requestGuard("离开全部文件前，请保存或放弃当前文件的修改。", () => { page = next; }, "files");
-      return;
-    }
-    if (page === "settings" && settingsController?.hasDirty()) {
-      requestGuard("离开设置前需要保存或放弃本次设置修改。", () => { page = next; }, "settings");
+      requestGuard($ui("先保存或放弃当前文件的修改，再离开。"), () => { page = next; }, "files");
       return;
     }
     if (page === "editor" && config.general.autoSave && editorStore.hasDirty()) {
@@ -363,7 +374,7 @@
     if (!session || recoveryBusy) return;
     const project = { ...session };
     const sequence = ++fileArticleOpenSequence;
-    requestGuard("打开博文前，请保存或放弃当前文章和项目文件的修改。", async () => {
+    requestGuard($ui("先保存或放弃当前修改，再打开博文。"), async () => {
       try {
         const token = editorStore.documentToken();
         const snapshot = await platform.loadDocument(project.projectId, articleId, project.generation);
@@ -378,14 +389,14 @@
     if (recoveryBusy) return;
     if (activeTask || publishing) {
       taskDetailsOpen = true;
-      showNotice("请等待后台任务完成，或取消任务后再切换博客。", "error");
+      showNotice($ui("后台任务还在跑，等它结束或先取消。"), "error");
       return;
     }
     if (pendingImageUploads > 0) {
-      showNotice("图片正在上传并更新地址，请等待完成后再切换博客。", "error");
+      showNotice($ui("图片还在上传，等完成后再切换博客。"), "error");
       return;
     }
-    requestGuard("切换项目前需要处理文章、项目文件或设置中的未保存内容。", async () => {
+    requestGuard($ui("文章或文件里有没保存的内容。"), async () => {
       try {
         const result = await platform.pickProject();
         if (result) {
@@ -393,7 +404,7 @@
           page = "editor";
         }
       } catch (error) {
-        showNotice(normalizeError(error).message);
+        showNotice(normalizeError(error).message, "error");
       }
     }, "both");
   }
@@ -402,21 +413,21 @@
     if (recoveryBusy) return;
     if (activeTask || publishing) {
       taskDetailsOpen = true;
-      showNotice("请等待后台任务完成，或取消任务后再切换博客。", "error");
+      showNotice($ui("后台任务还在跑，等它结束或先取消。"), "error");
       return;
     }
     if (pendingImageUploads > 0) {
-      showNotice("图片正在上传并更新地址，请等待完成后再切换博客。", "error");
+      showNotice($ui("图片还在上传，等完成后再切换博客。"), "error");
       return;
     }
-    requestGuard("切换项目前需要处理文章、项目文件或设置中的未保存内容。", async () => {
+    requestGuard($ui("文章或文件里有没保存的内容。"), async () => {
       try {
         const result = await platform.openRecentProject(recentId);
         acceptProject(result.session, result.articles);
         page = "editor";
         recentProjects = await platform.listRecentProjects();
       } catch (error) {
-        showNotice(normalizeError(error).message);
+        showNotice(normalizeError(error).message, "error");
       }
     }, "both");
   }
@@ -439,8 +450,8 @@
       if (fileResult.status === "rejected") showNotice(normalizeError(fileResult.reason).message, "error");
       if (articleResult.status === "rejected") throw articleResult.reason;
       const result = articleResult.value;
-      if (result === "changed" || result === "deleted") showNotice("云端文章已变化，本地内容已保留。请先处理版本差异再保存。");
-      else if (result === "refreshed") showNotice("远端内容已应用，文章列表已刷新。");
+      if (result === "changed" || result === "deleted") showNotice($ui("云端有更新，本地内容已保留，先处理差异再保存。"), "error");
+      else if (result === "refreshed") showNotice($ui("云端内容已应用，文章列表已刷新。"));
     } catch (error) { showNotice(normalizeError(error).message, "error"); }
   }
 
@@ -477,7 +488,7 @@
     const context = recoveryContext();
     if (!identity || !matchesRecovery(identity, context)) {
       recoveryBusy = false;
-      showNotice("文章版本已变化，请核对刷新后的内容，再选择处理方式。", "error");
+      showNotice($ui("文章又变了，看清内容后再选怎么处理。"), "error");
       await reviewExternalChange();
       return;
     }
@@ -489,7 +500,7 @@
         if (result.status === "stale") return;
         if (result.status === "review") {
           recoveryRemote = result.snapshot.content;
-          showNotice("云端内容已更新，请核对当前比较后再次选择。", "error");
+          showNotice($ui("云端内容又更新了，重新对比后再选一次。"), "error");
           return;
         }
         if (choice === "remote") { editorStore.load(result.snapshot); recoveryOpen = false; return; }
@@ -508,7 +519,7 @@
           identity, context, article, content: state.content,
           request: {
             projectId: project.projectId, sessionGeneration: project.generation,
-            title: activeDocumentTitle || "恢复的文章", fileName: `recovered-${Date.now()}`, kind: "draft",
+            title: activeDocumentTitle || $ui("恢复的文章"), fileName: `recovered-${Date.now()}`, kind: "draft",
             date: new Date().toLocaleString("sv-SE"), tags: [], categories: []
           },
           createArticle: platform.createArticle, saveDocument: platform.saveDocument,
@@ -519,28 +530,28 @@
         });
         editorStore.load(saved);
         recoveryDraft = null;
-        showNotice("本地内容已另存为草稿，请核对文章中的相对图片路径。");
+        showNotice($ui("本地内容已存为草稿，注意检查文章里的图片路径。"));
       }
       if (!editorStore.getState().externalChange) recoveryOpen = false;
     } catch (error) {
-      showNotice(`${normalizeError(error).message}${choice === "draft" && recoveryDraft ? " 恢复草稿已创建，再次点击另存草稿会继续保存到同一文件。" : ""}`, "error");
+      showNotice(`${normalizeError(error).message}${choice === "draft" && recoveryDraft ? " " + $ui("再点一次「存为草稿」会继续写进同一个文件。") : ""}`, "error");
     } finally { recoveryBusy = false; if (!editorStore.getState().externalChange) recoveryOpen = false; }
   }
 
   function beforeSync(): Promise<boolean> {
     if (activeTask || publishing) {
-      showNotice("请等待 Hexo 或发布任务完成后再同步。", "error");
+      showNotice($ui("等 Hexo 或发布任务结束后再同步。"), "error");
       return Promise.resolve(false);
     }
     if (guardAction || recoveryBusy || pendingImageUploads > 0 || externalChange) {
-      showNotice("请先完成图片操作或处理当前文章的版本差异，再同步。", "error");
+      showNotice($ui("先等图片处理完、冲突解决，再同步。"), "error");
       return Promise.resolve(false);
     }
     return new Promise((resolve) => {
       guardCompletion = resolve;
-      requestGuard("同步前，请保存或放弃文章和项目文件的修改。", () => {
+      requestGuard($ui("同步前，先保存或放弃文章和文件的修改。"), () => {
         const busy = Boolean(activeTask) || publishing || pendingImageUploads > 0 || recoveryBusy || Boolean(externalChange);
-        if (busy) showNotice("当前任务尚未完成，请稍后再同步。", "error");
+        if (busy) showNotice($ui("任务还没结束，稍后再同步。"), "error");
         resolve(!busy);
         guardCompletion = null;
       }, "documents");
@@ -557,7 +568,7 @@
     void platform.listRecentProjects().then((items) => (recentProjects = items));
     previewServer = null;
     if (nextSession.warnings.length) {
-      showNotice(`项目诊断：${nextSession.warnings.join("；")}`);
+      showNotice($ui("项目诊断：{p0}", { p0: nextSession.warnings.join("；") }));
     }
     void platform.getPreviewStatus(nextSession.projectId, nextSession.generation)
       .then((view) => {
@@ -565,12 +576,12 @@
           previewServer = view;
           if (config.hexo.autoStartPreview && view.state === "stopped") {
             void platform.startPreviewServer(view.projectId, view.sessionGeneration).catch((error) => {
-              showNotice(normalizeError(error).message);
+              showNotice(normalizeError(error).message, "error");
             });
           }
         }
       })
-      .catch((error) => showNotice(normalizeError(error).message));
+      .catch((error) => showNotice(normalizeError(error).message, "error"));
   }
 
   function requestClose() {
@@ -578,25 +589,24 @@
     if (guardAction) return;
     if (activeTask || publishing) {
       taskDetailsOpen = true;
-      showNotice("后台任务仍在运行，请等待完成或在任务详情中取消后再退出。", "error");
+      showNotice($ui("后台任务还在跑，等结束或在任务详情里取消，再退出。"), "error");
       return;
     }
     if (pendingImageUploads > 0) {
-      showNotice(`还有 ${pendingImageUploads} 张图片正在上传，请等待完成后再退出。`, "error");
+      showNotice($ui("{p0} 张图片还在上传，等完成后再退出。", { p0: pendingImageUploads }), "error");
       return;
     }
-    const settingsDirty = settingsController?.hasDirty() ?? false;
     const editorDirty = editorStore.hasDirty() || editorStore.getState().saving;
     closeWindowState = {
       ...closeWindowState,
-      hasUnsavedChanges: settingsDirty || editorDirty || filesDirty
+      hasUnsavedChanges: editorDirty || filesDirty
     };
     if (!closeWindowState.hasUnsavedChanges) {
       void closeWindowNow();
       return;
     }
     if (guardAction && guardIsClosing) return;
-    guardDescription = "文章、项目文件或设置中有未保存修改。保存后再退出可避免丢失内容。";
+    guardDescription = $ui("文章或文件里有没保存的内容。");
     guardSource = "both";
     guardIsClosing = true;
     guardAction = closeWindowNow;
@@ -624,14 +634,11 @@
     source: GuardSource = "editor"
   ) {
     if (guardAction) return;
-    const settingsDirty = settingsController?.hasDirty() ?? false;
     const editorDirty = editorStore.hasDirty() || editorStore.getState().saving;
-    const hasDirty = source === "settings"
-      ? settingsDirty
-      : source === "both"
-        ? settingsDirty || editorDirty || filesDirty
-        : source === "files" ? filesDirty
-          : source === "documents" ? editorDirty || filesDirty : editorDirty;
+    const hasDirty = source === "both"
+      ? editorDirty || filesDirty
+      : source === "files" ? filesDirty
+        : source === "documents" ? editorDirty || filesDirty : editorDirty;
     if (!hasDirty) {
       void action();
       return;
@@ -662,24 +669,19 @@
         await reviewExternalChange();
         return;
       }
-      if (guardSource === "settings" || guardSource === "both") {
-        if (choice === "save") await settingsController?.save();
-        else await settingsController?.discard();
-        if (settingsController?.hasDirty()) throw new Error("设置还有新的修改，请保存后继续。");
-      }
       if (["editor", "documents", "both"].includes(guardSource)) {
         if (choice === "save") await editorStore.saveUntilClean();
         else {
           await editorStore.waitForSave().catch(() => null);
-          if (editorStore.getState().externalChange) throw new Error("文章已在云端变化，请取消并处理版本差异后继续。");
+          if (editorStore.getState().externalChange) throw new Error($ui("云端有更新，先处理差异再继续。"));
           editorStore.discard();
         }
       }
-      if (["editor", "documents", "both"].includes(guardSource) && (editorStore.getState().externalChange || editorStore.hasDirty())) throw new Error("文章仍有未处理的修改，请处理后继续。");
+      if (["editor", "documents", "both"].includes(guardSource) && (editorStore.getState().externalChange || editorStore.hasDirty())) throw new Error($ui("文章还有没处理完的修改。"));
       if (["files", "documents", "both"].includes(guardSource)) {
         if (choice === "save") await fileStore.save();
         else await fileStore.discard();
-        if (fileStore.hasDirty()) throw new Error("项目文件仍有未保存修改，请处理后继续。");
+        if (fileStore.hasDirty()) throw new Error($ui("项目文件还没保存，先处理再继续。"));
       }
       guardAction = null;
       await action?.();
@@ -687,7 +689,7 @@
     } catch (error) {
       guardAction = action;
       if (!closeWindowState.isClosing) guardIsClosing = action === closeWindowNow;
-      showNotice(normalizeError(error).message);
+      showNotice(normalizeError(error).message, "error");
     } finally {
       guardBusy = false;
     }
@@ -696,30 +698,30 @@
   async function publishFromEditor() {
     if (!session || activeTask || publishing) return;
     if (pendingImageUploads > 0) {
-      showNotice(`还有 ${pendingImageUploads} 张图片正在上传，请等待上传完成后再发布。`, "error");
+      showNotice($ui("{p0} 张图片还在上传，等完成后再发布。", { p0: pendingImageUploads }), "error");
       return;
     }
     publishing = true;
     const project = { ...session };
     const token = editorStore.documentToken();
     try {
-      if (externalChange) throw new Error("请先处理当前文章的版本差异再发布。");
+      if (externalChange) throw new Error($ui("先处理云端更新，再发布。"));
       await fileStore.save();
       await editorStore.saveUntilClean();
-      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error("当前项目或文章已变化，请重新发布。");
+      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error($ui("项目或文章切换了，请重新发布。"));
       const nextArticles = await platform.listArticles(project.projectId, project.generation);
-      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error("当前项目或文章已变化，请重新发布。");
+      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error($ui("项目或文章切换了，请重新发布。"));
       await editorStore.saveUntilClean();
-      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token) || editorStore.getState().externalChange) throw new Error("当前文章已变化，请处理后重新发布。");
+      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token) || editorStore.getState().externalChange) throw new Error($ui("云端内容又更新了，处理后再重新发布。"));
       articles = nextArticles;
       await fileStore.save();
       // An image import can begin while the saves above are in flight.  The
       // initial guard alone is therefore not enough: starting Hexo here could
       // publish the temporary hlex-asset URL before the upload replaces it.
-      if (pendingImageUploads > 0) throw new Error(`还有 ${pendingImageUploads} 张图片正在上传，请等待上传完成后再发布。`);
+      if (pendingImageUploads > 0) throw new Error($ui("{p0} 张图片还在上传，等完成后再发布。", { p0: pendingImageUploads }));
       const task = await platform.startTask(project.projectId, "publish");
       publishTaskId = task.taskId;
-      showNotice("正在后台清理缓存、重新生成并发布博客。" );
+      showNotice($ui("已在后台开始清理、生成、发布。"));
     } catch (error) {
       publishing = false;
       showNotice(normalizeError(error).message, "error");
@@ -728,14 +730,14 @@
 
   function installUpdate() {
     if (pendingImageUploads > 0 || activeTask || publishing || previewServer?.state === "starting" || previewServer?.state === "stopping") {
-      showNotice("请等待图片上传、Hexo 或发布任务完成后再安装更新。", "error");
+      showNotice($ui("等图片上传和 Hexo 任务结束后再安装更新。"), "error");
       return;
     }
-    requestGuard("安装更新前需要保存或放弃文章、项目文件和设置中的修改。", async () => {
+    requestGuard($ui("安装更新前，先保存或放弃没保存的内容。"), async () => {
       try {
         await flushPendingConfig();
         if (pendingImageUploads > 0 || activeTask || publishing || previewServer?.state === "starting" || previewServer?.state === "stopping") {
-          showNotice("请等待当前任务完成后再安装更新。", "error");
+          showNotice($ui("等当前任务结束再安装更新。"), "error");
           return;
         }
         await platform.installUpdate();
@@ -745,9 +747,9 @@
   }
 
   async function ensurePreviewRunning(project = session && { ...session }) {
-    if (!project) throw new Error("请先打开博客项目。");
+    if (!project) throw new Error($ui("先打开一个博客项目。"));
     const assertCurrent = () => {
-      if (session?.projectId !== project.projectId || session.generation !== project.generation) throw new Error("博客项目已切换，请重新打开预览。");
+      if (session?.projectId !== project.projectId || session.generation !== project.generation) throw new Error($ui("项目已经切换，重新打开预览。"));
     };
     let view = await platform.getPreviewStatus(project.projectId, project.generation);
     assertCurrent();
@@ -759,7 +761,7 @@
     }
     assertCurrent();
     previewServer = view;
-    if (view.state !== "running") throw view.error ?? new Error("Hexo 预览尚未就绪。");
+    if (view.state !== "running") throw view.error ?? new Error($ui("预览服务还没就绪。"));
     return view;
   }
 
@@ -769,16 +771,16 @@
     const token = editorStore.documentToken();
     const articleId = editorStore.getState().snapshot?.articleId;
     const assertCurrent = () => {
-      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error("当前文章已变化，请重新打开预览。");
+      if (session?.projectId !== project.projectId || session.generation !== project.generation || !editorStore.matchesDocument(token)) throw new Error($ui("文章已经切换，重新打开预览。"));
     };
     previewBusy = true;
     try {
-      if (pendingImageUploads > 0) throw new Error("请等待图片处理完成后再打开预览。");
-      if (externalChange) throw new Error("请先处理当前文章的版本差异再预览。");
+      if (pendingImageUploads > 0) throw new Error($ui("等图片处理完再打开预览。"));
+      if (externalChange) throw new Error($ui("先处理云端更新，再预览。"));
       await fileStore.save();
       await editorStore.saveUntilClean();
       assertCurrent();
-      if (!articleId) throw new Error("请先打开一篇文章。");
+      if (!articleId) throw new Error($ui("先打开一篇文章。"));
       await ensurePreviewRunning(project);
       assertCurrent();
       await editorStore.saveUntilClean();
@@ -814,7 +816,7 @@
       await ensurePreviewRunning();
       await platform.openExternalTarget("hexoPreview");
     } catch (error) {
-      showNotice(normalizeError(error).message);
+      showNotice(normalizeError(error).message, "error");
     }
   }
 
@@ -874,8 +876,7 @@
   }
 
   function showNotice(message: string, severity?: "info" | "error") {
-    const effectiveSeverity = severity
-      ?? (/失败|错误|冲突|不可用|无法|未完成/.test(message) ? "error" : "info");
+    const effectiveSeverity = severity ?? "info";
     notice = message;
     noticeSeverity = effectiveSeverity;
     clearTimeout(noticeTimer);
@@ -889,7 +890,7 @@
     cancelingTask = true;
     try {
       await platform.cancelTask(taskId);
-      showNotice("已请求停止任务。已经执行的部署操作不会被撤回，请核对远端结果。");
+      showNotice($ui("已请求停止。部署出去的部分不会撤回，去云端确认。"));
     } catch (error) { showNotice(normalizeError(error).message, "error"); }
     finally { cancelingTask = false; }
   }
@@ -922,18 +923,18 @@
       .join("\n")
       .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
     if (/文章信息格式无效|YAMLException|Process failed/i.test(output)) {
-      return "文章开头的信息格式有误，请修正提示的文章后重试。";
+      return $ui("有文章的开头信息格式不对，改一下提示的那篇再试。");
     }
     if (/Authentication failed|Permission denied|publickey|could not read Username/i.test(output)) {
-      return "GitHub 身份验证失败，请检查 Git 凭据后重试。";
+      return $ui("GitHub 验证失败，检查一下 Git 凭据再试。");
     }
     if (/Could not resolve host|timed out|Network is unreachable|connection reset/i.test(output)) {
-      return "网络连接失败，请检查网络后重试。";
+      return $ui("网络连接不上，检查网络后再试。");
     }
     if (/输出了错误，发布已停止/.test(output)) {
-      return "生成过程发现错误，已停止发布，未上传不完整的站点。";
+      return $ui("生成时报错，发布已停止，不会上传半成品。");
     }
-    return "任务没有成功完成。若已进入部署阶段，请核对远端结果后再重试。";
+    return $ui("任务没有完成。如果到了部署阶段，先去云端确认结果。");
   }
 </script>
 
@@ -977,7 +978,6 @@
             onSaveConfig={saveConfigNow}
             onBeforeSync={beforeSync}
             onThemePreview={(mode: AppConfigV3["appearance"]["themeMode"]) => applyTheme(mode)}
-            onRegisterSettingsController={(controller: SettingsController | null) => (settingsController = controller)}
             onRemoveRecentProject={removeRecentProject}
             onClearRecentProjects={clearRecentProjectList}
             onPublish={publishFromEditor}
@@ -1004,8 +1004,8 @@
         {/if}
         {#if externalChange}
           <div class="task-indicator notice-indicator" role="status">
-            <span>{externalChange === "deleted" ? $ui("当前文章已在云端删除，本地内容已保留。") : $ui("当前文章有云端更新，保存已暂停。")}</span>
-            <button class="button" type="button" on:click={reviewExternalChange}>{$ui("处理版本差异")}</button>
+            <span>{externalChange === "deleted" ? $ui("这篇文章在云端被删了，本地内容还留着。") : $ui("云端有更新，暂时不能保存。")}</span>
+            <button class="button" type="button" on:click={reviewExternalChange}>{$ui("查看差异")}</button>
           </div>
         {/if}
         {#if notice}
@@ -1023,7 +1023,7 @@
         {#if activeTask}
           <div class="task-indicator" role="status" in:fly={{ y: 8, duration: 160 }} out:fade={{ duration: 120 }}>
             <LoaderCircle size={15} class="spin" />
-            <span>{activeTask.step ?? $ui("正在处理项目")}</span>
+            <span>{activeTask.step ?? $ui("任务运行中")}</span>
             <button class="button" type="button" on:click={() => (taskDetailsOpen = true)}>{$ui("任务详情")}</button>
           </div>
         {:else if taskEvents.length}
@@ -1035,7 +1035,7 @@
 </div>
 
 {#if taskDetailsOpen}
-  <ModalDialog title={$ui("后台任务")} description={$ui("查看任务阶段、输出与结果。取消不会撤回已经完成的远端操作。")} closeLabel={$ui("关闭")} onClose={() => (taskDetailsOpen = false)}>
+  <ModalDialog title={$ui("后台任务")} description={$ui("查看任务的阶段、输出和结果。取消不会撤回已经完成的云端操作。")} closeLabel={$ui("关闭")} onClose={() => (taskDetailsOpen = false)}>
     <p>{session?.name ?? $ui("博客项目")} · {activeTask ? $ui("运行中") : $ui("已结束")}</p>
     <pre class="task-log">{taskEvents.filter((event) => event.taskId === (activeTask?.taskId ?? taskEvents.at(-1)?.taskId)).map((event) => event.line ?? (event.kind === "finished" ? event.success ? $ui("任务完成") : $ui("任务未完成") : event.step ?? "")).filter(Boolean).join("\n")}</pre>
     <svelte:fragment slot="actions">
@@ -1046,19 +1046,19 @@
 {/if}
 
 {#if recoveryOpen && (externalChange || recoveryBusy)}
-  <ModalDialog title={externalChange === "deleted" ? $ui("保留已删除文章的本地内容") : $ui("处理文章版本差异")}
-    description={$ui("本地内容会保留到你明确选择处理方式。使用云端将替换当前本地编辑。")}
+  <ModalDialog title={externalChange === "deleted" ? $ui("文章已在云端被删除") : $ui("本地和云端内容不一致")}
+    description={$ui("本地内容会一直保留。选「使用云端」会替换你的编辑。")}
     onClose={() => !recoveryBusy && (recoveryOpen = false)}>
     <label class="field"><span>{$ui("本地内容")}</span><textarea class="input" rows="6" readonly value={recoveryLocal}></textarea></label>
     {#if externalChange === "changed"}<label class="field"><span>{$ui("云端内容")}</span><textarea class="input" rows="6" readonly value={recoveryRemote ?? ""}></textarea></label>{/if}
     <svelte:fragment slot="actions">
-      <button class="button" type="button" disabled={recoveryBusy} on:click={() => (recoveryOpen = false)}>{$ui("稍后处理")}</button>
-      <button class="button" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("draft")}>{$ui("另存草稿")}</button>
+      <button class="button" type="button" disabled={recoveryBusy} on:click={() => (recoveryOpen = false)}>{$ui("稍后")}</button>
+      <button class="button" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("draft")}>{$ui("存为草稿")}</button>
       {#if externalChange === "changed"}
         <button class="button" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("remote")}>{$ui("使用云端")}</button>
         <button class="button primary" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("local")}>{$ui("保留本地并保存")}</button>
       {:else}
-        <button class="button danger" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("close")}>{$ui("放弃并关闭文章")}</button>
+        <button class="button danger" type="button" disabled={recoveryBusy} on:click={() => resolveExternalChange("close")}>{$ui("放弃本地并关闭")}</button>
       {/if}
     </svelte:fragment>
   </ModalDialog>
@@ -1076,7 +1076,7 @@
         {guardIsClosing ? $ui("不保存退出") : $ui("放弃")}
       </button>
       <button class="button primary" type="button" data-autofocus disabled={guardBusy || closeWindowState.isClosing} on:click={() => resolveGuard("save")}>
-        {guardBusy ? $ui("处理中") : guardIsClosing ? $ui("保存并退出") : $ui("保存并继续")}
+        {guardBusy ? $ui("正在保存…") : guardIsClosing ? $ui("保存并退出") : $ui("保存并继续")}
       </button>
     </svelte:fragment>
   </ModalDialog>

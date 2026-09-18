@@ -20,17 +20,17 @@ export function validateSettings(schema: Record<string, unknown> | null, values:
   for (const [key, field] of settingFields(schema)) {
     const value = values[key];
     if (value === undefined || value === "") {
-      if (required.includes(key)) errors[key] = "请填写此项。";
+      if (required.includes(key)) errors[key] = "这一项要填。";
       continue;
     }
-    if (Array.isArray(field.enum) && !field.enum.includes(value)) errors[key] = "请选择有效选项。";
-    else if ((field.type === "number" || field.type === "integer") && (typeof value !== "number" || !Number.isFinite(value) || (field.type === "integer" && !Number.isInteger(value)))) errors[key] = "请输入有效数字。";
-    else if (field.type === "boolean" && typeof value !== "boolean") errors[key] = "请选择开启或关闭。";
-    else if (field.type === "string" && typeof value !== "string") errors[key] = "请输入文本。";
-    else if (typeof value === "number" && ((typeof field.minimum === "number" && value < field.minimum) || (typeof field.maximum === "number" && value > field.maximum))) errors[key] = "数值超出允许范围。";
-    else if (typeof value === "string" && ((typeof field.minLength === "number" && value.length < field.minLength) || (typeof field.maxLength === "number" && value.length > field.maxLength))) errors[key] = "文本长度不符合要求。";
+    if (Array.isArray(field.enum) && !field.enum.includes(value)) errors[key] = "选一个有效选项。";
+    else if ((field.type === "number" || field.type === "integer") && (typeof value !== "number" || !Number.isFinite(value) || (field.type === "integer" && !Number.isInteger(value)))) errors[key] = "填一个有效的数字。";
+    else if (field.type === "boolean" && typeof value !== "boolean") errors[key] = "选开启或关闭。";
+    else if (field.type === "string" && typeof value !== "string") errors[key] = "填文本内容。";
+    else if (typeof value === "number" && ((typeof field.minimum === "number" && value < field.minimum) || (typeof field.maximum === "number" && value > field.maximum))) errors[key] = "数字超出了允许范围。";
+    else if (typeof value === "string" && ((typeof field.minLength === "number" && value.length < field.minLength) || (typeof field.maxLength === "number" && value.length > field.maxLength))) errors[key] = "文本长度不对。";
     else if (field.format === "uri" && typeof value === "string") {
-      try { new URL(value); } catch { errors[key] = "请输入完整有效的地址。"; }
+      try { new URL(value); } catch { errors[key] = "填一个完整有效的地址。"; }
     }
   }
   return errors;

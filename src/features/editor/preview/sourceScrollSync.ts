@@ -59,7 +59,7 @@ export function collectPreviewAnchors(container: HTMLElement): SourceAnchor[] {
   }, []);
 }
 
-/** Only the pane receiving user input may drive the other pane. */
+/** Only the editor drives scrolling; reading the preview parks it where the user put it. */
 export class ScrollSyncOwner {
   current: "editor" | "preview" = "editor";
   claim(pane: "editor" | "preview") { this.current = pane; }

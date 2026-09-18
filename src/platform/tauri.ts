@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { uiText } from "$shared/i18n/ui";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type {
@@ -42,7 +43,7 @@ import type {
   TaskType,
   UploadResult
 } from "$shared/types/app";
-import { localizeAppError } from "$shared/i18n/errorMessages";
+import { localizeAppError, normalizeErrorMessage } from "$shared/i18n/errorMessages";
 import { defaultConfig } from "$shared/types/app";
 import { browserMock } from "./browserMock";
 import type { ProjectFileEntry, ProjectFileSnapshot } from "$shared/types/app";
@@ -67,14 +68,14 @@ export function normalizeError(error: unknown): AppError {
     const candidate = error as Partial<AppError>;
     return {
       code: candidate.code ?? "unknown_error",
-      message: String(candidate.message),
+      message: normalizeErrorMessage(String(candidate.message)),
       recoverable: candidate.recoverable ?? true,
       details: candidate.details
     };
   }
   return {
     code: "unknown_error",
-    message: typeof error === "string" ? error : "发生未知错误。",
+    message: typeof error === "string" ? error : uiText("出了点问题，可以重试一下。"),
     recoverable: true
   };
 }
@@ -329,7 +330,7 @@ export const platform = {
         request.sources.map((originalSource) => ({
           originalSource,
           state: "unavailable",
-          message: "桌面后端不可用。"
+          message: uiText("桌面端功能不可用。")
         }))
       );
     }

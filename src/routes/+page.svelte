@@ -4,7 +4,7 @@
 
 <svelte:head>
   <title>Hexo Lite Editor</title>
-  <meta name="description" content="独立、安静的 Hexo 桌面写作与发布工作区" />
+  <meta name="description" content="在桌面编辑、预览和发布 Hexo 博客。" />
 </svelte:head>
 
 <AppShell />

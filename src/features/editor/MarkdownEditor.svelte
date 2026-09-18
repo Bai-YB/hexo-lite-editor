@@ -4,7 +4,7 @@
   import { markdown } from "@codemirror/lang-markdown";
   import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
   import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
-  import { EditorState, StateEffect, type ChangeDesc, type Extension } from "@codemirror/state";
+  import { Compartment, EditorState, type ChangeDesc, type Extension } from "@codemirror/state";
   import { externalEditorChange, resolvedImageHistory } from "./imageHistory";
   import { SCROLL_ANCHOR_INSET } from "./preview/sourceScrollSync";
   import { tags } from "@lezer/highlight";
@@ -47,6 +47,7 @@
   let viewDocumentInstance = documentInstance;
   let scrollFrame = 0;
   let scrollTargetSequence = 0;
+  let lastReportedScrollTop = -1;
 
   // 组件实例级常量：样式值全部走 CSS var，主题切换无需重建；
   // reconfigure 时引用同一实例，生成的高亮 class 不抖动。
@@ -90,13 +91,28 @@
     "replace all": "全部替换",
     "close": "关闭",
     "current match": "当前匹配",
-    "replaced match on line $": "已在第 $ 行替换匹配",
-    "replaced $ matches": "已替换 $ 处匹配",
+    "replaced match on line $": "已在第 $ 行替换",
+    "replaced $ matches": "已替换 $ 处",
     "on line": "所在行",
     "Go to line": "跳转到行",
     "go": "跳转",
     "Control character": "控制字符"
   });
+
+  // 可切换设置各占一个 Compartment：单独 reconfigure 只替换该设置，
+  // history()/search() 等重状态扩展常驻构造期挂载，调整设置不再清空撤销栈。
+  const compTabSize = new Compartment();
+  const compLineNumbers = new Compartment();
+  const compLineWrapping = new Compartment();
+  const compHighlightLine = new Compartment();
+  const compSizing = new Compartment();
+
+  function sizingTheme() {
+    return EditorView.theme({
+      "&": { fontSize: `${fontSize}px` },
+      ".cm-scroller": { lineHeight: String(lineHeight) }
+    });
+  }
 
   function extensions(): Extension[] {
     return [
@@ -104,7 +120,7 @@
       resolvedImageHistory(() => imageUrlReplacements),
       markdown(),
       syntaxHighlighting(quietHighlight),
-      EditorState.tabSize.of(tabSize),
+      compTabSize.of(EditorState.tabSize.of(tabSize)),
       EditorState.allowMultipleSelections.of(true),
       zhPhrases,
       drawSelection(),
@@ -113,7 +129,7 @@
       crosshairCursor(),
       highlightSpecialChars(),
       // 显式挂载搜索（而非靠 openSearchPanel 动态注入），
-      // 字号/行高触发 reconfigure 时面板与查询状态得以保留。
+      // 字号/行高变化时面板与查询状态得以保留。
       search({ top: true }),
       highlightSelectionMatches({ minSelectionLength: 2 }),
       keymap.of([
@@ -168,12 +184,10 @@
         "&": {
           height: "100%",
           color: "var(--text-primary)",
-          backgroundColor: "var(--bg-panel)",
-          fontSize: `${fontSize}px`
+          backgroundColor: "var(--bg-panel)"
         },
         ".cm-scroller": {
           fontFamily: "var(--font-mono)",
-          lineHeight: String(lineHeight),
           overflow: "auto"
         },
         ".cm-content": { padding: "22px 8px 80px" },
@@ -245,10 +259,11 @@
         ".cm-panel.cm-search label": { color: "var(--text-secondary)" },
         ".cm-panel.cm-search button[name=close]": { color: "var(--text-tertiary)" }
       }),
-      ...(showLineNumbers ? [lineNumbers()] : []),
-      ...(lineWrapping ? [EditorView.lineWrapping] : []),
+      compSizing.of(sizingTheme()),
+      compLineNumbers.of(showLineNumbers ? [lineNumbers()] : []),
+      compLineWrapping.of(lineWrapping ? [EditorView.lineWrapping] : []),
       // highlightLine 开关同时控制正文行高亮与行号槽高亮
-      ...(highlightLine ? [highlightActiveLine(), highlightActiveLineGutter()] : [])
+      compHighlightLine.of(highlightLine ? [highlightActiveLine(), highlightActiveLineGutter()] : [])
     ];
   }
 
@@ -285,6 +300,7 @@
 
   function handleScroll() {
     if (view) {
+      lastReportedScrollTop = view.scrollDOM.scrollTop;
       onScroll(view.scrollDOM.scrollTop, view.scrollDOM.scrollHeight, view.scrollDOM.clientHeight, sourceLineAtScroll());
     }
   }
@@ -305,33 +321,6 @@
     if (offset <= boundaryEpsilon) return line;
     if (block.height - offset <= boundaryEpsilon && line < view.state.doc.lines) return line + 1;
     return line + Math.min(1, Math.max(0, offset / Math.max(1, block.height)));
-  }
-
-  /** Source lines are one-based and may include progress within a wrapped line. */
-  export function scrollToLine(line: number) {
-    if (!view) return;
-    const targetView = view;
-    const targetDocument = view.state.doc;
-    const sequence = ++scrollTargetSequence;
-    const safeLine = Math.max(1, Math.min(line, view.state.doc.lines + 1));
-    if (safeLine <= 1) {
-      view.scrollDOM.scrollTop = 0;
-      handleScroll();
-      return;
-    }
-    const whole = Math.min(Math.floor(safeLine), view.state.doc.lines);
-    const pos = view.state.doc.line(whole).from;
-    // CodeMirror must first render the destination viewport; offscreen wrapped
-    // lines have estimated heights and cannot be positioned with scrollTop alone.
-    view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "start", yMargin: SCROLL_ANCHOR_INSET }) });
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (view !== targetView || sequence !== scrollTargetSequence || view.state.doc !== targetDocument) return;
-      view.lineBlockAtHeight(0); // Flush the newly rendered viewport's measurements.
-      const block = view.lineBlockAt(pos);
-      view.scrollDOM.scrollTop = Math.max(0,
-        view.documentPadding.top + block.top + block.height * (safeLine - whole) - SCROLL_ANCHOR_INSET);
-      handleScroll();
-    }));
   }
 
   $: if (view && documentInstance !== viewDocumentInstance) {
@@ -358,7 +347,7 @@
     });
   }
 
-  $: if (view && Math.abs(view.scrollDOM.scrollTop - scrollTop) > 1) {
+  $: if (view && scrollTop !== lastReportedScrollTop && Math.abs(view.scrollDOM.scrollTop - scrollTop) > 1) {
     view.scrollDOM.scrollTop = scrollTop;
   }
 
@@ -371,16 +360,24 @@
     }
   }
 
-  $: if (
-    view &&
-    fontSize &&
-    lineHeight &&
-    tabSize &&
-    typeof showLineNumbers === "boolean" &&
-    typeof lineWrapping === "boolean" &&
-    typeof highlightLine === "boolean"
-  ) {
-    view.dispatch({ effects: StateEffect.reconfigure.of(extensions()) });
+  $: if (view && fontSize && lineHeight) {
+    view.dispatch({ effects: compSizing.reconfigure(sizingTheme()) });
+  }
+
+  $: if (view && tabSize) {
+    view.dispatch({ effects: compTabSize.reconfigure(EditorState.tabSize.of(tabSize)) });
+  }
+
+  $: if (view && typeof showLineNumbers === "boolean") {
+    view.dispatch({ effects: compLineNumbers.reconfigure(showLineNumbers ? [lineNumbers()] : []) });
+  }
+
+  $: if (view && typeof lineWrapping === "boolean") {
+    view.dispatch({ effects: compLineWrapping.reconfigure(lineWrapping ? [EditorView.lineWrapping] : []) });
+  }
+
+  $: if (view && typeof highlightLine === "boolean") {
+    view.dispatch({ effects: compHighlightLine.reconfigure(highlightLine ? [highlightActiveLine(), highlightActiveLineGutter()] : []) });
   }
 </script>
 

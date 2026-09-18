@@ -12,7 +12,6 @@
   import { defaultConfig } from "$shared/types/app";
   import { normalizeError, platform } from "$platform/tauri";
   import { shortcutLabel } from "$platform/os";
-  import type { SettingsController } from "./controller";
   import { setLanguage, translate } from "$shared/i18n";
   import type {
     AppConfigV3,
@@ -32,23 +31,22 @@
   export let recentProjects: RecentProjectView[] = [];
   export let onSaveConfig: (config: AppConfigV3) => Promise<AppConfigV3> = async (value) => value;
   export let onThemePreview: (mode: ThemeMode) => void = () => {};
-  export let onRegisterSettingsController: (controller: SettingsController | null) => void = () => {};
   export let onRemoveRecentProject: (recentId: string) => Promise<void> = async () => {};
   export let onClearRecentProjects: () => Promise<void> = async () => {};
   export let onBeforeSync: () => Promise<boolean> = async () => true;
   export let onPublish: () => Promise<void> = async () => {};
   export let onOpenUpdates: () => void = () => {};
   export let taskBusy = false;
-  export let onNotice: (message: string) => void = () => {};
+  export let onNotice: (message: string, severity?: "info" | "error") => void = () => {};
 
   const sectionStorageKey = "hexo-lite-editor:settings-active-section";
   const sections: Array<{ id: SettingsSectionId; title: string; description: string }> = [
-    { id: "general", title: "常规", description: "语言、启动与保存" },
-    { id: "editing", title: "编辑器", description: "外观与写作习惯" },
-    { id: "images", title: "图片", description: "保存位置与图床连接" },
-    { id: "hexoPublish", title: "预览与发布", description: "预览网站，发布修改" },
-    { id: "sync", title: "文件同步", description: "跨设备同步完整站点源码" },
-    { id: "maintenance", title: "更新与恢复", description: "更新应用与恢复设置" }
+    { id: "general", title: "常规", description: "语言、启动和保存" },
+    { id: "editing", title: "编辑器", description: "外观和写作习惯" },
+    { id: "images", title: "图片", description: "保存位置和图床连接" },
+    { id: "hexoPublish", title: "预览与发布", description: "预览网站、发布更新" },
+    { id: "sync", title: "文件同步", description: "跨设备同步站点源码" },
+    { id: "maintenance", title: "更新与恢复", description: "应用更新和恢复默认" }
   ];
 
   let saved = structuredClone(config);
@@ -57,6 +55,7 @@
   let dirty = false;
   let saving = false;
   let pendingSave: Promise<void> | null = null;
+  let persistTimer: ReturnType<typeof setTimeout> | undefined;
   let saveError = "";
   let pageElement: HTMLDivElement;
   let layoutObserver: ResizeObserver | undefined;
@@ -110,6 +109,7 @@
   let webDavTestedRemoteDir = "";
   let webDavConnectionError = "";
   let webDavConnectionOpen = false;
+  let switchingProvider: ContentSyncProvider | null = null;
 
   $: dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   $: currentSection = sections.find((section) => section.id === activeSection) ?? sections[0];
@@ -120,6 +120,8 @@
     && webDavEndpoint.trim().replace(/\/$/, "") === webDavTestedEndpoint
     && webDavRemoteDir.trim().replace(/^\/+|\/+$/g, "") === webDavTestedRemoteDir;
   $: if (syncStatus.status === "authRequired" && syncStatus.provider === "webdav") webDavConnectionOpen = true;
+  $: setupProvider = switchingProvider ?? syncProvider;
+  $: if (syncStatus.enabled && switchingProvider === syncStatus.provider) switchingProvider = null;
   $: dirtySections = {
     general: JSON.stringify(draft.general) !== JSON.stringify(saved.general),
     editing: JSON.stringify([draft.appearance, draft.editor, draft.articleList]) !== JSON.stringify([saved.appearance, saved.editor, saved.articleList]),
@@ -144,7 +146,6 @@
     }
     const stored = localStorage.getItem(sectionStorageKey) as SettingsSectionId | null;
     activeSection = initialSection ?? (sections.some((section) => section.id === stored) ? stored! : "general");
-    onRegisterSettingsController({ save: saveDraft, discard, hasDirty: () => dirty || saving });
     void refreshCredential();
     void platform.onContentSyncStatus((status) => {
       if (!session || disposed || status.projectId !== session.projectId || status.sessionGeneration !== session.generation) return;
@@ -155,7 +156,7 @@
         void refreshSyncSummary();
       }
     }).then((unlisten) => { if (disposed) unlisten(); else unlistenSync = unlisten; })
-      .catch((error) => { if (!disposed) onNotice(normalizeError(error).message); });
+      .catch((error) => { if (!disposed) onNotice(normalizeError(error).message, "error"); });
     void platform.onContentSyncPhase((event) => {
       if (!session || disposed || event.projectId !== session.projectId || event.sessionGeneration !== session.generation) return;
       if (["completed", "operationFinished", "failed", "attention", "waiting"].includes(event.phase)) {
@@ -180,13 +181,13 @@
   });
 
   onDestroy(() => {
+    if (persistTimer) { clearTimeout(persistTimer); persistTimer = undefined; }
+    void flushDraft();
     disposed = true;
     layoutObserver?.disconnect();
     unlistenSync?.();
     unlistenSyncPhase?.();
     if (syncTimer) clearInterval(syncTimer);
-    if (dirty) onThemePreview(saved.appearance.themeMode);
-    onRegisterSettingsController(null);
   });
 
   function selectSection(section: SettingsSectionId) {
@@ -212,7 +213,7 @@
     return sameProject(identity) && session?.generation === identity.generation;
   }
 
-  function beginSync(message = "正在准备同步操作。") {
+  function beginSync(message = "正在准备同步…") {
     syncBusy = true;
     syncStopping = false;
     syncError = "";
@@ -265,7 +266,7 @@
       void refreshSyncConflicts().catch((error) => { if (!disposed) syncError = normalizeError(error).message; });
       void refreshSyncSummary();
     } catch (error) {
-      onNotice(normalizeError(error).message);
+      onNotice(normalizeError(error).message, "error");
     } finally {
       syncLoading = false;
     }
@@ -280,12 +281,25 @@
     webDavConnectionError = "";
   }
 
+  function chooseConnectionProvider(provider: ContentSyncProvider) {
+    if (!syncStatus.enabled || syncBusy) return;
+    syncProvider = provider;
+    if (provider === syncStatus.provider) { switchingProvider = null; return; }
+    switchingProvider = provider;
+    syncPreflight = null;
+    webDavPreflight = null;
+    publicAcknowledged = false;
+    syncError = "";
+    webDavConnectionError = "";
+    webDavConnectionOpen = true;
+  }
+
   async function configureSync() {
     if (!session || syncBusy) return;
     if (syncProvider === "github" && !syncCandidate) return;
     const identity = { ...session };
     if (!await onBeforeSync() || !sameSession(identity) || syncBusy) return;
-    beginSync(syncProvider === "github" ? "正在连接 GitHub 并准备首次合并。" : "正在连接 WebDAV 并准备首次合并。");
+    beginSync(syncProvider === "github" ? "正在连接 GitHub，准备首次合并。" : "正在连接 WebDAV，准备首次合并。");
     await tick();
     try {
       let result: import("$shared/types/app").ContentSyncView;
@@ -307,11 +321,13 @@
       }
       if (!sameProject(identity)) return;
       syncStatus = result;
+      syncProvider = result.provider;
+      switchingProvider = null;
       await refreshSyncConflicts();
       if (syncStatus.enabled) webDavConnectionOpen = false;
-      onNotice(syncStatus.message || "内容同步设置已更新。");
+      onNotice(syncStatus.message ? $ui(syncStatus.message) : $ui("同步设置已更新。"));
     } catch (error) {
-      syncError = normalizeError(error).message; onNotice(syncError);
+      syncError = normalizeError(error).message; onNotice(syncError, "error");
     } finally {
       endSync();
       void refreshSyncSummary();
@@ -323,7 +339,7 @@
     const identity = { ...session };
     const branch = syncBranch;
     const repository = syncCandidate?.repository;
-    beginSync("正在检查 GitHub 连接和两端文件差异。");
+    beginSync("正在检查 GitHub 连接和两端差异。");
     await tick();
     try {
       if (syncProvider === "github" && syncCandidate) {
@@ -333,7 +349,7 @@
         syncCandidate = syncPreflight.candidate;
       }
     } catch (error) {
-      syncError = normalizeError(error).message; onNotice(syncError);
+      syncError = normalizeError(error).message; onNotice(syncError, "error");
     } finally {
       endSync();
     }
@@ -358,7 +374,7 @@
     if (!session || syncBusy || !webDavEndpoint.trim() || !webDavRemoteDir.trim() || !webDavUsername.trim()) return;
     const identity = { ...session };
     const submitted = { endpoint: webDavEndpoint, remoteDir: webDavRemoteDir, username: webDavUsername, password: webDavPassword };
-    beginSync("正在测试 WebDAV 连接并读取远端清单。");
+    beginSync("正在测试 WebDAV 连接、读取云端清单。");
     await tick();
     webDavConnectionError = "";
     try {
@@ -370,7 +386,7 @@
       if (!sameSession(identity)) return;
       if (webDavEndpoint !== submitted.endpoint || webDavRemoteDir !== submitted.remoteDir || webDavUsername !== submitted.username || webDavPassword !== submitted.password) {
         webDavPreflight = null; webDavTestedAt = "";
-        webDavConnectionError = "测试期间连接信息已修改，请重新测试当前输入。";
+        webDavConnectionError = $ui("测试时连接信息变了，用当前输入重新测试。");
         return;
       }
       webDavEndpoint = result.preflight.endpoint;
@@ -383,12 +399,12 @@
       webDavTestedRemoteDir = result.preflight.remoteDir;
       webDavCredential = { configured: true, username: result.username };
       syncStatus = result.sync;
-      onNotice("WebDAV 真实连接、读写权限和远端预检均已通过。");
+      onNotice($ui("WebDAV 连接、读写权限和预检都通过了。"));
     } catch (error) {
       webDavConnectionError = normalizeError(error).message;
       webDavPreflight = null;
       webDavTestedAt = "";
-      onNotice(webDavConnectionError);
+      onNotice(webDavConnectionError, "error");
     } finally {
       endSync();
     }
@@ -409,10 +425,10 @@
       });
       if (!sameSession(identity)) return;
       syncStatus = result;
-      onNotice(syncStatus.message || "WebDAV 连接设置已应用。");
+      onNotice(syncStatus.message ? $ui(syncStatus.message) : $ui("WebDAV 连接设置已应用。"));
     } catch (error) {
       webDavConnectionError = normalizeError(error).message;
-      onNotice(webDavConnectionError);
+      onNotice(webDavConnectionError, "error");
     } finally {
       endSync();
     }
@@ -426,9 +442,9 @@
       webDavPreflight = null;
       webDavTestedAt = "";
       webDavConnectionError = "";
-      onNotice("WebDAV 凭据已删除。");
+      onNotice($ui("WebDAV 凭据已删除。"));
     } catch (error) {
-      syncError = normalizeError(error).message; onNotice(syncError);
+      syncError = normalizeError(error).message; onNotice(syncError, "error");
     } finally {
       endSync();
     }
@@ -459,11 +475,11 @@
       syncStatus = result;
       syncConflicts = [];
       conflictChoices = {};
-      onNotice(syncStatus.message || "冲突已解决。");
+      onNotice(syncStatus.message ? $ui(syncStatus.message) : $ui("冲突已解决。"));
       void refreshSyncSummary();
     } catch (error) {
       syncError = normalizeError(error).message;
-      onNotice(syncError);
+      onNotice(syncError, "error");
     } finally {
       endSync();
     }
@@ -473,7 +489,7 @@
     if (!session || syncBusy) return;
     const identity = { ...session };
     if (!await onBeforeSync() || !sameSession(identity) || syncBusy) return;
-    beginSync("正在检查本机与远端变化，请保持此页面打开。");
+    beginSync("正在检查本机和云端的变化，先别关这个页面。");
     await tick();
     syncError = "";
     try {
@@ -481,10 +497,10 @@
       if (!sameProject(identity)) return;
       syncStatus = result;
       await refreshSyncConflicts();
-      onNotice(syncStatus.message || "同步检查完成。");
+      onNotice(syncStatus.message ? $ui(syncStatus.message) : $ui("检查完成。"));
     } catch (error) {
       syncError = normalizeError(error).message;
-      onNotice(syncError);
+      onNotice(syncError, "error");
     } finally {
       endSync();
       void refreshSyncSummary();
@@ -518,9 +534,9 @@
   async function publishSite() {
     if (syncBusy || taskBusy) return;
     try {
-      if (dirty) await saveDraft();
+      await flushDraft();
       await onPublish();
-    } catch (error) { onNotice(normalizeError(error).message); }
+    } catch (error) { onNotice(normalizeError(error).message, "error"); }
   }
 
   function chooseAllConflicts(choice: "local" | "remote") {
@@ -538,9 +554,10 @@
     beginSync();
     try {
       syncStatus = await platform.disableContentSync(session.projectId, session.generation);
-      onNotice("内容同步已关闭，本地文章不会被删除。");
+      switchingProvider = null;
+      onNotice($ui("同步已关闭，本地文章不会被删。"));
     } catch (error) {
-      syncError = normalizeError(error).message; onNotice(syncError);
+      syncError = normalizeError(error).message; onNotice(syncError, "error");
     } finally {
       endSync();
     }
@@ -551,9 +568,9 @@
     beginSync();
     try {
       syncStatus = await platform.reconnectContentSync(session.projectId, session.generation);
-      onNotice(syncStatus.message || "系统 Git 认证检查完成。");
+      onNotice(syncStatus.message ? $ui(syncStatus.message) : $ui("Git 认证检查完成。"));
     } catch (error) {
-      syncError = normalizeError(error).message; onNotice(syncError);
+      syncError = normalizeError(error).message; onNotice(syncError, "error");
     } finally {
       endSync();
     }
@@ -577,14 +594,29 @@
     onThemePreview(next.appearance.themeMode);
     saveError = "";
     if (next.general.language !== previousLanguage) setLanguage(next.general.language);
+    schedulePersist();
   }
 
-  async function persistConfig(nextConfig: AppConfigV3, message = "设置已保存。") {
+  function schedulePersist() {
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => { persistTimer = undefined; void flushDraft().catch(() => null); }, 350);
+  }
+
+  async function flushDraft() {
+    if (persistTimer) { clearTimeout(persistTimer); persistTimer = undefined; }
+    if (JSON.stringify(draft) === JSON.stringify(saved)) return;
+    await persistConfig(draft);
+  }
+
+  async function persistConfig(nextConfig: AppConfigV3, message = "") {
     if (pendingSave) await pendingSave;
     const submitted = structuredClone(nextConfig);
     const validation = validateSettings(submitted);
     if (validation) {
-      saveError = validation.message;
+      saveError = $ui(validation.message);
+      draft = structuredClone(saved);
+      onThemePreview(draft.appearance.themeMode);
+      setLanguage(draft.general.language);
       selectSection(validation.section);
       await tick();
       const field = pageElement?.querySelector<HTMLInputElement>(`[data-config-field="${validation.field}"]`);
@@ -601,11 +633,11 @@
         if (!disposed) {
           onThemePreview(draft.appearance.themeMode);
           setLanguage(draft.general.language);
-          onNotice(message);
+          if (message) onNotice($ui(message));
         }
       } catch (error) {
         saveError = normalizeError(error).message;
-        if (!disposed) onNotice(saveError);
+        if (!disposed) onNotice(saveError, "error");
         throw error;
       } finally { saving = false; }
     })();
@@ -614,38 +646,18 @@
     finally { if (pendingSave === operation) pendingSave = null; }
   }
 
-  async function saveDraft() {
-    if (pendingSave) await pendingSave;
-    if (JSON.stringify(draft) !== JSON.stringify(saved)) await persistConfig(draft);
-    if (JSON.stringify(draft) !== JSON.stringify(saved)) {
-      throw new Error("保存期间又有设置变化，请再次保存后继续。");
-    }
-  }
-
-  async function saveFromButton() {
-    try { await saveDraft(); }
-    catch (error) { saveError = normalizeError(error).message; }
-  }
-
   async function persistImageBed(patch: Partial<AppConfigV3["imageBed"]>, message: string) {
-    if (pendingSave) await pendingSave;
+    await flushDraft();
     draft = { ...draft, imageBed: { ...draft.imageBed, ...patch } };
     await persistConfig({ ...saved, imageBed: { ...saved.imageBed, ...patch } }, message);
   }
 
-  async function discard() {
-    if (pendingSave) await pendingSave.catch(() => {});
-    saveError = "";
-    draft = structuredClone(saved);
-    onThemePreview(saved.appearance.themeMode);
-    setLanguage(saved.general.language);
-  }
-
-  function restoreDefaults() {
-    draft = structuredClone(defaultConfig);
-    onThemePreview(draft.appearance.themeMode);
-    setLanguage(draft.general.language);
+  async function restoreDefaults() {
     showReset = false;
+    if (persistTimer) { clearTimeout(persistTimer); persistTimer = undefined; }
+    try {
+      await persistConfig(structuredClone(defaultConfig), "已恢复默认设置。");
+    } catch (error) { saveError = normalizeError(error).message; }
   }
 
   async function refreshCredential() {
@@ -670,7 +682,7 @@
 
   async function migrateLegacyCredential() {
     if (!draft.imageBed.cloudflareApiUrl.trim()) {
-      onNotice("请先填写 Cloudflare-ImgBed 服务地址。");
+      onNotice($ui("先填 Cloudflare-ImgBed 服务地址。"));
       return;
     }
     credentialBusy = true;
@@ -680,7 +692,7 @@
         draft.imageBed.cloudflareApiUrl
       );
       legacyCredentialAvailable = false;
-      tokenStatusMessage = "旧版 Token 已绑定到当前连接；旧凭据已从临时命名空间移除。";
+      tokenStatusMessage = $ui("旧 Token 已绑到当前连接，临时凭据已清理。");
     } catch (error) {
       tokenStatusMessage = normalizeError(error).message;
     } finally {
@@ -690,16 +702,16 @@
 
   async function prepareAcquireToken() {
     if (credentialBusy) return;
-    if (!draft.imageBed.cloudflareApiUrl.trim()) return onNotice("请先填写 Cloudflare-ImgBed 服务地址。");
+    if (!draft.imageBed.cloudflareApiUrl.trim()) return onNotice($ui("先填 Cloudflare-ImgBed 服务地址。"));
     credentialBusy = true;
     try {
       await persistImageBed({
         cloudflareApiUrl: draft.imageBed.cloudflareApiUrl,
         cloudflareConnectionId: draft.imageBed.cloudflareConnectionId
-      }, "图床连接地址已保存；其他设置仍保留在草稿中。");
+      }, "图床地址已保存，其他设置不受影响。");
       showAcquireToken = true;
       tokenStatusMessage = "";
-    } catch (error) { onNotice(normalizeError(error).message); }
+    } catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { credentialBusy = false; }
   }
 
@@ -713,7 +725,7 @@
   async function acquireToken() {
     if (credentialBusy) return;
     credentialBusy = true;
-    tokenStatusMessage = "正在获取 Token...";
+    tokenStatusMessage = $ui("正在获取 Token…");
     try {
       const result = await platform.acquireCloudflareImgbedToken(
         draft.imageBed.cloudflareConnectionId,
@@ -728,8 +740,8 @@
         autoDelete: false
       });
       credential = { configured: result.configured };
-      await persistImageBed({ cloudflareTokenId: result.tokenId }, "Token 已创建并保存到系统凭据库。");
-      tokenStatusMessage = "Token 已配置";
+      await persistImageBed({ cloudflareTokenId: result.tokenId }, "Token 已创建，存进了系统凭据库。");
+      tokenStatusMessage = $ui("Token 已配置");
       showAcquireToken = false;
       adminUsername = "";
     } catch (error) { tokenStatusMessage = normalizeError(error).message; }
@@ -739,7 +751,7 @@
   async function testCredential() {
     if (credentialBusy) return;
     credentialBusy = true;
-    tokenStatusMessage = "正在测试连接...";
+    tokenStatusMessage = $ui("正在测试连接…");
     try {
       tokenStatusMessage = (
         await platform.testCloudflareImgbedToken(
@@ -756,26 +768,26 @@
     credentialBusy = true;
     try {
       credential = await platform.credentialDelete(draft.imageBed.cloudflareConnectionId);
-      await persistImageBed({ cloudflareTokenId: undefined }, "Cloudflare Token 已从系统凭据库删除。");
-      tokenStatusMessage = "本地 Token 已删除";
-    } catch (error) { onNotice(normalizeError(error).message); }
+      await persistImageBed({ cloudflareTokenId: undefined }, "Token 已从系统凭据库删除。");
+      tokenStatusMessage = $ui("本地 Token 已删除");
+    } catch (error) { onNotice(normalizeError(error).message, "error"); }
     finally { credentialBusy = false; }
   }
 
   async function removeRecent(recentId: string) {
     try { await onRemoveRecentProject(recentId); }
-    catch (error) { onNotice(normalizeError(error).message); }
+    catch (error) { onNotice(normalizeError(error).message, "error"); }
   }
 
   async function clearRecent() {
     try { await onClearRecentProjects(); showClearRecent = false; }
-    catch (error) { onNotice(normalizeError(error).message); }
+    catch (error) { onNotice(normalizeError(error).message, "error"); }
   }
 
 </script>
 
 <div class="workspace-page settings-page" bind:this={pageElement}>
-  <SettingsHeader {dirty} {saving} onDiscard={discard} onSave={saveFromButton} />
+  <SettingsHeader {dirty} {saving} />
   {#if saveError}<p class="sync-error" role="alert">{saveError}</p>{/if}
 
   <div class="settings-layout">
@@ -811,7 +823,7 @@
         </details>
       {:else if activeSection === "editing"}
         <div class="settings-block">
-          <div class="settings-block-heading"><h3>{$ui("外观")}</h3><p>{$ui("主题切换会立即预览，取消后恢复。")}</p></div>
+          <div class="settings-block-heading"><h3>{$ui("外观")}</h3><p>{$ui("改主题立刻能看到效果。")}</p></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-6">{$ui("主题模式")}</label><span id="setting-field-6-hint">{$ui("浅色、深色或跟随系统。")}</span></div><select id="setting-field-6" aria-describedby="setting-field-6-hint" class="select compact-control" value={draft.appearance.themeMode} on:change={(event) => change({ ...draft, appearance: { themeMode: event.currentTarget.value as ThemeMode } })}><option value="system">{$ui("跟随系统")}</option><option value="light">{$ui("浅色")}</option><option value="dark">{$ui("深色")}</option></select></div>
         </div>
         <div class="settings-block">
@@ -824,18 +836,17 @@
           <div class="settings-block-heading"><h3>{$ui("编辑辅助")}</h3></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-10">{$ui("显示行号")}</label><span id="setting-field-10-hint">{$ui("在正文左侧显示行号栏。")}</span></div><label class="switch"><input id="setting-field-10" aria-describedby="setting-field-10-hint" type="checkbox" checked={draft.editor.showLineNumbers} on:change={(event) => change({ ...draft, editor: { ...draft.editor, showLineNumbers: event.currentTarget.checked } })} /><span></span></label></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-11">{$ui("自动换行")}</label><span id="setting-field-11-hint">{$ui("长行按编辑区宽度折行。")}</span></div><label class="switch"><input id="setting-field-11" aria-describedby="setting-field-11-hint" type="checkbox" checked={draft.editor.lineWrapping} on:change={(event) => change({ ...draft, editor: { ...draft.editor, lineWrapping: event.currentTarget.checked } })} /><span></span></label></div>
-          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-12">{$ui("突出当前行")}</label><span id="setting-field-12-hint">{$ui("标记光标所在行。")}</span></div><label class="switch"><input id="setting-field-12" aria-describedby="setting-field-12-hint" type="checkbox" checked={draft.editor.highlightActiveLine} on:change={(event) => change({ ...draft, editor: { ...draft.editor, highlightActiveLine: event.currentTarget.checked } })} /><span></span></label></div>
+          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-12">{$ui("突出当前行")}</label><span id="setting-field-12-hint">{$ui("高亮光标所在的那一行。")}</span></div><label class="switch"><input id="setting-field-12" aria-describedby="setting-field-12-hint" type="checkbox" checked={draft.editor.highlightActiveLine} on:change={(event) => change({ ...draft, editor: { ...draft.editor, highlightActiveLine: event.currentTarget.checked } })} /><span></span></label></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-13">{$ui("文章列表封面")}</label><span id="setting-field-13-hint">{$ui("在文章标题左侧显示缩略图。")}</span></div><label class="switch"><input id="setting-field-13" aria-describedby="setting-field-13-hint" type="checkbox" checked={draft.articleList.showCover} on:change={(event) => change({ ...draft, articleList: { showCover: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
       {:else if activeSection === "images"}
         <div class="settings-block">
 
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-14">{$ui("图片保存到")}</label><span id="setting-field-14-hint">{$ui("适用于粘贴、拖入和导入图片。")}</span></div><select id="setting-field-14" aria-describedby="setting-field-14-hint" class="select compact-control" value={draft.imageBed.defaultProvider} on:change={(event) => change({ ...draft, imageBed: { ...draft.imageBed, defaultProvider: event.currentTarget.value as AppConfigV3["imageBed"]["defaultProvider"] } })}><option value="local">{$ui("本地图片")}</option><option value="cloudflare-imgbed">Cloudflare-ImgBed</option>{#if draft.imageBed.defaultProvider.startsWith("plugin:")}<option value={draft.imageBed.defaultProvider}>{$ui("插件图床")}</option>{/if}</select></div>
-          <div class="setting-row"><div class="setting-copy"><strong>{$ui("图片插入方式")}</strong><span>{$ui("先插入图片，上传后自动更新链接。")}</span></div><span class="muted-line">{$ui("自动")}</span></div>
         </div>
         {#if draft.imageBed.defaultProvider !== "local"}
           <div class="settings-block provider-block">
-            <div class="settings-block-heading"><h3>{draft.imageBed.defaultProvider === "cloudflare-imgbed" ? $ui("Cloudflare 连接") : $ui("插件图床")}</h3><p>{draft.imageBed.defaultProvider === "cloudflare-imgbed" ? $ui("Token 操作立即生效。") : $ui("在插件页管理连接。")}</p></div>
+            <div class="settings-block-heading"><h3>{draft.imageBed.defaultProvider === "cloudflare-imgbed" ? $ui("Cloudflare 连接") : $ui("插件图床")}</h3><p>{draft.imageBed.defaultProvider === "cloudflare-imgbed" ? $ui("Token 改动即时生效。") : $ui("连接在插件页管理。")}</p></div>
             {#if draft.imageBed.defaultProvider === "cloudflare-imgbed"}
             <CloudflareImageBedSettings settings={draft.imageBed} {credential} {legacyCredentialAvailable} busy={credentialBusy} statusMessage={tokenStatusMessage} onChange={updateImageBed} onAcquireToken={prepareAcquireToken} onMigrateLegacyToken={migrateLegacyCredential} onTestConnection={testCredential} onDeleteToken={deleteCredential} />
             {:else}
@@ -845,30 +856,32 @@
         {/if}
       {:else if activeSection === "hexoPublish"}
         <div class="settings-block">
-          <div class="settings-block-heading"><h3>{$ui("浏览器预览")}</h3><p>{$ui("在浏览器中查看真实网站。")}</p></div>
+          <div class="settings-block-heading"><h3>{$ui("网站预览")}</h3><p>{$ui("在浏览器里看真正的网站。")}</p></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-15">{$ui("预览端口")}</label><span id="setting-field-15-hint">{$ui("默认使用 4000。")}</span></div><input data-config-field="previewPort" id="setting-field-15" aria-describedby="setting-field-15-hint" class="input compact-control" type="number" min="300" max="65535" value={draft.hexo.previewPort} on:input={(event) => change({ ...draft, hexo: { ...draft.hexo, previewPort: Number(event.currentTarget.value) } })} /></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-16">{$ui("打开项目后自动启动预览")}</label><span id="setting-field-16-hint">{$ui("后台启动，不打开浏览器。")}</span></div><label class="switch"><input id="setting-field-16" aria-describedby="setting-field-16-hint" type="checkbox" checked={draft.hexo.autoStartPreview} on:change={(event) => change({ ...draft, hexo: { ...draft.hexo, autoStartPreview: event.currentTarget.checked } })} /><span></span></label></div>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-17">{$ui("预览草稿")}</label><span id="setting-field-17-hint">{$ui("在本机预览未发布的文章。")}</span></div><label class="switch"><input id="setting-field-17" aria-describedby="setting-field-17-hint" type="checkbox" checked={draft.hexo.previewDrafts} on:change={(event) => change({ ...draft, hexo: { ...draft.hexo, previewDrafts: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
         <div class="settings-block">
           <div class="settings-block-heading"><h3>{$ui("发布网站")}</h3><p>{$ui("发布快捷键为")} {shortcutLabel("⇧P")}。</p></div>
-          <p class="muted-line publish-sequence">{$ui("保存 → 清理 → 生成 → 部署")}</p>
+          <p class="muted-line publish-sequence">{$ui("保存后依次清理、生成、部署")}</p>
           <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-18">{$ui("部署后 Git Push")}</label><span id="setting-field-18-hint">{$ui("部署成功后推送当前 Git 分支。")}</span></div><label class="switch"><input id="setting-field-18" aria-describedby="setting-field-18-hint" type="checkbox" checked={draft.publish.gitPushAfterDeploy} on:change={(event) => change({ ...draft, publish: { ...draft.publish, gitPushAfterDeploy: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
       {:else if activeSection === "sync"}
         {#if !session}
           <div class="settings-block"><p class="muted-line">{$ui("请先打开一个 Hexo 项目。")}</p></div>
         {:else}
+          {#if !syncStatus.enabled}
           <div class="settings-block sync-plan-block">
-            <div class="settings-block-heading"><h3>{$ui("同步规划")}</h3><p>{$ui("先确认通道和范围，再建立连接；日常保存后自动排队同步。")}</p></div>
+            <div class="settings-block-heading"><h3>{$ui("同步规划")}</h3><p>{$ui("先选通道和范围，再连接；之后每次保存会自动排队同步。")}</p></div>
             <ol class="sync-plan">
-              <li><span>1</span><div><strong>{$ui("选择通道")}</strong><p>{$ui("GitHub 使用独立内容分支；WebDAV 使用你指定的远端目录。")}</p></div></li>
-              <li><span>2</span><div><strong>{$ui("检查连接与差异")}</strong><p>{$ui("预检只读取本机和远端清单，不会覆盖文件。")}</p></div></li>
-              <li><span>3</span><div><strong>{$ui("合并并持续同步")}</strong><p>{$ui("首次合并保留两端独有文件；冲突由你选择。保存后约 30 秒自动上传，也可手动同步。")}</p></div></li>
+              <li><span>1</span><div><strong>{$ui("选择通道")}</strong><p>{$ui("GitHub 用一个独立分支；WebDAV 用你指定的目录。")}</p></div></li>
+              <li><span>2</span><div><strong>{$ui("检查连接与差异")}</strong><p>{$ui("预检只读本机和云端的清单，不会动文件。")}</p></div></li>
+              <li><span>3</span><div><strong>{$ui("合并并持续同步")}</strong><p>{$ui("首次合并保留两边独有的文件，冲突逐个让你选。保存后约 30 秒自动上传。")}</p></div></li>
             </ol>
           </div>
+          {/if}
           {#if syncLoading && !syncLoaded}
-            <div class="settings-block sync-loading" role="status">{$ui("正在读取同步设置和项目范围...")}</div>
+            <div class="settings-block sync-loading" role="status">{$ui("正在读取同步设置…")}</div>
           {:else}
           {#if !syncStatus.enabled}
             <div class="settings-block sync-provider-block">
@@ -884,41 +897,41 @@
             {#if syncError}<p class="sync-error" role="alert">{syncError}</p>{/if}
             {#if syncBusy}
               <div class="sync-progress" role="status" aria-live="polite">
-                <strong>{syncStopping ? $ui("正在停止同步...") : syncProgress?.message || $ui("正在准备同步操作。")}</strong>
+                <strong>{syncStopping ? $ui("正在停止同步…") : syncProgress?.message ? $ui(syncProgress.message) : $ui("正在准备同步…")}</strong>
                 {#if syncProgress?.totalFiles != null && syncProgress.totalFiles > 0}
                   <progress max={syncProgress.totalFiles} value={syncProgress.completedFiles ?? 0} aria-label={$ui("同步文件进度")}></progress>
-                  <span>{Math.min(100, Math.round((syncProgress.completedFiles ?? 0) / syncProgress.totalFiles * 100))}% · {syncProgress.completedFiles ?? 0} / {syncProgress.totalFiles} {$ui("个文件")}</span>
+                  <span>{Math.min(100, Math.round((syncProgress.completedFiles ?? 0) / syncProgress.totalFiles * 100))}% · {$ui("{p0} / {p1} 个文件", { p0: syncProgress.completedFiles ?? 0, p1: syncProgress.totalFiles })}</span>
                 {/if}
-                <span>{$ui("已用时")} {syncElapsed} s</span>
+                <span>{$ui("已用时 {p0} 秒", { p0: syncElapsed })}</span>
                 <button class="button" type="button" disabled={syncStopping} on:click={stopSync}>{syncStopping ? $ui("等待当前请求结束") : $ui("停止同步")}</button>
               </div>
             {/if}
             {#if syncStatus.enabled}
               <fieldset class="sync-decisions" disabled={syncBusy || webDavConnectionDirty}>
                 {#if syncStatus.requiresScopeConfirmation}
-                  <label class="sync-warning"><input type="checkbox" bind:checked={scopeAcknowledged} /><span>{$ui("我同意将草稿、配置和主题上传到公开仓库。")}</span></label>
+                  <label class="sync-warning"><input type="checkbox" bind:checked={scopeAcknowledged} /><span>{$ui("我同意把草稿、配置和主题传到公开仓库。")}</span></label>
                   <button class="button primary" type="button" disabled={syncBusy || !scopeAcknowledged} on:click={() => runSync("auto", true)}>{$ui("确认范围并合并同步")}</button>
                 {:else if syncStatus.status === "conflict"}
-                  <p class="muted-line">{$ui("本地与远端修改了同一文件，请逐项选择。")}</p>
-                  <details class="settings-disclosure"><summary>{$ui("批量选择")}</summary><div class="button-row"><button class="button" type="button" on:click={() => chooseAllConflicts("local")}>{$ui("全部选择本地")}</button><button class="button" type="button" on:click={() => chooseAllConflicts("remote")}>{$ui("全部选择远端")}</button></div></details>
+                  <p class="muted-line">{$ui("本地和云端改了同一个文件，逐个选一下。")}</p>
+                  <details class="settings-disclosure"><summary>{$ui("批量选择")}</summary><div class="button-row"><button class="button" type="button" on:click={() => chooseAllConflicts("local")}>{$ui("全部用本地")}</button><button class="button" type="button" on:click={() => chooseAllConflicts("remote")}>{$ui("全部用云端")}</button></div></details>
                 <div class="sync-conflict-list">
                   {#each syncConflicts as conflict}
                     <article class="sync-conflict-card" aria-labelledby={`conflict-${conflict.path}`}>
                       <strong id={`conflict-${conflict.path}`}>{conflict.path}</strong>
-                      <span>{conflict.kind === "markdown" ? $ui("Markdown 文本") : $ui("二进制 · 本地 {p0} B / 远端 {p1} B", { p0: conflict.localSize ?? 0, p1: conflict.remoteSize ?? 0 })}</span>
-                      {#if conflict.kind === "binary"}<code class="sync-conflict-hashes">{$ui("本地")} {conflict.localHash ?? $ui("已删除")} {$ui("· 远端")} {conflict.remoteHash ?? $ui("已删除")}</code>{/if}
-                      {#if conflict.kind === "markdown"}<details><summary>{$ui("查看两端内容")}</summary><div class="sync-diff"><pre>{conflict.localText ?? $ui("（本地已删除）")}</pre><pre>{conflict.remoteText ?? $ui("（远端已删除）")}</pre></div></details>{/if}
-                      <div class="button-row"><label><input type="radio" name={`sync-${conflict.path}`} value="local" checked={conflictChoices[conflict.path] === "local"} on:change={() => (conflictChoices = { ...conflictChoices, [conflict.path]: "local" })} /> {$ui("本地")}</label><label><input type="radio" name={`sync-${conflict.path}`} value="remote" checked={conflictChoices[conflict.path] === "remote"} on:change={() => (conflictChoices = { ...conflictChoices, [conflict.path]: "remote" })} /> {$ui("远端")}</label></div>
+                      <span>{conflict.kind === "markdown" ? $ui("Markdown 文本") : $ui("二进制 · 本地 {p0} B / 云端 {p1} B", { p0: conflict.localSize ?? 0, p1: conflict.remoteSize ?? 0 })}</span>
+                      {#if conflict.kind === "binary"}<code class="sync-conflict-hashes">{$ui("本地")} {conflict.localHash ?? $ui("已删除")} {$ui("· 云端")} {conflict.remoteHash ?? $ui("已删除")}</code>{/if}
+                      {#if conflict.kind === "markdown"}<details><summary>{$ui("查看两端内容")}</summary><div class="sync-diff"><pre>{conflict.localText ?? $ui("（本地已删除）")}</pre><pre>{conflict.remoteText ?? $ui("（云端已删除）")}</pre></div></details>{/if}
+                      <div class="button-row"><label><input type="radio" name={`sync-${conflict.path}`} value="local" checked={conflictChoices[conflict.path] === "local"} on:change={() => (conflictChoices = { ...conflictChoices, [conflict.path]: "local" })} /> {$ui("本地")}</label><label><input type="radio" name={`sync-${conflict.path}`} value="remote" checked={conflictChoices[conflict.path] === "remote"} on:change={() => (conflictChoices = { ...conflictChoices, [conflict.path]: "remote" })} /> {$ui("云端")}</label></div>
                     </article>
                   {/each}
                 </div>
-                <div class="button-row"><button class="button primary" type="button" disabled={syncBusy || !syncConflicts.length || syncConflicts.some((item) => !conflictChoices[item.path])} on:click={submitConflictChoices}>{$ui("提交冲突选择")}</button><button class="button" type="button" on:click={() => session && platform.openContentSyncBackups(session.projectId, session.generation)}>{$ui("打开备份目录")}</button></div>
+                <div class="button-row"><button class="button primary" type="button" disabled={syncBusy || !syncConflicts.length || syncConflicts.some((item) => !conflictChoices[item.path])} on:click={submitConflictChoices}>{$ui("提交选择")}</button><button class="button" type="button" on:click={() => session && platform.openContentSyncBackups(session.projectId, session.generation)}>{$ui("打开备份目录")}</button></div>
 
                   <button class="button" type="button" on:click={() => runSync("auto")}>{$ui("重新检查冲突")}</button>
                 {:else}
                   {#if ["error", "offline", "authRequired"].includes(syncStatus.status) && syncStatus.message}<p class="sync-warning" role="status">{syncStatus.message}</p>{/if}
-                  {#if syncStatus.status === "remoteAhead"}<p class="muted-line">{$ui("合并云端改动；同一文件有冲突时由你选择。")}</p>{/if}
-                  <div class="button-row"><button class="button primary" type="button" disabled={syncBusy} on:click={() => runSync("auto")}>{["error", "offline", "authRequired"].includes(syncStatus.status) ? $ui("重试同步") : syncStatus.status === "remoteAhead" ? $ui("合并云端变更") : !syncStatus.lastSyncedAt ? $ui("合并并开始同步") : $ui("立即同步")}</button>{#if syncStatus.status === "authRequired" && syncProvider === "github"}<button class="button" type="button" disabled={syncBusy} on:click={reconnectSync}>{$ui("重新认证")}</button>{/if}</div>
+                  {#if syncStatus.status === "remoteAhead"}<p class="muted-line">{$ui("双向合并，遇到冲突会让你逐个选。")}</p>{/if}
+                  <div class="button-row"><button class="button primary" type="button" disabled={syncBusy} on:click={() => runSync("auto")}>{["error", "offline", "authRequired"].includes(syncStatus.status) ? $ui("重试同步") : syncStatus.status === "remoteAhead" ? $ui("合并云端改动") : !syncStatus.lastSyncedAt ? $ui("合并并开始同步") : $ui("立即同步")}</button>{#if syncStatus.status === "authRequired" && syncProvider === "github"}<button class="button" type="button" disabled={syncBusy} on:click={reconnectSync}>{$ui("重新认证")}</button>{/if}</div>
                 {/if}
               </fieldset>
             {:else}
@@ -928,69 +941,76 @@
           {/if}
           {#if syncStatus.enabled}
           <div class="settings-block">
-            <div class="setting-subsection-heading"><h3>{$ui("本次变化")}</h3><button class="button" type="button" disabled={syncBusy || summaryBusy} on:click={refreshSyncSummary}>{summaryBusy ? $ui("正在扫描...") : $ui("刷新")}</button></div>
+            <div class="setting-subsection-heading"><h3>{$ui("本次变化")}</h3><button class="button" type="button" disabled={syncBusy || summaryBusy} on:click={refreshSyncSummary}>{summaryBusy ? $ui("正在扫描…") : $ui("刷新")}</button></div>
             {#if summaryError}<p class="sync-error" role="alert">{summaryError}</p>{/if}
             {#if syncSummary}
-              <p class="sync-change-summary" role="status">{$ui("待上传")} <strong>{syncSummary.pendingFileCount} {$ui("个文件")}</strong> · {formatBytes(syncSummary.pendingBytes)}{#if syncSummary.deletedFileCount} · {$ui("删除")} {syncSummary.deletedFileCount} {$ui("个文件")}{/if}</p>
-              <p class="muted-line">{syncSummary.baselineAvailable ? $ui("只传输变化文件，自动合并其他设备的改动。") : $ui("首次合并保留两端独有文件，同名文件不同内容时由你选择。")}</p>
-              <details class="settings-disclosure sync-scope" open>
-                <summary>{$ui("完整站点源码")} <span>{syncSummary.fileCount} {$ui("个文件")} · {formatBytes(syncSummary.totalBytes)}</span></summary>
-                <dl>{#each syncSummary.categories as category}<div><dt>{$ui(scopeLabels[category.id])}</dt><dd>{category.fileCount} {$ui("个文件")} · {formatBytes(category.totalBytes)}</dd></div>{/each}</dl>
-                <p class="muted-line">{$ui("包含重定向和新增模块；排除依赖、生成目录、缓存和敏感文件。")}</p>
+              <p class="sync-change-summary" role="status">{$ui("待上传 {p0} 个文件 · {p1}", { p0: syncSummary.pendingFileCount, p1: formatBytes(syncSummary.pendingBytes) })}{#if syncSummary.deletedFileCount} · {$ui("删除 {p0} 个文件", { p0: syncSummary.deletedFileCount })}{/if}</p>
+              <details class="settings-disclosure sync-scope">
+                <summary>{$ui("同步细节")} <span>{$ui("{p0} 个文件 · {p1}", { p0: syncSummary.fileCount, p1: formatBytes(syncSummary.totalBytes) })}</span></summary>
+                <p class="muted-line">{syncSummary.baselineAvailable ? $ui("只传有变化的文件，自动合并其他设备的改动。") : $ui("首次合并保留两边独有的文件，同名冲突逐个让你选。")}</p>
+                <dl>{#each syncSummary.categories as category}<div><dt>{$ui(scopeLabels[category.id])}</dt><dd>{$ui("{p0} 个文件 · {p1}", { p0: category.fileCount, p1: formatBytes(category.totalBytes) })}</dd></div>{/each}</dl>
+                <p class="muted-line">{$ui("包含重定向和新增模块，不含依赖、生成目录、缓存和敏感文件。")}</p>
               </details>
-            {:else if summaryBusy}<p class="muted-line" role="status">{$ui("正在统计站点源码...")}</p>{/if}
-            <div class="sync-publish-row"><div class="setting-copy"><strong>{$ui("发布网站")}</strong><span>{$ui("同步只保存源码。要让线上网站生效，请发布。")}</span></div><button class="button" type="button" disabled={syncBusy || taskBusy || syncStatus.status === "conflict" || syncStatus.status === "remoteAhead"} on:click={publishSite}>{$ui("发布网站")}</button></div>
+            {:else if summaryBusy}<p class="muted-line" role="status">{$ui("正在统计站点源码…")}</p>{/if}
+            <div class="sync-publish-row"><div class="setting-copy"><strong>{$ui("发布网站")}</strong><span>{$ui("同步只传源码，线上生效还需要发布。")}</span></div><button class="button" type="button" disabled={syncBusy || taskBusy || syncStatus.status === "conflict" || syncStatus.status === "remoteAhead"} on:click={publishSite}>{$ui("发布网站")}</button></div>
           </div>
           {/if}
           <div class="settings-block sync-connection-block">
-            <div class="settings-block-heading">
-              <h3>{syncStatus.enabled ? $ui("当前连接") : syncProvider === "github" ? $ui("设置 GitHub") : $ui("设置 WebDAV")}</h3>
-              <p>{syncStatus.enabled ? $ui("当前只显示正在使用的同步通道。") : $ui("完成检查后才能启用，不会直接覆盖任何一端。")}</p>
-            </div>
-            {#if syncStatus.enabled && syncProvider === "github"}
-              <details class="settings-disclosure"><summary>{$ui("连接详情")} <span>GitHub</span></summary><p class="sync-location">{syncStatus.repository} · {syncStatus.branch}</p><p class="muted-line">{$ui("保存后自动同步，也可点击立即同步。")}</p></details>
+            {#if syncStatus.enabled}
+              <div class="provider-tabs" role="tablist" aria-label={$ui("同步方式")}>
+                <button type="button" role="tab" class="provider-tab" aria-selected={setupProvider === "github"} class:active={setupProvider === "github"} disabled={syncBusy} on:click={() => chooseConnectionProvider("github")}>GitHub</button>
+                <button type="button" role="tab" class="provider-tab" aria-selected={setupProvider === "webdav"} class:active={setupProvider === "webdav"} disabled={syncBusy} on:click={() => chooseConnectionProvider("webdav")}>WebDAV</button>
+              </div>
+              {#if switchingProvider}<p class="provider-switch-hint">{$ui("切换后本机改用新通道同步，旧通道上的文件不会被删除。")}</p>{/if}
+            {:else}
+              <div class="settings-block-heading">
+                <h3>{syncProvider === "github" ? $ui("设置 GitHub") : $ui("设置 WebDAV")}</h3>
+                <p>{$ui("先完成检查再启用，不会直接覆盖任何一边。")}</p>
+              </div>
             {/if}
-            {#if !syncStatus.enabled && syncProvider === "github"}
+            {#if syncStatus.enabled && !switchingProvider && setupProvider === "github"}
+              <details class="settings-disclosure"><summary>{$ui("连接详情")} <span>GitHub</span></summary><p class="sync-location">{syncStatus.repository} · {syncStatus.branch}</p><p class="muted-line">{$ui("保存后会自动同步，也可手动立即同步。")}</p></details>
+            {:else if setupProvider === "github"}
               {#if !syncCandidates.length}
-                <p class="muted-line">{$ui("没有检测到 GitHub Pages 或 GitHub deploy 仓库。你仍可改用 WebDAV。")}</p>
+                <p class="muted-line">{syncStatus.enabled ? $ui("项目里没有可同步的 GitHub 仓库。") : $ui("没找到 GitHub Pages 或 deploy 仓库，也可以改用 WebDAV。")}</p>
               {:else}
                 {#if syncCandidates.length > 1}
-                  <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-20">{$ui("目标仓库")}</label><span id="setting-field-20-hint">{$ui("选择用于保存源码的仓库。")}</span></div><select id="setting-field-20" aria-describedby="setting-field-20-hint" aria-label={$ui("目标仓库")} class="select compact-control" disabled={syncBusy} value={syncCandidate?.repository ?? ""} on:change={(event) => { syncCandidate = syncCandidates.find((item) => item.repository === event.currentTarget.value) ?? null; syncPreflight = null; publicAcknowledged = false; }}><option value="" disabled>{$ui("请选择仓库")}</option>{#each syncCandidates as candidate}<option value={candidate.repository}>{candidate.repository}</option>{/each}</select></div>
+                  <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-20">{$ui("目标仓库")}</label><span id="setting-field-20-hint">{$ui("选一个存源码的仓库。")}</span></div><select id="setting-field-20" aria-describedby="setting-field-20-hint" aria-label={$ui("目标仓库")} class="select compact-control" disabled={syncBusy} value={syncCandidate?.repository ?? ""} on:change={(event) => { syncCandidate = syncCandidates.find((item) => item.repository === event.currentTarget.value) ?? null; syncPreflight = null; publicAcknowledged = false; }}><option value="" disabled>{$ui("请选择仓库")}</option>{#each syncCandidates as candidate}<option value={candidate.repository}>{candidate.repository}</option>{/each}</select></div>
                 {/if}
                 {#if !syncCandidate}
-                  <p class="muted-line">{$ui("选择目标仓库后才能预检和启用内容同步。")}</p>
+                  <p class="muted-line">{$ui("先选仓库，才能预检和启用同步。")}</p>
                 {:else}
                   <div class="sync-summary"><strong>{syncCandidate.repository}</strong><span>{syncCandidate.source} {$ui("· 仓库可见性：")}{syncCandidate.visibility === "public" ? $ui("公开") : syncCandidate.visibility === "private" ? $ui("私有") : $ui("未确认")}</span></div>
                   <details class="settings-disclosure sync-advanced-branch"><summary>{$ui("高级连接选项")}</summary><div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-21">{$ui("项目同步分支")}</label><span id="setting-field-21-hint">{$ui("独立保存源码，不影响网站发布分支。")}</span></div><input id="setting-field-21" aria-describedby="setting-field-21-hint" aria-label={$ui("内容分支")} class="input compact-control" value={syncBranch} disabled={syncBusy} on:input={(event) => { syncBranch = event.currentTarget.value; syncPreflight = null; }} /></div></details>
-                  {#if syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown"}<label class="sync-warning"><input type="checkbox" bind:checked={publicAcknowledged} /><span>{$ui("我同意将草稿、配置和主题上传到公开仓库。")}</span></label>{/if}
-                  {#if syncPreflight}<div class="sync-summary"><strong>{$ui("启用预检")}</strong><span>{$ui("本地")} {syncPreflight.fileCount} {$ui("个文件 ·")} {(syncPreflight.totalBytes / 1024 / 1024).toFixed(2)} MB</span>{#if syncPreflight.remoteBranchExists && syncPreflight.remoteManifestValid}<span>{$ui("远端")} {syncPreflight.remoteFileCount} {$ui("个文件 ·")} {(syncPreflight.remoteTotalBytes / 1024 / 1024).toFixed(2)} MB</span><span>{$ui("仅本地")} {syncPreflight.localOnlyCount} {$ui("· 仅远端")} {syncPreflight.remoteOnlyCount} {$ui("· 内容不同")} {syncPreflight.differentCount}</span>{:else}<span>{syncPreflight.remoteBranchExists ? $ui("远端分支没有合法清单，不能接管") : $ui("将创建新的孤立分支")}</span>{/if}</div>{/if}
-                  <div class="button-row"><button class="button" type="button" disabled={syncBusy} on:click={preflightSync}>{syncBusy ? $ui("正在检查...") : $ui("检查连接与差异")}</button><button class="button primary" type="button" disabled={syncBusy || !syncPreflight || (syncPreflight.remoteBranchExists && !syncPreflight.remoteManifestValid) || ((syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown") && !publicAcknowledged)} on:click={() => configureSync()}>{$ui("合并并开始同步")}</button></div>
+                  {#if syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown"}<label class="sync-warning"><input type="checkbox" bind:checked={publicAcknowledged} /><span>{$ui("我同意把草稿、配置和主题传到公开仓库。")}</span></label>{/if}
+                  {#if syncPreflight}<div class="sync-summary"><strong>{$ui("启用预检")}</strong><span>{$ui("本地 {p0} 个文件 · {p1} MB", { p0: syncPreflight.fileCount, p1: (syncPreflight.totalBytes / 1024 / 1024).toFixed(2) })}</span>{#if syncPreflight.remoteBranchExists && syncPreflight.remoteManifestValid}<span>{$ui("云端 {p0} 个文件 · {p1} MB", { p0: syncPreflight.remoteFileCount, p1: (syncPreflight.remoteTotalBytes / 1024 / 1024).toFixed(2) })}</span><span>{$ui("仅本地 {p0} · 仅云端 {p1} · 内容不同 {p2}", { p0: syncPreflight.localOnlyCount, p1: syncPreflight.remoteOnlyCount, p2: syncPreflight.differentCount })}</span>{:else}<span>{syncPreflight.remoteBranchExists ? $ui("云端分支没有合法清单，不能接管") : $ui("将创建新的孤立分支")}</span>{/if}</div>{/if}
+                  <div class="button-row"><button class="button" type="button" disabled={syncBusy} on:click={preflightSync}>{syncBusy ? $ui("正在检查…") : $ui("检查连接与差异")}</button><button class="button primary" type="button" disabled={syncBusy || !syncPreflight || (syncPreflight.remoteBranchExists && !syncPreflight.remoteManifestValid) || ((syncCandidate.visibility === "public" || syncCandidate.visibility === "unknown") && !publicAcknowledged)} on:click={() => configureSync()}>{syncStatus.enabled ? $ui("切换到 GitHub 并合并") : $ui("合并并开始同步")}</button></div>
                 {/if}
               {/if}
-            {:else if syncProvider === "webdav"}
+            {:else}
               <details class="sync-connection-details" open={!syncStatus.enabled || webDavConnectionOpen} on:toggle={(event) => { if (syncStatus.enabled) webDavConnectionOpen = event.currentTarget.open; }}>
                 <summary>{$ui("WebDAV 连接设置")}{#if syncStatus.enabled}<span>{$ui("立即生效")}</span>{/if}</summary>
               <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-22">{$ui("服务器地址")}</label><span id="setting-field-22-hint">{$ui("更换地址后需重新测试。")}</span></div><input id="setting-field-22" aria-describedby="setting-field-22-hint" aria-label={$ui("WebDAV 服务器地址")} class="input compact-control" type="url" placeholder="https://dav.example.com/dav" value={webDavEndpoint} disabled={syncBusy} on:input={(event) => { webDavEndpoint = event.currentTarget.value; webDavCredential = { configured: false }; webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} on:blur={refreshWebDavCredential} /></div>
-              <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-23">{$ui("远端目录")}</label><span id="setting-field-23-hint">{$ui("用于保存站点源码。")}</span></div><input id="setting-field-23" aria-describedby="setting-field-23-hint" aria-label={$ui("WebDAV 远端目录")} class="input compact-control" value={webDavRemoteDir} disabled={syncBusy} on:input={(event) => { webDavRemoteDir = event.currentTarget.value; webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
+              <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-23">{$ui("云端目录")}</label><span id="setting-field-23-hint">{$ui("用于保存站点源码。")}</span></div><input id="setting-field-23" aria-describedby="setting-field-23-hint" aria-label={$ui("WebDAV 云端目录")} class="input compact-control" value={webDavRemoteDir} disabled={syncBusy} on:input={(event) => { webDavRemoteDir = event.currentTarget.value; webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
               <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-24">{$ui("用户名")}</label><span id="setting-field-24-hint">{$ui("WebDAV 登录账号。")}</span></div><input id="setting-field-24" aria-describedby="setting-field-24-hint" aria-label={$ui("WebDAV 用户名")} class="input compact-control" autocomplete="username" bind:value={webDavUsername} disabled={syncBusy} on:input={() => { webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
               <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-25">{$ui("密码")}</label><span id="setting-field-25-hint">{webDavCredential.configured ? $ui("留空使用已保存密码。") : $ui("测试成功后保存到系统凭据库。")}</span></div><input id="setting-field-25" aria-describedby="setting-field-25-hint" aria-label={$ui("WebDAV 密码")} class="input compact-control" type="password" autocomplete="current-password" bind:value={webDavPassword} disabled={syncBusy} on:input={() => { webDavPreflight = null; webDavTestedAt = ""; webDavConnectionError = ""; }} /></div>
 
-              {#if webDavConnectionDirty}<p class="sync-warning" role="status">{$ui("连接有未应用的修改，请重新测试并应用。")}</p>{/if}
-              {#if syncStatus.status === "authRequired"}<p class="sync-warning" role="alert">{$ui("当前凭据无法认证。请直接修改用户名或密码，然后重新测试。")}</p>{/if}
+              {#if webDavConnectionDirty}<p class="sync-warning" role="status">{$ui("连接信息改了，重新测试并应用。")}</p>{/if}
+              {#if syncStatus.status === "authRequired"}<p class="sync-warning" role="alert">{$ui("凭据验证不过。改一下用户名或密码，再重新测试。")}</p>{/if}
               {#if webDavConnectionError}<p class="sync-error" role="alert">{webDavConnectionError}</p>{/if}
-              <div class="button-row"><button class="button" type="button" disabled={syncBusy || !webDavEndpoint.trim() || !webDavRemoteDir.trim() || !webDavUsername.trim() || (!webDavPassword && !webDavCredential.configured)} on:click={testWebDavConnection}>{syncBusy ? $ui("正在测试...") : $ui("保存并测试连接")}</button>{#if webDavCredential.configured}<button class="button danger" type="button" disabled={syncBusy} on:click={deleteWebDavCredential}>{$ui("删除凭据")}</button>{/if}</div>
-              {#if webDavPreflight}<div class="sync-summary"><strong>{$ui("连接测试通过")}</strong><span>{webDavPreflight.endpoint}/{webDavPreflight.remoteDir}</span>{#if webDavTestedAt}<span>{$ui("验证时间：")}{new Date(webDavTestedAt).toLocaleString()}</span>{/if}<span>{$ui("本地")} {webDavPreflight.fileCount} {$ui("个文件 ·")} {(webDavPreflight.totalBytes / 1024 / 1024).toFixed(2)} MB</span>{#if webDavPreflight.remoteExists && webDavPreflight.remoteManifestValid}<span>{$ui("远端")} {webDavPreflight.remoteFileCount} {$ui("个文件 ·")} {(webDavPreflight.remoteTotalBytes / 1024 / 1024).toFixed(2)} MB</span><span>{$ui("仅本地")} {webDavPreflight.localOnlyCount} {$ui("· 仅远端")} {webDavPreflight.remoteOnlyCount} {$ui("· 内容不同")} {webDavPreflight.differentCount}</span>{:else}<span>{webDavPreflight.remoteExists ? $ui("远端目录没有合法清单，不能接管") : $ui("将初始化新的 WebDAV 远端目录")}</span>{/if}</div>{/if}
+              <div class="button-row"><button class="button" type="button" disabled={syncBusy || !webDavEndpoint.trim() || !webDavRemoteDir.trim() || !webDavUsername.trim() || (!webDavPassword && !webDavCredential.configured)} on:click={testWebDavConnection}>{syncBusy ? $ui("正在测试…") : $ui("保存并测试连接")}</button>{#if webDavCredential.configured}<button class="button danger" type="button" disabled={syncBusy} on:click={deleteWebDavCredential}>{$ui("删除凭据")}</button>{/if}</div>
+              {#if webDavPreflight}<div class="sync-summary"><strong>{$ui("连接测试通过")}</strong><span>{webDavPreflight.endpoint}/{webDavPreflight.remoteDir}</span>{#if webDavTestedAt}<span>{$ui("验证时间：")}{new Date(webDavTestedAt).toLocaleString()}</span>{/if}<span>{$ui("本地 {p0} 个文件 · {p1} MB", { p0: webDavPreflight.fileCount, p1: (webDavPreflight.totalBytes / 1024 / 1024).toFixed(2) })}</span>{#if webDavPreflight.remoteExists && webDavPreflight.remoteManifestValid}<span>{$ui("云端 {p0} 个文件 · {p1} MB", { p0: webDavPreflight.remoteFileCount, p1: (webDavPreflight.remoteTotalBytes / 1024 / 1024).toFixed(2) })}</span><span>{$ui("仅本地 {p0} · 仅云端 {p1} · 内容不同 {p2}", { p0: webDavPreflight.localOnlyCount, p1: webDavPreflight.remoteOnlyCount, p2: webDavPreflight.differentCount })}</span>{:else}<span>{webDavPreflight.remoteExists ? $ui("云端目录没有合法清单，不能接管") : $ui("将初始化新的 WebDAV 云端目录")}</span>{/if}</div>{/if}
               {#if syncStatus.enabled && syncStatus.provider === "webdav"}
                 {#if webDavConnectionDirty}<div class="button-row"><button class="button primary" type="button" disabled={syncBusy || !webDavTestMatches || (webDavPreflight?.remoteExists && !webDavPreflight.remoteManifestValid)} on:click={applyWebDavConnection}>{$ui("应用连接设置")}</button></div>{/if}
               {:else}
-                <div class="button-row"><button class="button primary" type="button" disabled={syncBusy || !webDavTestMatches || !webDavPreflight || (webDavPreflight.remoteExists && !webDavPreflight.remoteManifestValid)} on:click={() => configureSync()}>{$ui("合并并开始同步")}</button></div>
+                <div class="button-row"><button class="button primary" type="button" disabled={syncBusy || !webDavTestMatches || !webDavPreflight || (webDavPreflight.remoteExists && !webDavPreflight.remoteManifestValid)} on:click={() => configureSync()}>{syncStatus.enabled ? $ui("切换到 WebDAV 并合并") : $ui("合并并开始同步")}</button></div>
               {/if}
               </details>
             {/if}
 
           </div>
           {#if syncStatus.enabled}
-            <details class="settings-block settings-disclosure sync-danger-zone"><summary>{$ui("高级操作")}</summary><p class="muted-line">{$ui("覆盖会丢弃一端的修改，请优先使用合并同步。")}</p>
+            <details class="settings-block settings-disclosure sync-danger-zone"><summary>{$ui("高级操作")}</summary><p class="muted-line">{$ui("覆盖会丢掉一边的修改，合并同步不会。")}</p>
               <div class="button-row"><button class="button danger" type="button" disabled={syncBusy || webDavConnectionDirty || syncStatus.requiresScopeConfirmation} on:click={() => (pendingSyncOverwrite = "overwriteLocal")}>{$ui("用云端项目覆盖本机")}</button><button class="button danger" type="button" disabled={syncBusy || webDavConnectionDirty || syncStatus.requiresScopeConfirmation} on:click={() => (pendingSyncOverwrite = "overwriteRemote")}>{$ui("用本机项目覆盖云端")}</button><button class="button" type="button" disabled={syncBusy} on:click={() => session && platform.openContentSyncBackups(session.projectId, session.generation)}>{$ui("打开备份目录")}</button><button class="button danger" type="button" disabled={syncBusy} on:click={disableSync}>{$ui("关闭同步")}</button></div>
             </details>
           {/if}
@@ -999,12 +1019,12 @@
       {:else}
         <div class="settings-block">
           <div class="setting-subsection-heading"><h3>{$ui("应用更新")}</h3><button class="button" type="button" on:click={onOpenUpdates}>{$ui("查看更新")}</button></div>
-          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-26">{$ui("启动时检查更新")}</label><span id="setting-field-26-hint">{$ui("每天检查一次，不弹出提示框。")}</span></div><label class="switch"><input id="setting-field-26" aria-describedby="setting-field-26-hint" type="checkbox" checked={draft.update.checkOnStart} on:change={(event) => change({ ...draft, update: { ...draft.update, checkOnStart: event.currentTarget.checked } })} /><span></span></label></div>
-          <div class="setting-row setting-row-dependent" class:disabled={!draft.update.checkOnStart}><div class="setting-copy"><label class="setting-title" for="setting-auto-download">{$ui("后台下载更新")}</label><span id="setting-auto-download-hint">{$ui("下载完成后，由你点击安装。")}</span></div><label class="switch"><input id="setting-auto-download" aria-describedby="setting-auto-download-hint" type="checkbox" disabled={!draft.update.checkOnStart} checked={draft.update.autoDownload} on:change={(event) => change({ ...draft, update: { ...draft.update, autoDownload: event.currentTarget.checked } })} /><span></span></label></div>
+          <div class="setting-row"><div class="setting-copy"><label class="setting-title" for="setting-field-26">{$ui("启动时检查更新")}</label><span id="setting-field-26-hint">{$ui("每天查一次，不弹窗。")}</span></div><label class="switch"><input id="setting-field-26" aria-describedby="setting-field-26-hint" type="checkbox" checked={draft.update.checkOnStart} on:change={(event) => change({ ...draft, update: { ...draft.update, checkOnStart: event.currentTarget.checked } })} /><span></span></label></div>
+          <div class="setting-row setting-row-dependent" class:disabled={!draft.update.checkOnStart}><div class="setting-copy"><label class="setting-title" for="setting-auto-download">{$ui("后台下载更新")}</label><span id="setting-auto-download-hint">{$ui("下载完成后由你点安装。")}</span></div><label class="switch"><input id="setting-auto-download" aria-describedby="setting-auto-download-hint" type="checkbox" disabled={!draft.update.checkOnStart} checked={draft.update.autoDownload} on:change={(event) => change({ ...draft, update: { ...draft.update, autoDownload: event.currentTarget.checked } })} /><span></span></label></div>
         </div>
         <details class="settings-block settings-disclosure">
           <summary>{$ui("恢复设置")}</summary>
-          <div class="setting-row"><div class="setting-copy"><strong>{$ui("恢复默认设置")}</strong><span>{$ui("保留 Token；保存前可以取消。")}</span></div><button class="button" type="button" on:click={() => (showReset = true)}><RotateCcw size={14} />{$ui("恢复默认")}</button></div>
+          <div class="setting-row"><div class="setting-copy"><strong>{$ui("恢复默认设置")}</strong><span>{$ui("只重置常规设置，Token 保留。")}</span></div><button class="button" type="button" on:click={() => (showReset = true)}><RotateCcw size={14} />{$ui("恢复默认")}</button></div>
         </details>
       {/if}
     </section>
@@ -1012,37 +1032,37 @@
 </div>
 
 {#if showAcquireToken}
-  <ModalDialog title={$ui("获取 Cloudflare-ImgBed Token")} description={$ui("管理员凭据只用于本次登录和创建 Token，不会写入配置或日志。")} onClose={closeAcquireToken}>
+  <ModalDialog title={$ui("获取 Cloudflare-ImgBed Token")} description={$ui("仅用于本次登录和创建 Token，不会写进配置或日志。")} onClose={closeAcquireToken}>
     <div class="modal-form">
       <label><span>{$ui("管理员用户名")}</span><input class="input" data-autofocus autocomplete="username" bind:value={adminUsername} placeholder={$ui("按服务端配置填写，可留空")} /></label>
       <label><span>{$ui("管理员密码")}</span><input class="input" type="password" autocomplete="current-password" bind:value={adminPassword} placeholder={$ui("按服务端配置填写，可留空")} /></label>
       {#if tokenStatusMessage}<p class="modal-status" role="status">{tokenStatusMessage}</p>{/if}
     </div>
-    <svelte:fragment slot="actions"><button class="button" type="button" disabled={credentialBusy} on:click={closeAcquireToken}>{$ui("取消")}</button><button class="button primary" type="button" disabled={credentialBusy} on:click={acquireToken}><KeyRound size={14} />{credentialBusy ? $ui("正在获取 Token...") : $ui("获取并保存")}</button></svelte:fragment>
+    <svelte:fragment slot="actions"><button class="button" type="button" disabled={credentialBusy} on:click={closeAcquireToken}>{$ui("取消")}</button><button class="button primary" type="button" disabled={credentialBusy} on:click={acquireToken}><KeyRound size={14} />{credentialBusy ? $ui("正在获取 Token…") : $ui("获取并保存")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if showReset}
-  <ModalDialog title={$ui("恢复默认设置？")} description={$ui("默认值会先进入设置草稿，点击保存后才会写入；系统凭据库中的 Token 不受影响。")} onClose={() => (showReset = false)}>
-    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (showReset = false)}>{$ui("取消")}</button><button class="button danger" type="button" data-autofocus on:click={restoreDefaults}>{$ui("恢复默认")}</button></svelte:fragment>
+  <ModalDialog title={$ui("恢复默认设置？")} description={$ui("恢复默认会立即生效；凭据库里的 Token 不受影响。")} onClose={() => (showReset = false)}>
+    <svelte:fragment slot="actions"><button class="button" type="button" data-autofocus on:click={() => (showReset = false)}>{$ui("取消")}</button><button class="button danger" type="button" on:click={restoreDefaults}>{$ui("恢复默认")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if showClearRecent}
-  <ModalDialog title={$ui("清空最近项目？")} description={$ui("只删除最近项目记录，不会删除磁盘上的博客文件。")} onClose={() => (showClearRecent = false)}>
-    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (showClearRecent = false)}>{$ui("取消")}</button><button class="button danger" type="button" data-autofocus on:click={clearRecent}>{$ui("清空记录")}</button></svelte:fragment>
+  <ModalDialog title={$ui("清空最近项目？")} description={$ui("只清掉记录，磁盘上的博客文件不动。")} onClose={() => (showClearRecent = false)}>
+    <svelte:fragment slot="actions"><button class="button" type="button" data-autofocus on:click={() => (showClearRecent = false)}>{$ui("取消")}</button><button class="button danger" type="button" on:click={clearRecent}>{$ui("清空记录")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
 {#if pendingSyncOverwrite}
   <ModalDialog
-    title={pendingSyncOverwrite === "overwriteLocal" ? $ui("使用云端最新项目？") : $ui("用本机项目覆盖云端？")}
+    title={pendingSyncOverwrite === "overwriteLocal" ? $ui("用云端覆盖本机？") : $ui("用本机项目覆盖云端？")}
     description={pendingSyncOverwrite === "overwriteLocal"
-      ? $ui("云端项目会覆盖本地同名文件，并删除云端已删除的本地文件。应用会先创建本地备份。")
-      : $ui("将基于刚读取的云端最新提交创建一个新版本，使云端项目内容与本机一致。其他设备尚未上传的改动会被覆盖。")}
+      ? $ui("云端会覆盖同名文件；云端删掉的，本地也会删。会先做本地备份。")
+      : $ui("云端会更新到和本机一致。其他设备没上传的改动会被覆盖。")}
     onClose={() => (pendingSyncOverwrite = null)}
   >
-    <svelte:fragment slot="actions"><button class="button" type="button" on:click={() => (pendingSyncOverwrite = null)}>{$ui("取消")}</button><button class="button danger" type="button" data-autofocus on:click={confirmSyncOverwrite}>{$ui("确认覆盖")}</button></svelte:fragment>
+    <svelte:fragment slot="actions"><button class="button" type="button" data-autofocus on:click={() => (pendingSyncOverwrite = null)}>{$ui("取消")}</button><button class="button danger" type="button" on:click={confirmSyncOverwrite}>{$ui("确认覆盖")}</button></svelte:fragment>
   </ModalDialog>
 {/if}
 
@@ -1060,6 +1080,13 @@
   .sync-progress span { font-size: 12px; color: var(--text-secondary); }
   .sync-progress .button { justify-self: start; }
   .sync-connection-details { margin-block: 12px; }
+  .provider-tabs { display: inline-grid; grid-auto-flow: column; gap: 4px; padding: 4px; border-radius: 11px; background: var(--bg-control); }
+  .provider-tabs .provider-tab { border: 0; border-radius: 8px; padding: 7px 22px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; transition: background var(--duration-fast) ease, color var(--duration-fast) ease; }
+  .provider-tabs .provider-tab:hover:not(:disabled) { color: var(--text-primary); }
+  .provider-tabs .provider-tab.active { background: var(--bg-panel); color: var(--text-primary); box-shadow: var(--shadow-popover); }
+  .provider-tabs .provider-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .provider-tabs .provider-tab:disabled { cursor: default; opacity: 0.6; }
+  .provider-switch-hint { margin: 12px 0 0; color: var(--text-secondary); font-size: 12px; }
   .sync-connection-details > summary { padding-block: 10px; cursor: pointer; font-weight: 600; }
   .sync-connection-details > summary span { margin-left: 12px; font-weight: 400; font-size: 12px; color: var(--text-secondary); }
   .settings-disclosure > summary { cursor: pointer; padding-block: 4px; font-size: 13px; font-weight: 600; }

@@ -5,7 +5,6 @@ import SettingsPage from "./SettingsPage.svelte";
 import { defaultConfig, type AppConfigV3, type ContentSyncView } from "$shared/types/app";
 import { platform } from "$platform/tauri";
 import { setLanguage } from "$shared/i18n";
-import type { SettingsController } from "./controller";
 
 vi.mock("$platform/tauri", () => ({
   normalizeError: (error: unknown) => ({ message: error instanceof Error ? error.message : String(error) }),
@@ -75,7 +74,7 @@ describe("settings interaction recovery", () => {
     await fireEvent.click(view.getByRole("button", { name: "保存并测试连接" }));
     await fireEvent.input(view.getByLabelText("WebDAV 服务器地址"), { target: { value: "https://new.example/dav" } });
     finish({ username: "writer", testedAt: "2026-09-11", sync: status, preflight: { endpoint: "https://old.example/dav", remoteDir: "hexo-lite-content", fileCount: 1, totalBytes: 4, remoteFileCount: 0, remoteTotalBytes: 0, localOnlyCount: 1, remoteOnlyCount: 0, differentCount: 0, remoteExists: false, remoteManifestValid: false } });
-    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("请重新测试当前输入"));
+    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("用当前输入重新测试"));
     expect((view.getByLabelText("WebDAV 服务器地址") as HTMLInputElement).value).toBe("https://new.example/dav");
     expect(view.queryByText("连接测试通过")).toBeNull();
   });
@@ -95,70 +94,78 @@ describe("settings interaction recovery", () => {
     expect((view.getByRole("button", { name: "立即同步" }) as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.click(view.getByRole("button", { name: "停止同步" }));
     expect(platform.cancelContentSync).toHaveBeenCalledWith("project", 1);
-    expect(view.getByText("正在停止同步...")).toBeTruthy();
+    expect(view.getByText("正在停止同步…")).toBeTruthy();
     finish({ ...status, status: "error", message: "stopped" });
     await waitFor(() => expect(view.getByRole("button", { name: "重试同步" })).toBeTruthy());
     await waitFor(() => expect(view.queryByRole("progressbar")).toBeNull());
   });
-  it.each(["success", "failure"])("waits for an in-flight %s before discarding to the actual saved settings", async (outcome) => {
+  it("switches between GitHub and WebDAV inline without turning sync off", async () => {
+    const status: ContentSyncView = { enabled: true, provider: "github", status: "synced", conflicts: [], repository: "https://github.com/example/blog.git", branch: "hexo-lite-content", lastSyncedAt: "2026-09-10T00:00:00Z" };
+    vi.mocked(platform.getContentSyncStatus).mockResolvedValue(status);
+    vi.mocked(platform.detectContentSync).mockResolvedValue({ requiresSelection: false, candidates: [{ repository: "https://github.com/example/blog.git", source: "Hexo deploy 配置", visibility: "private" }] });
+    const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync" });
+    await waitFor(() => expect(view.getByRole("tab", { name: "WebDAV" })).toBeTruthy());
+    expect(view.queryByText("同步规划")).toBeNull();
+    await waitFor(() => expect(view.getByText(/待上传/)).toBeTruthy());
+    await fireEvent.click(view.getByRole("tab", { name: "WebDAV" }));
+    expect(view.getByLabelText("WebDAV 服务器地址")).toBeTruthy();
+    expect(view.getByText("切换后本机改用新通道同步，旧通道上的文件不会被删除。")).toBeTruthy();
+    expect((view.getByRole("button", { name: "切换到 WebDAV 并合并" }) as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(view.getByRole("tab", { name: "GitHub" }));
+    expect(view.queryByLabelText("WebDAV 服务器地址")).toBeNull();
+    expect(view.getByRole("button", { name: "立即同步" })).toBeTruthy();
+  });
+  it("writes after the debounce settles and re-persists changes typed afterwards", async () => {
     let resolve!: (config: AppConfigV3) => void;
-    let reject!: (error: Error) => void;
     let submitted!: AppConfigV3;
-    let controller!: SettingsController;
-    const config = structuredClone(defaultConfig); config.general.language = "zh-CN";
     const save = vi.fn((value: AppConfigV3) => {
       submitted = value;
-      return new Promise<AppConfigV3>((ok, fail) => { resolve = ok; reject = fail; });
+      return new Promise<AppConfigV3>((ok) => { resolve = ok; });
     });
-    const view = render(SettingsPage, { config, initialSection: "editing", onSaveConfig: save,
-      onRegisterSettingsController: (value) => { if (value) controller = value; } });
+    const config = structuredClone(defaultConfig); config.general.language = "zh-CN";
+    const view = render(SettingsPage, { config, initialSection: "editing", onSaveConfig: save });
     await fireEvent.input(view.getByLabelText("字号"), { target: { value: "18" } });
-    await fireEvent.click(view.getByRole("button", { name: /^保存$/ }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(submitted.editor.fontSize).toBe(18);
+    resolve(structuredClone(submitted));
     await fireEvent.input(view.getByLabelText("字号"), { target: { value: "20" } });
-    let discarded = false;
-    const discard = Promise.resolve(controller.discard()).then(() => { discarded = true; });
-    await tick();
-    expect(discarded).toBe(false);
-    expect(controller.hasDirty()).toBe(true);
-    if (outcome === "success") resolve(submitted); else reject(new Error("config write failed"));
-    await discard;
-    await tick();
-    expect((view.getByLabelText("字号") as HTMLInputElement).value).toBe(String(outcome === "success" ? 18 : config.editor.fontSize));
-    expect(controller.hasDirty()).toBe(false);
-    expect(view.queryByRole("button", { name: /^保存$/ })).toBeNull();
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(submitted.editor.fontSize).toBe(20);
+    resolve(structuredClone(submitted));
+    await waitFor(() => expect(view.container.querySelector(".settings-save-state")?.textContent).toBe("已保存"));
+    expect((view.getByLabelText("字号") as HTMLInputElement).value).toBe("20");
   });
 
   it("previews the saved theme when the selection returns to its original value", async () => {
     const config = structuredClone(defaultConfig); config.appearance.themeMode = "light";
     const preview = vi.fn();
-    const view = render(SettingsPage, { config, initialSection: "editing", onThemePreview: preview });
+    const save = vi.fn(async (value: AppConfigV3) => value);
+    const view = render(SettingsPage, { config, initialSection: "editing", onThemePreview: preview, onSaveConfig: save });
     const theme = view.getByLabelText("主题模式");
     await fireEvent.change(theme, { target: { value: "dark" } });
     await fireEvent.change(theme, { target: { value: "light" } });
     expect(preview).toHaveBeenLastCalledWith("light");
-    expect(view.queryByRole("button", { name: /^保存$/ })).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(save).not.toHaveBeenCalled();
   });
 
-  it("retains form input typed while saving and reports a validation failure", async () => {
-    let finish!: (config: AppConfigV3) => void;
-    let submitted!: AppConfigV3;
-    const save = vi.fn((config: AppConfigV3) => { submitted = config; return new Promise<AppConfigV3>(resolve => { finish = resolve; }); });
+  it("rolls back an invalid value once the auto-save rejects it", async () => {
+    const save = vi.fn(async (value: AppConfigV3) => value);
     const config = structuredClone(defaultConfig); config.general.language = "zh-CN";
     const view = render(SettingsPage, { config, initialSection: "editing", onSaveConfig: save });
     await fireEvent.input(view.getByLabelText("字号"), { target: { value: "18" } });
-    await fireEvent.click(view.getByRole("button", { name: /^保存$/ }));
-    await fireEvent.input(view.getByLabelText("字号"), { target: { value: "20" } });
-    finish(submitted);
-    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("保存期间又有设置变化"));
-    expect((view.getByLabelText("字号") as HTMLInputElement).value).toBe("20");
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save.mock.calls[0][0].editor.fontSize).toBe(18);
     await fireEvent.input(view.getByLabelText("字号"), { target: { value: "40" } });
-    await fireEvent.click(view.getByRole("button", { name: /^保存$/ }));
     await waitFor(() => expect(view.getByRole("alert").textContent).toContain("12–28"));
+    const field = view.getByLabelText("字号") as HTMLInputElement;
+    expect(field.value).toBe("18");
+    await waitFor(() => expect(document.activeElement).toBe(field));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     expect(save).toHaveBeenCalledTimes(1);
-    expect(document.activeElement).toBe(view.getByLabelText("字号"));
   });
 
-  it("persists only the connection when preparing a Token and leaves other settings dirty", async () => {
+  it("saves the service address on the fly and opens the Token dialog without a manual save", async () => {
     const config = structuredClone(defaultConfig); config.general.language = "zh-CN";
     const save = vi.fn(async (value: AppConfigV3) => value);
     const view = render(SettingsPage, { config, initialSection: "editing", onSaveConfig: save });
@@ -167,11 +174,11 @@ describe("settings interaction recovery", () => {
     await fireEvent.change(view.getByLabelText("图片保存到"), { target: { value: "cloudflare-imgbed" } });
     await fireEvent.change(view.getByLabelText("服务地址"), { target: { value: "https://img.example.com" } });
     await fireEvent.click(view.getByRole("button", { name: "一键获取 Token" }));
-    await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    expect(save.mock.calls[0][0].editor.fontSize).toBe(config.editor.fontSize);
-    expect(save.mock.calls[0][0].imageBed.cloudflareApiUrl).toBe("https://img.example.com");
     await waitFor(() => expect(view.getByRole("dialog")).toBeTruthy());
-    expect(view.getByRole("button", { name: /^保存$/ })).toBeTruthy();
+    const latest = save.mock.calls.at(-1)![0] as AppConfigV3;
+    expect(latest.editor.fontSize).toBe(20);
+    expect(latest.imageBed.cloudflareApiUrl).toBe("https://img.example.com");
+    expect(view.queryByRole("button", { name: /^保存$/ })).toBeNull();
   });
 
   it("shows WebDAV conflicts and requires an explicit choice for each file", async () => {
@@ -179,10 +186,10 @@ describe("settings interaction recovery", () => {
     const guard = vi.fn(async () => true);
     const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync", onBeforeSync: guard });
     await waitFor(() => expect(view.getByText("source/_posts/post.md")).toBeTruthy());
-    const submit = view.getByRole("button", { name: "提交冲突选择" }) as HTMLButtonElement;
+    const submit = view.getByRole("button", { name: "提交选择" }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     expect(view.getByRole("button", { name: "重新检查冲突" })).toBeTruthy();
-    await fireEvent.click(view.getByLabelText("远端", { exact: true }));
+    await fireEvent.click(view.getByLabelText("云端", { exact: true }));
     await tick();
     expect(submit.disabled).toBe(false);
     await fireEvent.click(submit);
@@ -194,7 +201,7 @@ describe("settings interaction recovery", () => {
     const status: ContentSyncView = { enabled: true, provider: "webdav", status: "remoteAhead", endpoint: "https://dav.example.com", remoteDir: "blog", conflicts: [], lastSyncedAt: "2026-09-10T00:00:00Z" };
     vi.mocked(platform.getContentSyncStatus).mockResolvedValue(status);
     const view = render(SettingsPage, { config: structuredClone(defaultConfig), session: { projectId: "project", generation: 1, name: "Project", displayPath: "fixture", warnings: [] }, initialSection: "sync" });
-    await waitFor(() => expect(view.getByRole("button", { name: "合并云端变更" })).toBeTruthy());
+    await waitFor(() => expect(view.getByRole("button", { name: "合并云端改动" })).toBeTruthy());
     expect(view.getByRole("button", { name: "用本机项目覆盖云端" }).closest("details")?.open).toBe(false);
     await fireEvent.click(view.getByText("高级操作", { exact: true }));
     expect(view.container.querySelector(".sync-danger-zone")).toBeTruthy();
@@ -211,7 +218,7 @@ describe("settings interaction recovery", () => {
     expect(view.container.querySelector(".sync-change-summary")?.textContent).toContain("待上传 2 个文件 · 1.0 KB");
     expect(view.container.querySelector(".sync-change-summary")?.textContent).toContain("删除 1 个文件");
     expect((view.getByRole("button", { name: "发布网站" }) as HTMLButtonElement).disabled).toBe(true);
-    await fireEvent.click(view.getByRole("button", { name: "合并云端变更" }));
+    await fireEvent.click(view.getByRole("button", { name: "合并云端改动" }));
     await waitFor(() => expect(platform.runContentSync).toHaveBeenCalledWith("project", 1, "auto", false));
     expect(view.queryByRole("dialog")).toBeNull();
     await waitFor(() => expect((view.getByRole("button", { name: "发布网站" }) as HTMLButtonElement).disabled).toBe(false));
@@ -229,7 +236,6 @@ describe("settings interaction recovery", () => {
     await fireEvent.click(view.getByLabelText("启动时检查更新"));
     expect(download.disabled).toBe(true);
     expect(download.checked).toBe(true);
-    await fireEvent.click(view.getByRole("button", { name: /^保存$/ }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
     expect(save.mock.calls[0][0].update).toEqual({ checkOnStart: false, autoDownload: true });
   });
