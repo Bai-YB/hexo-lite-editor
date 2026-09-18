@@ -273,8 +273,8 @@ test("Cloudflare 资源按目录显示文件夹、压缩包和图片灯箱", asy
 });
 
 test("保留快速预览并提供受限真实主题预览入口", async ({ page }) => {
-  await expect(page.getByRole("button", { name: "快速预览" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "真实主题" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "即时预览" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "主题预览" })).toBeVisible();
   await expect(page.locator("iframe.theme-preview-frame")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "浏览器预览" })).toBeVisible();
   await expect(page.locator(".markdown-preview img")).toHaveAttribute("src", /^https?:\/\//);
@@ -359,7 +359,7 @@ test("内容同步向导要求公开仓库确认并展示首次同步预检", as
   await expect(panel.getByRole("radio", { name: /^GitHub/ })).toHaveAttribute("aria-checked", "true");
   await expect(panel.getByRole("radio", { name: /^WebDAV/ })).toBeVisible();
   await expect(panel.getByRole("heading", { name: "本次变化", level: 3 })).toHaveCount(0);
-  await expect(panel.getByText(/我同意将草稿、配置和主题上传到公开仓库/)).toBeVisible();
+  await expect(panel.getByText(/我同意把草稿、配置和主题传到公开仓库/)).toBeVisible();
   const enable = panel.getByRole("button", { name: "合并并开始同步" });
   await expect(enable).toBeDisabled();
   await panel.getByRole("button", { name: "检查连接与差异" }).click();
@@ -378,7 +378,7 @@ test("WebDAV 真实测试通过后启用且配置表单始终可编辑", async (
   const panel = page.locator(".settings-content-panel");
   await panel.getByRole("radio", { name: /^WebDAV/ }).click();
   await panel.getByLabel("WebDAV 服务器地址").fill("https://dav.example.com/remote.php/dav/files/blogger");
-  await panel.getByLabel("WebDAV 远端目录").fill("hexo/my-blog");
+  await panel.getByLabel("WebDAV 云端目录").fill("hexo/my-blog");
   await panel.getByLabel("WebDAV 用户名").fill("blogger");
   await panel.getByLabel("WebDAV 密码").fill("app-password");
   await panel.getByRole("button", { name: "保存并测试连接" }).click();
@@ -389,13 +389,13 @@ test("WebDAV 真实测试通过后启用且配置表单始终可编辑", async (
   await expect(panel.getByRole("button", { name: "立即同步" })).toBeVisible();
   await panel.locator(".sync-connection-details > summary").click();
   await expect(panel.getByLabel("WebDAV 服务器地址")).toBeVisible();
-  await expect(panel.getByLabel("WebDAV 远端目录")).toBeVisible();
+  await expect(panel.getByLabel("WebDAV 云端目录")).toBeVisible();
   await expect(panel.getByLabel("WebDAV 用户名")).toHaveValue("blogger");
   await expect(panel.getByLabel("WebDAV 密码")).toBeVisible();
   await expect(panel.getByRole("button", { name: "立即同步" })).toBeVisible();
 
-  await panel.getByLabel("WebDAV 远端目录").fill("hexo/another-blog");
-  await expect(panel.getByText(/未应用的修改/)).toBeVisible();
+  await panel.getByLabel("WebDAV 云端目录").fill("hexo/another-blog");
+  await expect(panel.getByText(/连接信息改了/)).toBeVisible();
   await expect(panel.getByRole("button", { name: "应用连接设置" })).toBeDisabled();
   await panel.getByRole("button", { name: "保存并测试连接" }).click();
   await expect(panel.getByRole("button", { name: "应用连接设置" })).toBeEnabled();
@@ -408,7 +408,7 @@ test("WebDAV 认证失败后保留表单和输入并可直接修正", async ({ p
   const panel = page.locator(".settings-content-panel");
   await panel.getByRole("radio", { name: /^WebDAV/ }).click();
   await panel.getByLabel("WebDAV 服务器地址").fill("https://dav.example.com/dav");
-  await panel.getByLabel("WebDAV 远端目录").fill("hexo/my-blog");
+  await panel.getByLabel("WebDAV 云端目录").fill("hexo/my-blog");
   await panel.getByLabel("WebDAV 用户名").fill("blogger");
   await panel.getByLabel("WebDAV 密码").fill("wrong-password");
   await panel.getByRole("button", { name: "保存并测试连接" }).click();
@@ -442,13 +442,13 @@ test("内容同步冲突逐文件展示 Markdown 差异与二进制哈希选择"
   await cards.nth(0).getByText("查看两端内容").click();
   await expect(cards.nth(0)).toContainText("# 本地标题");
   await expect(cards.nth(0)).toContainText("# 远端标题");
-  await expect(cards.nth(1)).toContainText("本地 2048 B / 远端 4096 B");
+  await expect(cards.nth(1)).toContainText("本地 2048 B / 云端 4096 B");
   await expect(cards.nth(1)).toContainText("local-bin");
   await expect(cards.nth(1)).toContainText("remote-bin");
-  await cards.nth(0).getByLabel("远端").check();
-  await expect(page.getByRole("button", { name: "提交冲突选择" })).toBeDisabled();
+  await cards.nth(0).getByLabel("云端").check();
+  await expect(page.getByRole("button", { name: "提交选择" })).toBeDisabled();
   await cards.nth(1).getByLabel("本地").check();
-  await page.getByRole("button", { name: "提交冲突选择" }).click();
+  await page.getByRole("button", { name: "提交选择" }).click();
   await expect(cards).toHaveCount(0);
   await expect(page.locator(".sync-status.synced")).toBeVisible();
 });
@@ -458,7 +458,7 @@ test("云端前进时可以确认使用最新云端或用本机覆盖", async ({
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByRole("button", { name: /文件同步/ }).click();
   const panel = page.locator(".settings-content-panel");
-  await expect(panel.getByRole("button", { name: "合并云端变更" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "合并云端改动" })).toBeVisible();
   await expect(panel.getByRole("button", { name: "用本机项目覆盖云端" })).toBeHidden();
   await panel.getByText("高级操作", { exact: true }).click();
   await expect(panel.getByRole("button", { name: "用本机项目覆盖云端" })).toBeVisible();
@@ -511,7 +511,7 @@ test("设置分类状态持久化，未保存标记和图床来源正确联动",
   await expect(imageBed.getByText("Markdown 访问前缀")).toHaveCount(0);
   await expect(imageBed.getByText("图床名称")).toHaveCount(0);
   await imageBed.locator("select").selectOption("cloudflare-imgbed");
-  await expect(page.getByRole("button", { name: /^图片/ }).locator(".settings-dirty-dot")).toBeVisible();
+  await expect(page.locator(".settings-save-state")).toHaveText("未保存");
   await expect(imageBed.getByText("图片保存目录")).toHaveCount(0);
   await expect(imageBed.getByText("Markdown 访问前缀")).toHaveCount(0);
   await expect(imageBed.getByText("图床名称")).toHaveCount(0);
@@ -527,9 +527,8 @@ test("设置分类状态持久化，未保存标记和图床来源正确联动",
   await tokenDialog.getByRole("button", { name: "获取并保存" }).click();
   await expect(tokenDialog).toHaveCount(0);
   await expect(page.getByText("Token 已创建并保存到系统凭据库。")).toBeVisible();
-  // Token acquisition persists only connection fields; explicitly save the selected provider.
-  await expect(page.getByRole("button", { name: /^图片/ }).locator(".settings-dirty-dot")).toBeVisible();
-  await page.getByRole("button", { name: "保存", exact: true }).click();
+  // Token acquisition persists the connection and the selected provider without a manual save.
+  await expect(page.locator(".settings-save-state")).toHaveText("已保存");
 
   await imageBed.getByRole("button", { name: "测试连接", exact: true }).click();
   await expect(imageBed.getByText("Cloudflare-ImgBed 连接正常。")).toBeVisible();
@@ -540,7 +539,7 @@ test("设置分类状态持久化，未保存标记和图床来源正确联动",
   await imageBed.getByRole("button", { name: "删除本地 Token" }).click();
   await expect(imageBed.getByText("Token 未配置")).toBeVisible();
   await imageBed.locator("select").selectOption("local");
-  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator(".settings-save-state")).toHaveText("已保存");
 });
 
 test("设置分类切换时内容宽度保持稳定", async ({ page }) => {

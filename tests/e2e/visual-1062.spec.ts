@@ -28,7 +28,7 @@ for (const viewport of [
     await capture("sync-disconnected");
     await page.goto("/?demo=1&syncRemoteAhead=1");
     await settings("文件同步");
-    await page.getByRole("button", { name: "合并云端变更", exact: true }).click();
+    await page.getByRole("button", { name: "合并云端改动", exact: true }).click();
     await expect(page.getByRole("button", { name: "立即同步", exact: true })).toBeVisible();
     await capture("sync-connected");
     await page.evaluate(() => localStorage.removeItem("hexo-lite-editor:update-last-auto-check"));

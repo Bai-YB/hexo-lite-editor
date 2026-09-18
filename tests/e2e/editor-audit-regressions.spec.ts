@@ -122,7 +122,7 @@ test("上传替换不进入撤销历史且真实预览先保存当前文档", as
   await editorRedo(page);
   await expect(editor).toContainText("https://img.example.com/ready.png");
   await page.keyboard.insertText("preview-new-content");
-  await page.getByRole("button", { name: "真实主题", exact: true }).click();
+  await page.getByRole("button", { name: "主题预览", exact: true }).click();
   await page.getByRole("button", { name: "启动并预览", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { auditPreviewCalls: string[] }).auditPreviewCalls.some(call => call.startsWith("open:")))).toBe(true);
   const calls = await page.evaluate(() => (window as unknown as { auditPreviewCalls: string[] }).auditPreviewCalls);

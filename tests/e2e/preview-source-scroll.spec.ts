@@ -13,8 +13,6 @@ const source = blocks.join("\n");
 const sectionLine = (section: number) => blocks.indexOf(`## Section ${section}`) + 1;
 
 async function prepare(page: Page) {
-  // Concurrent development must not reload an in-progress interaction fixture.
-  await page.routeWebSocket(/.*/, socket => socket.close());
   await page.route("https://scroll-fixture.test/tall.png", (route) => route.fulfill({
     contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="1000"><rect width="320" height="1000" fill="#397d74"/></svg>'
   }));

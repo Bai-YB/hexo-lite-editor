@@ -73,7 +73,7 @@ test("开启自动下载后后台完成，不打断编辑，切换页面保留�
   await expect(page.locator(".notice-indicator").getByRole("button", { name: "安装更新", exact: true })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "关于", exact: true }).click();
-  await expect(page.getByText("已准备好更新", { exact: true })).toBeVisible();
+  await expect(page.getByText("更新已就绪", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "编辑器", exact: true }).click();
   await expect(page.locator(".notice-indicator").getByRole("button", { name: "安装更新", exact: true })).toBeVisible();
 });

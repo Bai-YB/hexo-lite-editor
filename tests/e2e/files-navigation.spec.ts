@@ -2,7 +2,6 @@ import { editorBoundary } from "./keyboard";
 import { expect, test, type Page } from "./fixtures";
 
 async function openFiles(page: Page) {
-  await page.routeWebSocket(/.*/, socket => socket.close());
   await page.goto("/?demo=1");
   await page.locator(".markdown-editor-host").waitFor();
   await page.keyboard.press("ControlOrMeta+6");
