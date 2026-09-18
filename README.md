@@ -10,10 +10,10 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64-setup.exe"><strong>下载安装版</strong></a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64-portable.zip">便携版</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_macos-universal.dmg">macOS</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.4">v1.0.6.4</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64-setup.exe"><strong>下载安装版</strong></a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64-portable.zip">便携版</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_macos-universal.dmg">macOS</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5">v1.0.6.5</a>
   </p>
 </div>
 
@@ -54,18 +54,18 @@ WebDAV 地址、目录和用户名在启用后仍可修改。新凭据通过目�
 
 ## 安装
 
-`v1.0.6.4` 提供 Windows 10/11 x64 和 macOS 通用版本。界面版本为 **1.0.6.4**，内部使用兼容 Tauri 的 `1.0.6+4`，1.0.6.x 可以识别这一更新。
+`v1.0.6.5` 提供 Windows 10/11 x64 和 macOS 通用版本。界面版本为 **1.0.6.5**，内部使用兼容 Tauri 的 `1.0.6+5`，1.0.6.x 可以识别这一更新。
 
-本次让启动首屏不再等待更新查询与项目扫描，原生项目打开移至后台线程；即时预览支持经过隔离和过滤的文章 CSS/class，并合并重复解析；双向滚动同步修复长文反复滚动与首尾边界偏差；文件同步改为清晰的 GitHub/WebDAV 单选配置流程。验证范围见 [1.0.6.4 验证记录](docs/validation-1.0.6.4.md)，模块职责与调用链见 [模块文档](docs/modules/README.md)。
+本次把预览重构为分块渲染管线、编辑器滚动改为单向跟随，长文输入更稳；设置全部改为改完即生效，非法值自动回退并重新聚焦；文件同步启用后收敛为状态卡加一行待上传摘要，连接块用 GitHub/WebDAV 标签一键切换通道；深浅双主题重做，正文对比度达 WCAG AA；全站文案完成去 AI 味改写。验证范围见 [1.0.6.5 验证记录](docs/validation-1.0.6.5.md)，模块职责与调用链见 [模块文档](docs/modules/README.md)。
 
 | 安装包 | 用途 |
 | --- | --- |
-| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64-setup.exe) | 推荐；按向导安装 |
-| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64-portable.zip) | 解压后直接运行 |
-| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_windows-x64.msi) | 企业或批量部署 |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/Hexo-Lite-Editor_1.0.6.4_macos-universal.dmg) | Intel 与 Apple Silicon 通用 |
+| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64-setup.exe) | 推荐；按向导安装 |
+| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64-portable.zip) | 解压后直接运行 |
+| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64.msi) | 企业或批量部署 |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_macos-universal.dmg) | Intel 与 Apple Silicon 通用 |
 
-Windows 安装包尚未使用商业代码签名证书，SmartScreen 可能显示“未知发布者”。校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/SHA256SUMS.txt) 和 [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.4/SHA256SUMS-macos.txt)。应用默认静默检查更新，由用户点击下载与安装；可在设置中开启后台下载，更新包经过 Tauri 签名验证。
+Windows 安装包尚未使用商业代码签名证书，SmartScreen 可能显示“未知发布者”。校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/SHA256SUMS.txt) 和 [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/SHA256SUMS-macos.txt)。应用默认静默检查更新，由用户点击下载与安装；可在设置中开启后台下载，更新包经过 Tauri 签名验证。
 
 ## 使用
 

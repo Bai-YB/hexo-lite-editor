@@ -4,7 +4,7 @@ set -euo pipefail
 if [[ "${1:-}" == "--" ]]; then
   shift
 fi
-version="${1:-1.0.6.4}"
+version="${1:-1.0.6.5}"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
   echo "Invalid release version: $version" >&2
   exit 1
@@ -36,7 +36,7 @@ fi
 
 short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_source/Contents/Info.plist")"
 bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_source/Contents/Info.plist")"
-if [[ "$short_version" != "1.0.6" || "$bundle_version" != "1.0.604" ]]; then
+if [[ "$short_version" != "1.0.6" || "$bundle_version" != "1.0.605" ]]; then
   echo "Unexpected macOS bundle versions: $short_version / $bundle_version" >&2
   exit 1
 fi

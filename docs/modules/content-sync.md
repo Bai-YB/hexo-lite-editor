@@ -2,7 +2,7 @@
 
 ## 职责
 
-`SettingsPage.svelte` 负责同步方式选择、连接预检、状态/进度、首次合并、冲突选择和高级覆盖操作；`SyncProviderPicker.svelte` 只负责 GitHub/WebDAV 的清晰互斥选择。`platform/tauri.ts` 定义前端 IPC 合约，`sync.rs` 实现范围扫描、远端比较、合并、备份、传输与状态持久化，`sync_runtime.rs` 统一把长任务放入 blocking worker，并提供进度、停止和超时。
+`SettingsPage.svelte` 负责同步方式选择、连接预检、状态/进度、首次合并、冲突选择和高级覆盖操作；`SyncProviderPicker.svelte` 只负责启用前的 GitHub/WebDAV 互斥选择大卡，启用后由 `SettingsPage` 的连接块分段标签（GitHub/WebDAV）承担通道查看与切换。`platform/tauri.ts` 定义前端 IPC 合约，`sync.rs` 实现范围扫描、远端比较、合并、备份、传输与状态持久化，`sync_runtime.rs` 统一把长任务放入 blocking worker，并提供进度、停止和超时。
 
 ## 设置加载调用链
 
@@ -19,7 +19,7 @@
 2. 检查连接与两端差异。GitHub 使用独立内容分支；WebDAV 验证真实读写权限、凭据和指定远端目录。预检不修改任一端文件。
 3. 合并并开始同步。首次合并保留两端独有文件，同路径内容不同时进入逐文件冲突选择。
 
-启用后页面只显示当前 provider、同步状态、本次变化和对应连接信息。保存操作把本地状态标为待同步，并在约 30 秒后调度增量上传；“立即同步”读取两端最新状态并合并。整端覆盖、备份目录和关闭同步保留在折叠的高级操作中。
+启用后页面收敛为状态卡（provider、状态、上次同步、一行待上传摘要，统计细节默认折叠）与连接块。连接块顶部是 GitHub/WebDAV 标签：当前通道只显示其连接信息（WebDAV 允许就地修改地址/目录并经 `update_webdav_content_sync` 应用）；点另一通道挂载其首次配置同款的设置表单，预检通过后按钮变为"切换到 GitHub/WebDAV 并合并"，经 `enable_content_sync` / `enable_webdav_content_sync` 覆盖注册记录完成切换，无需先关闭同步，旧通道数据不受影响。保存操作把本地状态标为待同步，并在约 30 秒后调度增量上传；“立即同步”读取两端最新状态并合并。整端覆盖、备份目录和关闭同步保留在折叠的高级操作中。
 
 ## 原生执行链
 
@@ -36,7 +36,7 @@
 
 ## 回归入口
 
-- `SettingsPage.test.ts`：普通设置不触发扫描、provider 互斥显示、迟到 WebDAV 结果、同步进度/停止、冲突与远端领先。
+- `SettingsPage.test.ts`：普通设置不触发扫描、provider 互斥显示、启用态标签内切换通道、迟到 WebDAV 结果、同步进度/停止、冲突与远端领先。
 - `tests/e2e/desktop.spec.ts`：GitHub 公开确认、首次预检、多仓库选择、WebDAV 真实测试和认证恢复。
 - `tests/e2e/sync-progress.spec.ts`：操作期间 UI 可响应、重复提交禁用、停止完成后才能重试。
 - `tests/e2e/platform-parity.spec.ts`：Chromium/WebKit 在三种窗口宽度下同步分类无遮挡、键盘可达且布局一致。
