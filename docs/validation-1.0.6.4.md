@@ -18,11 +18,12 @@
 - `pnpm check`：0 errors、0 warnings。
 - `pnpm test -- --run`：29 个文件、165 项通过。
 - `pnpm build`：生产构建通过。
-- `pnpm audit --prod --registry https://registry.npmjs.org`：无已知漏洞。
+- `pnpm audit --prod --registry https://registry.npmjs.org`：无已知漏洞；发布前新增的 `devalue` 公告已通过工作区 override 固定到 5.9.2，并经冻结锁文件安装复核。
 - `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`：通过。
 - `cargo check --all-targets --all-features`：通过；`cargo test --all-targets --all-features`：116 项通过，其中同步定向 44 项通过。
 - `CI=true pnpm exec playwright test --workers=1`：Chromium/WebKit 共 124 项通过，覆盖启动延迟、HTML/CSS 真实计算样式、六组设置宽窄屏交互、同步方式选择/慢速检查进度和滚动同步。
 - 预览反向同步竞态修复另做双内核各 10 次压力回归，共 20/20 通过；包含正向、反向、反复跨段和首尾边界的滚动专项另为 8/8 通过。
+- 首个编辑器冷启动就绪断言在 Chromium/WebKit 各重复 10 次，共 20/20 通过；修复依赖后完整双引擎矩阵再次取得 124/124。
 - Chromium/WebKit 在 1360px 与 640px 下人工复核 GitHub/WebDAV 选择页和两套配置表单，布局与交互一致。
 
 ## 安全与兼容边界

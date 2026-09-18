@@ -12,6 +12,7 @@
 ## 发布调用链
 
 1. 本地完成类型检查、单元测试、双引擎交互、生产构建、依赖审计、Rust fmt/clippy/test 和版本一致性检查。
+   如果审计源在标签构建期间新增安全公告，立即取消该源码 SHA 的双平台任务，更新锁文件并重新完成前端回归；发布标签只指向修复后的统一提交。
 2. 提交并推送同一源码 SHA；创建 `v1.0.6.4` 标签。
 3. Windows 与 macOS 工作流从同一标签构建平台包、更新包、签名、哈希与平台 manifest。
 4. finalize 工作流核对两个平台的源码 SHA、文件 SHA256、更新包大小和 Minisign 签名，生成三平台 `latest.json` 后公开 Release。
@@ -31,4 +32,3 @@
 - 中英文 README 的当前版本入口。
 
 `scripts/release-version.test.mjs` 将这些文档与 `package.json.releaseVersion` 绑定，缺少或版本不同会使测试失败。
-

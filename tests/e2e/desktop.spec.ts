@@ -10,7 +10,7 @@ test("长文章、文章列表和 Markdown 预览可以独立滚动", async ({ p
   const editorScroller = page.locator(".cm-scroller");
   const articleList = page.locator(".article-list");
   const preview = page.locator(".markdown-preview");
-  await expect(editorScroller).toBeVisible();
+  await expect(editorScroller).toBeVisible({ timeout: 15_000 });
   await editorScroller.hover();
   await page.mouse.wheel(0, 2200);
   expect(await editorScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);

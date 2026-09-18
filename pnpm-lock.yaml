@@ -6,6 +6,7 @@ settings:
 
 overrides:
   linkify-it: 5.0.2
+  devalue: 5.9.2
 
 importers:
 
@@ -874,8 +875,8 @@ packages:
     resolution: {integrity: sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==}
     engines: {node: '>=6'}
 
-  devalue@5.8.1:
-    resolution: {integrity: sha512-4CXDYRBGqN+57wVJkuXBYmpAVUSg3L6JAQa/DFqm238G73E1wuyc/JhGQJzN7vUf/CMphYau2zXbfWzDR5aTEw==}
+  devalue@5.9.2:
+    resolution: {integrity: sha512-po4PAY5c53tw5XMocSnf8A/5OHhbbUftpr93aEN6BBoAdntUmK7vu7wOATqvt7cXO7m1Cl4gMVn6p7n6n4mj0w==}
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
@@ -1722,7 +1723,7 @@ snapshots:
       '@types/cookie': 0.6.0
       acorn: 8.17.0
       cookie: 0.6.0
-      devalue: 5.8.1
+      devalue: 5.9.2
       esm-env: 1.2.2
       kleur: 4.1.5
       magic-string: 0.30.21
@@ -1988,7 +1989,7 @@ snapshots:
 
   dequal@2.0.3: {}
 
-  devalue@5.8.1: {}
+  devalue@5.9.2: {}
 
   dom-accessibility-api@0.5.16: {}
 
@@ -2295,7 +2296,7 @@ snapshots:
       aria-query: 5.3.1
       axobject-query: 4.1.0
       clsx: 2.1.1
-      devalue: 5.8.1
+      devalue: 5.9.2
       esm-env: 1.2.2
       esrap: 2.2.12
       is-reference: 3.0.3
