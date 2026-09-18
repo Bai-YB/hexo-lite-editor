@@ -32,7 +32,7 @@ test("opens deep paths and preserves dirty content when cancelling a file switch
   await page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
   await expect(content).toContainText("Friends");
   await page.getByRole("button", { name: "_config.yml", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "保存后继续", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "保存并继续", exact: true }).click();
   await expect(content).toContainText("Quiet Notes");
 });
 

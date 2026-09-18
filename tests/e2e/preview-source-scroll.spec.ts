@@ -85,26 +85,14 @@ test("editor and preview keep the same section with tall images, wrapped paragra
   expect((await editorPosition(page)).line).toBeCloseTo(sectionLine(7), 1);
 });
 
-test("scrolling preview moves the editor to the same source block without feedback, and unlink disables it", async ({ page }) => {
+test("preview scrolling stays independent while the editor drives the preview", async ({ page }) => {
   await prepare(page);
-  await page.locator(".markdown-preview").evaluate((node, line) => {
-    node.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
-    const heading = node.querySelector<HTMLElement>(`[data-source-line="${line}"]`)!;
-    node.scrollTop += heading.getBoundingClientRect().top - node.getBoundingClientRect().top - 16;
-  }, sectionLine(5));
-  await expect.poll(async () => (await editorPosition(page)).line).toBeCloseTo(sectionLine(5), 1);
+  await scrollEditorToSection(page, 5);
+  await expect.poll(async () => Math.abs(await previewOffset(page, 5) - 16)).toBeLessThan(2);
   const before = await editorPosition(page);
-  await page.waitForTimeout(400);
+  await page.locator(".markdown-preview").evaluate((node) => { node.scrollTop = Math.max(0, node.scrollTop - 240); });
+  await page.waitForTimeout(250);
   expect(await editorPosition(page)).toEqual(before);
-
-  await page.getByTitle("关闭编辑器与预览同步滚动").click();
-  await page.locator(".markdown-preview").evaluate((node) => { node.scrollTop = 0; });
-  await page.waitForTimeout(150);
-  expect(await editorPosition(page)).toEqual(before);
-  await page.getByTitle("开启编辑器与预览同步滚动").click();
-  // A source→editor→preview round trip crosses fractional CodeMirror and WebKit
-  // line metrics. Keep a three CSS pixel bound while requiring the same source line above.
-  await expect.poll(async () => Math.abs(await previewOffset(page, 5) - 16)).toBeLessThan(3);
 });
 
 test("repeated long-document scrolling does not accumulate alignment drift", async ({ page }) => {
@@ -127,9 +115,6 @@ test("repeated long-document scrolling does not accumulate alignment drift", asy
     node.scrollTop - (node.scrollHeight - node.clientHeight)
   ))).toBeLessThan(2);
 
-  await preview.evaluate((node) => {
-    node.dispatchEvent(new WheelEvent("wheel", { bubbles: true }));
-    node.scrollTop = 0;
-  });
-  await expect.poll(async () => (await editorPosition(page)).top).toBeLessThan(2);
+  await scrollEditorToSection(page, 1);
+  await expect.poll(async () => Math.abs(await previewOffset(page, 1) - 16)).toBeLessThan(2);
 });

@@ -21,7 +21,7 @@ test("a slow GitHub preflight leaves settings responsive and keeps provider form
   await expect(panel.getByRole("radio", { name: /^GitHub/ })).toHaveAttribute("aria-checked", "true");
   await expect(panel.getByLabel("WebDAV 服务器地址")).toHaveCount(0);
   await panel.getByRole("button", { name: "检查连接与差异" }).click();
-  await expect(panel.getByText("正在检查 GitHub 连接和两端文件差异。")).toBeVisible();
+  await expect(panel.getByText("正在检查 GitHub 连接和两端差异。")).toBeVisible();
   await expect(panel.getByRole("button", { name: "停止同步" })).toBeEnabled();
   await page.getByRole("button", { name: "常规", exact: true }).click();
   await expect(panel.getByRole("heading", { name: "常规", level: 2 })).toBeVisible();
@@ -54,7 +54,7 @@ test("upload progress remains responsive, can stop, and only retries after the o
   await expect(page.getByRole("progressbar")).toHaveAttribute("value", "3");
   await expect(page.getByRole("button", { name: "立即同步" })).toBeDisabled();
   await page.getByRole("button", { name: "停止同步" }).click();
-  await expect(page.getByText("正在停止同步...")).toBeVisible();
+  await expect(page.getByText("正在停止同步…")).toBeVisible();
   await expect(page.getByRole("button", { name: "重试同步" })).toBeEnabled();
   await expect(page.getByRole("progressbar")).toHaveCount(0);
 });

@@ -1,26 +1,23 @@
 import { expect, test } from "./fixtures";
 
-test("数字设置在保持焦点时保存，校验失败后可以取消", async ({ page }, testInfo) => {
+test("数字设置改完即存，校验失败自动回滚并重新聚焦", async ({ page }) => {
   await page.goto("/?demo=1");
   await page.getByRole("button", { name: "设置", exact: true }).click();
   const nav = page.getByRole("navigation", { name: "设置分类" });
   await nav.getByRole("button", { name: "编辑器", exact: true }).click();
   const font = page.getByLabel("字号", { exact: true });
-  const saveKey = testInfo.project.name === "desktop-webkit" ? "Meta+s" : "Control+s";
   await font.fill("22");
-  await page.keyboard.press(saveKey);
   await expect(page.locator(".settings-save-state")).toHaveText("已保存");
   await expect(font).toHaveValue("22");
   await font.fill("0");
-  await page.keyboard.press(saveKey);
   await expect(page.locator(".settings-page > [role=alert]")).toContainText("字号");
-  await expect(font).toBeFocused();
-  await page.locator(".settings-sticky-header").getByRole("button", { name: "取消", exact: true }).click();
   await expect(font).toHaveValue("22");
+  await expect(font).toBeFocused();
   await page.getByLabel("主题模式", { exact: true }).selectOption("dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await page.locator(".settings-sticky-header").getByRole("button", { name: "取消", exact: true }).click();
-  await expect(page.getByLabel("主题模式", { exact: true })).toHaveValue("system");
+  await page.getByLabel("主题模式", { exact: true }).selectOption("light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator(".settings-save-state")).toHaveText("已保存");
 });
 
 for (const width of [1360, 1120, 640]) {

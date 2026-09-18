@@ -37,7 +37,7 @@ test("cancel preserves file edits and save-and-continue persists them before nav
   await appendFile(page, "\n# keep friend link changes");
   await page.keyboard.press("ControlOrMeta+5");
   let dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("离开全部文件");
+  await expect(dialog).toContainText("先保存或放弃当前文件的修改");
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.locator(".file-workspace .cm-content")).toContainText("keep friend link changes");
@@ -65,7 +65,7 @@ test("failed file save keeps the close guard and cancel returns to the edited do
   // macOS uses native traffic lights; exercise their shared frontend close guard.
   await page.locator(".window-control.close").evaluate((button: HTMLButtonElement) => button.click());
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("项目文件");
+  await expect(dialog).toContainText("文章或文件里有没保存的内容");
   await dialog.getByRole("button", { name: "保存并退出", exact: true }).click();
   await expect(page.getByText("file save fixture failed").first()).toBeVisible();
   await expect(dialog).toBeVisible();

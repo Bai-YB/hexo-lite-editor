@@ -18,7 +18,7 @@ test("切文章确认期间暂停自动保存，放弃只保留磁盘内容", as
   await expect(dialog).toBeVisible();
   await page.waitForTimeout(2300);
   expect(await page.evaluate(() => document.documentElement.dataset.editorSaveCalls)).toBeUndefined();
-  await dialog.getByRole("button", { name: "放弃更改", exact: true }).click();
+  await dialog.getByRole("button", { name: "放弃修改", exact: true }).click();
   await expect(editor).toContainText("# Tauri");
   await page.locator('[data-article-id="summer"]').click();
   await expect(editor).not.toContainText("应被放弃的文字");

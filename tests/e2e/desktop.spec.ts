@@ -143,7 +143,7 @@ test("发布保存后新启动的图片上传会在任务启动前中止发布",
   });
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.raceUploadStarted)).toBe("1");
   await page.evaluate(() => (window as unknown as { releasePublishArticleList: () => void }).releasePublishArticleList());
-  await expect(page.getByRole("alert").filter({ hasText: /还有 \d+ 张图片正在上传/ })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: /\d+ 张图片还在上传/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.dataset.taskStarts)).toBeUndefined();
 
   // Resolve the upload before teardown so no asynchronous editor work leaks
@@ -167,7 +167,7 @@ test("文章右键菜单支持草稿互转和移到回收站", async ({ page }) 
   await article.click({ button: "right" });
   await menu.getByRole("menuitem", { name: "移到回收站" }).click();
   const dialog = page.getByRole("dialog", { name: "将文章移到回收站？" });
-  await expect(dialog).toContainText("可以从回收站恢复");
+  await expect(dialog).toContainText("可以找回");
   await dialog.getByRole("button", { name: "移到回收站" }).click();
   await expect(article).toHaveCount(0);
 });
@@ -273,10 +273,10 @@ test("Cloudflare 资源按目录显示文件夹、压缩包和图片灯箱", asy
 });
 
 test("保留快速预览并提供受限真实主题预览入口", async ({ page }) => {
-  await expect(page.getByRole("button", { name: "即时预览" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "主题预览" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "即时预览", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "主题预览", exact: true })).toBeVisible();
   await expect(page.locator("iframe.theme-preview-frame")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "浏览器预览" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "在浏览器中打开" })).toBeVisible();
   await expect(page.locator(".markdown-preview img")).toHaveAttribute("src", /^https?:\/\//);
   await expect(page.locator("html")).not.toHaveAttribute("data-image-resolve-calls", /[1-9]/);
 });
@@ -286,7 +286,7 @@ test("隐藏即时预览后编辑器占满文章列表之外的剩余空间", as
   const writingPane = page.locator(".writing-pane");
   const widthBefore = await writingPane.evaluate((element) => element.getBoundingClientRect().width);
   await page.getByRole("button", { name: "高级操作" }).click();
-  await page.getByRole("button", { name: "隐藏即时预览" }).click();
+  await page.locator(".advanced-menu").getByRole("button", { name: "隐藏即时预览" }).click();
   await expect(page.locator(".preview-pane")).toHaveCount(0);
   await expect(page.getByRole("separator", { name: "调整编辑与预览比例" })).toHaveCount(0);
   await expect(grid).toHaveClass(/preview-hidden/);
@@ -427,7 +427,7 @@ test("多个 deploy 仓库必须由用户明确选择", async ({ page }) => {
   await page.getByRole("button", { name: /文件同步/ }).click();
   const repository = page.getByLabel("目标仓库");
   await expect(repository).toHaveValue("");
-  await expect(page.getByText("选择目标仓库后才能预检和启用内容同步。")).toBeVisible();
+  await expect(page.getByText("先选仓库，才能预检和启用同步。")).toBeVisible();
   await repository.selectOption("git@github.com:example/quiet-mirror.git");
   await expect(page.getByRole("button", { name: "检查连接与差异" })).toBeVisible();
 });
@@ -464,7 +464,7 @@ test("云端前进时可以确认使用最新云端或用本机覆盖", async ({
   await expect(panel.getByRole("button", { name: "用本机项目覆盖云端" })).toBeVisible();
   await panel.getByRole("button", { name: "用本机项目覆盖云端" }).click();
   const dialog = page.getByRole("dialog", { name: "用本机项目覆盖云端？" });
-  await expect(dialog).toContainText("基于刚读取的云端最新提交");
+  await expect(dialog).toContainText("云端会更新到和本机一致");
   await dialog.getByRole("button", { name: "确认覆盖" }).click();
   await expect(page.locator(".sync-status.synced")).toBeVisible();
 });
@@ -526,7 +526,7 @@ test("设置分类状态持久化，未保存标记和图床来源正确联动",
   await tokenDialog.getByLabel("管理员密码").fill("temporary-secret");
   await tokenDialog.getByRole("button", { name: "获取并保存" }).click();
   await expect(tokenDialog).toHaveCount(0);
-  await expect(page.getByText("Token 已创建并保存到系统凭据库。")).toBeVisible();
+  await expect(page.getByText("Token 已创建，存进了系统凭据库。")).toBeVisible();
   // Token acquisition persists the connection and the selected provider without a manual save.
   await expect(page.locator(".settings-save-state")).toHaveText("已保存");
 
@@ -616,7 +616,7 @@ test("深色模式光标 token 可见并生成双尺寸回归截图", async ({ p
   await page.setViewportSize({ width: 1360, height: 860 });
   await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
   const caret = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--editor-caret").trim());
-  expect(caret).toBe("#aec4d0");
+  expect(caret).toBe("#8cc5f4");
   await page.screenshot({ path: "output/playwright/editor-1360x860-dark.png", fullPage: true });
   await page.setViewportSize({ width: 1120, height: 720 });
   await expect(page.locator(".editor-toolbar")).toBeVisible();
@@ -643,7 +643,7 @@ test("欢迎页、图床、设置和关于生成浅色深色回归截图", async
   await captureModes("about");
 
   await page.goto("/?demo=1&welcome=1");
-  await expect(page.getByRole("heading", { name: "从博客目录，直接开始写作。" })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole("heading", { name: "选择一个 Hexo 博客目录就能开始写。" })).toBeVisible({ timeout: 20_000 });
   await captureModes("welcome");
 });
 
@@ -662,8 +662,8 @@ test("英文模式覆盖编辑器、图床、设置和插件管理 UI", async ({
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByLabel("界面语言").selectOption("en-US");
   await expect(page.getByText("Startup", { exact: true })).toBeVisible();
+  await expect(page.locator(".settings-save-state")).toHaveText("Saved");
   await page.locator(".nav-item").filter({ hasText: "Plugins" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Save and continue" }).click();
   await expect(page.getByRole("heading", { name: "Plugins", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Use as image host" })).toBeVisible();
   await page.locator(".nav-item").filter({ hasText: "Images" }).click();
