@@ -37,7 +37,13 @@ test("新建文件名跟随完整标题且日期使用本机年月日时分", as
     const pad = (value: number) => String(value).padStart(2, "0");
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   });
-  await expect(dialog.getByLabel("日期", { exact: true })).toHaveValue(expected);
+  // The dialog stamps the date when it opens; allow a one-minute skew so a
+  // minute rollover between dialog creation and this assertion is not flaky.
+  const allowed = new Set([expected]);
+  const previous = new Date(Date.parse(expected) - 60_000);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  allowed.add(`${previous.getFullYear()}-${pad(previous.getMonth() + 1)}-${pad(previous.getDate())}T${pad(previous.getHours())}:${pad(previous.getMinutes())}`);
+  await expect.poll(async () => allowed.has(await dialog.getByLabel("日期", { exact: true }).inputValue())).toBe(true);
 });
 
 test("图片读取阶段就阻止换文和新建，并保留后续输入位置", async ({ page }) => {
