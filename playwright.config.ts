@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
+  retries: process.env.CI ? 2 : 0,
   globalSetup: "./tests/e2e/global-setup.ts",
   testDir: "./tests/e2e",
   timeout: 60_000,
