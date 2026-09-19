@@ -21,4 +21,7 @@
 
 ## 发布结果
 
-（CI finalize 后补录：源码提交、双平台工作流运行号、资产清单与哈希复核结果。）
+- 发布标签 `v1.0.6.5`（annotated），源码提交 `main`；Release 于 2026-09-19T12:53:43Z 公开：https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5。
+- 平台工作流运行：Finalize release success run/35424523410；Finalize release skipped run/35424439325；Build macOS success run/35423688551；Release Windows success run/35423688542；CI success run/35423682193。
+- 公开资产共 14 项：Hexo-Lite-Editor_1.0.6.5_macos-universal.app.tar.gz、Hexo-Lite-Editor_1.0.6.5_macos-universal.app.tar.gz.sig、Hexo-Lite-Editor_1.0.6.5_macos-universal.app.zip、Hexo-Lite-Editor_1.0.6.5_macos-universal.dmg、Hexo-Lite-Editor_1.0.6.5_windows-x64-portable.zip、Hexo-Lite-Editor_1.0.6.5_windows-x64-setup.exe、Hexo-Lite-Editor_1.0.6.5_windows-x64-setup.exe.sig、Hexo-Lite-Editor_1.0.6.5_windows-x64.msi、Hexo-Lite-Editor_1.0.6.5_windows-x64.msi.sig、latest.json、release-manifest-macos.json、release-manifest.json、SHA256SUMS-macos.txt、SHA256SUMS.txt。Finalize 已核对双平台源码 SHA、资产 SHA256、更新包大小与 Minisign 签名，并生成三平台 `latest.json`。
+- 本机工作区缓存（`.svelte-kit`、`build`、`output`、`src-tauri/target` 等）按发布流程清理要求处理；用户博客、应用数据与全局缓存未动。
