@@ -491,7 +491,7 @@ test("维护页不向普通用户显示任务日志或终端输出，关于页�
   await expect(page.getByText("任务日志")).toHaveCount(0);
   await expect(page.locator(".diagnostic-log-view")).toHaveCount(0);
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByText("版本 1.0.6.5")).toBeVisible();
+  await expect(page.getByText("版本 1.0.6.5.1")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);
   await expect(page.getByText("操作系统")).toHaveCount(0);
 });

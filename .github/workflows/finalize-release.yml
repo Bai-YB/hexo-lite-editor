@@ -9,7 +9,7 @@ on:
       version:
         description: "Release version"
         required: true
-        default: "1.0.6.5"
+        default: "1.0.6.5.1"
       source_commit:
         description: "Commit used to build the uploaded artifacts"
         required: true
@@ -78,7 +78,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           VERSION="${VERSION:-$(node scripts/release-version.mjs version)}"
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || exit 1
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+){0,2}$ ]] || exit 1
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || exit 1
           [[ "$(git rev-parse HEAD)" == "$SOURCE_COMMIT" ]] || exit 1
           [[ "$(node scripts/release-version.mjs version)" == "$VERSION" ]] || exit 1

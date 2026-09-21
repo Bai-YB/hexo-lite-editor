@@ -1,12 +1,12 @@
 param(
-    [string]$Version = "1.0.6.5",
+    [string]$Version = "1.0.6.5.1",
     [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
+if ($Version -notmatch '^\d+\.\d+\.\d+(?:\.\d+){0,2}$') {
     throw "Invalid release version: $Version"
 }
 

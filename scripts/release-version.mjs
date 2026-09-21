@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 export function resolveReleaseVersion(packageInfo) {
   const runtimeVersion = packageInfo.version;
   const releaseVersion = packageInfo.releaseVersion ?? runtimeVersion;
-  if (!/^\d+\.\d+\.\d+(?:\+\d+)?$/.test(runtimeVersion)) throw new Error("Invalid runtime version");
+  if (!/^\d+\.\d+\.\d+(?:\+\d+(?:\.\d+)*)?$/.test(runtimeVersion)) throw new Error("Invalid runtime version");
   if (releaseVersion !== runtimeVersion.replace("+", ".")) throw new Error("Release and runtime versions do not match");
   return { version: releaseVersion, runtimeVersion, tag: `v${releaseVersion}` };
 }

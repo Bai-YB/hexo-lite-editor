@@ -30,19 +30,29 @@ try {
 
     $process = Start-Process -FilePath $executable -PassThru
     $ready = $false
-    for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    # A window can briefly report Responding before startup work blocks its UI
+    # thread. Require three continuous seconds of responsiveness so packaged
+    # builds catch that regression instead of accepting the first healthy tick.
+    $responsiveSamples = 0
+    $requiredResponsiveSamples = 12
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
         Start-Sleep -Milliseconds 250
         $process.Refresh()
         if ($process.HasExited) {
             throw "Portable app exited early with code $($process.ExitCode)"
         }
         if ($process.Responding -and $process.MainWindowHandle -ne 0) {
-            $ready = $true
-            break
+            $responsiveSamples++
+            if ($responsiveSamples -ge $requiredResponsiveSamples) {
+                $ready = $true
+                break
+            }
+        } else {
+            $responsiveSamples = 0
         }
     }
     if (-not $ready) {
-        throw "Portable app did not create a responsive window in time"
+        throw "Portable app did not keep a responsive window for 3 seconds during startup"
     }
 
     $version = (Get-Item -LiteralPath $executable).VersionInfo.ProductVersion

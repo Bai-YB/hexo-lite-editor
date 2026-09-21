@@ -1,8 +1,10 @@
-/// Release labels use a fourth numeric component; the updater requires SemVer.
+/// Release labels can append numeric revision components; the updater requires SemVer.
 pub fn display_version(version: &str) -> String {
     match version.split_once('+') {
         Some((base, build))
-            if !build.is_empty() && build.bytes().all(|byte| byte.is_ascii_digit()) =>
+            if build
+                .split('.')
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())) =>
         {
             format!("{base}.{build}")
         }
@@ -25,9 +27,10 @@ mod tests {
         assert!(current > Version::parse("1.0.6+1").unwrap());
         assert!(current > Version::parse("1.0.6+2").unwrap());
         assert!(current > Version::parse("1.0.6+3").unwrap());
-        assert_eq!(current, Version::parse("1.0.6+5").unwrap());
+        assert!(current > Version::parse("1.0.6+5").unwrap());
+        assert_eq!(current, Version::parse("1.0.6+5.1").unwrap());
         assert!(Version::parse("1.0.7").unwrap() > current);
-        assert_eq!(display_version(&current.to_string()), "1.0.6.5");
+        assert_eq!(display_version(&current.to_string()), "1.0.6.5.1");
         assert_eq!(display_version("1.0.7"), "1.0.7");
         assert_eq!(display_version("1.0.7+git.sha"), "1.0.7+git.sha");
     }

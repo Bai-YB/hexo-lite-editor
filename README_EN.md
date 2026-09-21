@@ -10,10 +10,10 @@
     <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64-setup.exe"><strong>Download setup</strong></a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64-portable.zip">Portable ZIP</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_macos-universal.dmg">macOS</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5">v1.0.6.5</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe"><strong>Download setup</strong></a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-portable.zip">Portable ZIP</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_macos-universal.dmg">macOS</a>
+    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.1">v1.0.6.5.1</a>
   </p>
 </div>
 
@@ -54,18 +54,18 @@ The WebDAV endpoint, directory, and username remain editable after sync is enabl
 
 ## Install
 
-`v1.0.6.5` supports Windows 10/11 x64 and universal macOS. The displayed version is **1.0.6.5**; the internal Tauri-compatible version is `1.0.6+5`. Existing 1.0.6.x builds can recognize this update.
+`v1.0.6.5.1` supports Windows 10/11 x64 and universal macOS. The displayed version is **1.0.6.5.1**; the internal Tauri-compatible version is `1.0.6+5.1`. Existing 1.0.6.x builds can recognize this update.
 
-This release rebuilds the preview as a block-based pipeline with one-way editor-driven scroll follow, makes every setting apply as you type (invalid values roll back and refocus), condenses the enabled sync view to a status card with one summary line and switches GitHub/WebDAV through inline provider tabs, reworks both themes to WCAG AA contrast, and finishes the site-wide copy rewrite. See the [1.0.6.5 validation record](docs/validation-1.0.6.5.md) and [module documentation](docs/modules/README.md).
+This hotfix resolves a Windows packaged-build startup freeze and requires both installer and portable smoke tests to keep a responsive window for three continuous seconds. Other functionality carries forward from 1.0.6.5. See the [1.0.6.5.1 validation record](docs/validation-1.0.6.5.1.md) and [module documentation](docs/modules/README.md).
 
 | Package | Use |
 | --- | --- |
-| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64-setup.exe) | Recommended; install with the setup wizard |
-| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64-portable.zip) | Extract and run |
-| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_windows-x64.msi) | Managed or bulk deployment |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/Hexo-Lite-Editor_1.0.6.5_macos-universal.dmg) | Universal for Intel and Apple Silicon |
+| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe) | Recommended; install with the setup wizard |
+| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-portable.zip) | Extract and run |
+| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64.msi) | Managed or bulk deployment |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_macos-universal.dmg) | Universal for Intel and Apple Silicon |
 
-The Windows packages do not have a commercial code-signing certificate, so SmartScreen may show “Unknown publisher.” Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/SHA256SUMS.txt) and [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5/SHA256SUMS-macos.txt). Updates are checked quietly; users choose when to download and install. Background downloading is optional, and update packages are verified with Tauri signatures.
+The Windows packages do not have a commercial code-signing certificate, so SmartScreen may show “Unknown publisher.” Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/SHA256SUMS.txt) and [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/SHA256SUMS-macos.txt). Updates are checked quietly; users choose when to download and install. Background downloading is optional, and update packages are verified with Tauri signatures.
 
 ## Usage
 
