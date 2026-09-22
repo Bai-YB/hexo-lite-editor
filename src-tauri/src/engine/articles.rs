@@ -4,7 +4,7 @@ use crate::{
         AppError, AppResult, ArticleCover, ArticleCoverSource, ArticleKind, ArticleSummary,
         FrontMatterResult,
     },
-    platform::silent_command,
+    platform::command_available,
 };
 use chrono::{DateTime, Local};
 use serde_json::{Map, Value};
@@ -66,12 +66,13 @@ pub fn validate_hexo_root(path: &Path) -> AppResult<(PathBuf, String, Vec<String
 
 fn runtime_warnings(root: &Path, package: &Path) -> Vec<String> {
     let mut warnings = Vec::new();
-    let node_available = silent_command("node")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if !node_available {
-        warnings.push("未检测到 Node.js；文章编辑可用，但本地预览与发布不可用".to_string());
+    // Probed through the same PATH the editor hands to Hexo, so a Homebrew or
+    // nvm installation on macOS is not reported as missing.
+    if !command_available("node") {
+        warnings.push(
+            "未检测到 Node.js；文章编辑可用，本地预览与发布不可用。请安装 Node.js（macOS 可用 brew install node，或访问 nodejs.org）后重新打开项目"
+                .to_string(),
+        );
     }
 
     let package_has_hexo = fs::read_to_string(package)

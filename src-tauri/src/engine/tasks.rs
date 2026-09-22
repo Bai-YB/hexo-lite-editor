@@ -1,6 +1,6 @@
 use crate::{
     domain::{AppConfigV3, AppError, AppResult, TaskType},
-    platform::{command_path, silent_command},
+    platform::command_available as command_found,
 };
 use serde_json::Value;
 use std::{
@@ -115,7 +115,7 @@ fn select_hexo_executor(root: &Path, available: impl Fn(&str) -> bool) -> AppRes
             }
             return Err(AppError::new(
                 "node_runtime_missing",
-                "已找到项目本地 Hexo，但未找到 Node.js。请先安装或修复 Node.js。",
+                "已找到项目本地 Hexo，但未检测到可用的 Node.js。请安装或修复 Node.js（macOS 可用 brew install node，或访问 nodejs.org）后重新打开项目。",
                 true,
             ));
         }
@@ -197,19 +197,7 @@ fn windows_hexo_args(script: &Path, command: &str) -> Vec<String> {
 }
 
 fn command_available(program: &str) -> bool {
-    if cfg!(windows) {
-        silent_command("where.exe")
-            .arg(platform_program(program))
-            .env("PATH", command_path())
-            .output()
-            .is_ok_and(|output| output.status.success())
-    } else {
-        silent_command("sh")
-            .args(["-c", &format!("command -v {program}")])
-            .env("PATH", command_path())
-            .output()
-            .is_ok_and(|output| output.status.success())
-    }
+    command_found(&platform_program(program))
 }
 
 fn platform_program(program: &str) -> String {

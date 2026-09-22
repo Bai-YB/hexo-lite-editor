@@ -3,8 +3,8 @@ use crate::{
     data::load_config,
     domain::{AppError, AppResult},
     platform::{
-        atomic_write, delete_webdav_credentials, set_webdav_credentials, webdav_credentials,
-        webdav_status,
+        atomic_write, delete_webdav_credentials, replace_file_from, replace_file_with_bytes,
+        set_webdav_credentials, webdav_credentials, webdav_status,
     },
 };
 use chrono::Local;
@@ -2484,8 +2484,10 @@ fn apply_remote_operations(
                 offline: false,
             })?;
         }
-        fs::write(target, &remote[path].bytes).map_err(|error| GitFailure {
-            message: format!("应用远端文件失败：{error}"),
+        // Written the same way the editor saves a file so a read-only project
+        // file (common after copying a Windows project onto macOS) still syncs.
+        replace_file_with_bytes(&target, &remote[path].bytes).map_err(|error| GitFailure {
+            message: format!("应用远端文件失败：{}", describe_io_failure(path, &error)),
             auth: false,
             offline: false,
         })?;
@@ -2498,7 +2500,10 @@ fn apply_remote_operations(
             ensure_safe_apply_target(root, &target)?;
             if target.is_file() {
                 fs::remove_file(target).map_err(|error| GitFailure {
-                    message: format!("删除远端已删除文件失败：{error}"),
+                    message: format!(
+                        "删除远端已删除文件失败：{}",
+                        describe_io_failure(path, &error)
+                    ),
                     auth: false,
                     offline: false,
                 })?;
@@ -2573,17 +2578,20 @@ fn backup_local_files(
         .join(timestamp.to_string());
     fs::create_dir_all(&target_root)
         .map_err(|error| AppError::io("创建同步备份目录失败", error))?;
-    for path in remote.keys().chain(base.keys()) {
-        if local.contains_key(path) {
-            let source = root.join(path);
+    // `remote` and `base` usually share the changed files; visiting a path once
+    // also keeps the copy from landing on the read-only copy it just wrote.
+    let paths = remote
+        .keys()
+        .chain(base.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for path in paths {
+        if local.contains_key(&path) {
+            let source = root.join(&path);
             if source.is_file() {
-                let target = target_root.join(path);
-                if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent)
-                        .map_err(|error| AppError::io("创建同步备份目录失败", error))?;
-                }
-                fs::copy(source, target)
-                    .map_err(|error| AppError::io("创建同步备份失败", error))?;
+                let target = target_root.join(&path);
+                replace_file_from(&source, &target)
+                    .map_err(|error| AppError::io(&format!("创建同步备份失败（{path}）"), error))?;
             }
         }
     }
@@ -2596,16 +2604,84 @@ fn restore_backup(root: &Path, backup: &Path, operations: &BTreeSet<String>) -> 
         let saved = backup.join(path);
         let target = root.join(path);
         if saved.is_file() {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| AppError::io("恢复同步备份失败", error))?;
+            // The rollback may run long after the crash that left the journal
+            // behind, and often against files that already match the backup.
+            if files_are_identical(&saved, &target) {
+                continue;
             }
-            fs::copy(saved, target).map_err(|error| AppError::io("恢复同步备份失败", error))?;
+            ensure_safe_apply_target(root, &target).map_err(|failure| {
+                AppError::new(
+                    "io_error",
+                    format!("恢复同步备份失败：{path}：{}", failure.message),
+                    true,
+                )
+            })?;
+            replace_file_from(&saved, &target).map_err(|error| {
+                AppError::new(
+                    "io_error",
+                    format!("恢复同步备份失败：{}", describe_io_failure(path, &error)),
+                    true,
+                )
+            })?;
         } else if target.is_file() {
-            fs::remove_file(target).map_err(|error| AppError::io("回滚新增同步文件失败", error))?;
+            fs::remove_file(target).map_err(|error| {
+                AppError::new(
+                    "io_error",
+                    format!(
+                        "回滚新增同步文件失败：{}",
+                        describe_io_failure(path, &error)
+                    ),
+                    true,
+                )
+            })?;
         }
     }
     Ok(())
+}
+
+fn files_are_identical(left: &Path, right: &Path) -> bool {
+    let (Ok(left_meta), Ok(right_meta)) = (fs::metadata(left), fs::metadata(right)) else {
+        return false;
+    };
+    if !left_meta.is_file() || !right_meta.is_file() || left_meta.len() != right_meta.len() {
+        return false;
+    }
+    let (Ok(mut left), Ok(mut right)) = (fs::File::open(left), fs::File::open(right)) else {
+        return false;
+    };
+    let mut left_buffer = [0u8; 16 * 1024];
+    let mut right_buffer = [0u8; 16 * 1024];
+    loop {
+        let left_read = match left.read(&mut left_buffer) {
+            Ok(read) => read,
+            Err(_) => return false,
+        };
+        let right_read = match right.read(&mut right_buffer) {
+            Ok(read) => read,
+            Err(_) => return false,
+        };
+        if left_read != right_read {
+            return false;
+        }
+        if left_read == 0 {
+            return true;
+        }
+        if left_buffer[..left_read] != right_buffer[..right_read] {
+            return false;
+        }
+    }
+}
+
+/// Reports the failed path, and explains the one permission failure the user
+/// can actually fix: a project file that is read-only or owned by somebody else.
+fn describe_io_failure(path: &str, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        format!(
+            "{path}：{error}。该文件或所在目录不允许写入，请检查它是否只读或属于其他用户（macOS 可在项目目录执行 chmod -R u+w 后重试）"
+        )
+    } else {
+        format!("{path}：{error}")
+    }
 }
 
 fn prune_backups(project_backup_dir: &Path) -> AppResult<()> {

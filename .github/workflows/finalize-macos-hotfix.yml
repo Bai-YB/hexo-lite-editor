@@ -1,17 +1,21 @@
-﻿name: Finalize release
+name: Finalize macOS hotfix
+
+# Publishes a macOS-only update. "Build macOS" uploads the universal DMG, APP
+# ZIP and signed updater package to a draft release; this workflow verifies
+# those artifacts and then writes a latest.json that lists only the darwin
+# targets, so no client is ever offered a Windows package that this release does
+# not contain. Windows users keep the previous release until the next
+# cross-platform release.
 
 on:
-  workflow_run:
-    workflows: [Release Windows, Build macOS]
-    types: [completed]
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version"
+        description: "Release version built by Build macOS"
         required: true
         default: "1.0.6.5.3"
       source_commit:
-        description: "Commit used to build the uploaded artifacts"
+        description: "Commit used to build the uploaded macOS artifacts"
         required: true
 
 permissions:
@@ -19,47 +23,41 @@ permissions:
   actions: read
 
 concurrency:
-  group: finalize-release-${{ inputs.source_commit || github.event.workflow_run.head_sha }}
+  group: finalize-macos-hotfix-${{ inputs.source_commit }}
   cancel-in-progress: false
 
 jobs:
   finalize:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ inputs.version }}
-      SOURCE_COMMIT: ${{ inputs.source_commit || github.event.workflow_run.head_sha }}
+      SOURCE_COMMIT: ${{ inputs.source_commit }}
     steps:
-      - name: Wait for both successful platform builds
+      - name: Wait for the successful macOS build
         id: builds
         shell: bash
         run: |
           set -Eeuo pipefail
-          for attempt in 1 2 3; do
+          ready=false
+          for attempt in 1 2 3 4 5 6; do
             gh run list --repo "$GITHUB_REPOSITORY" --commit "$SOURCE_COMMIT" --limit 100 \
-              --json workflowName,status,conclusion,headSha,createdAt > "$RUNNER_TEMP/platform-runs.json"
-            ready="$(node - "$RUNNER_TEMP/platform-runs.json" <<'NODE'
+              --json workflowName,status,conclusion,headSha,createdAt > "$RUNNER_TEMP/macos-runs.json"
+            ready="$(node - "$RUNNER_TEMP/macos-runs.json" <<'NODE'
           const fs = require('node:fs');
           const runs = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          const ready = ['Release Windows', 'Build macOS'].every((name) => {
-            const candidates = runs.filter((run) => run.workflowName === name && run.headSha === process.env.SOURCE_COMMIT);
-            if (candidates.some((run) => run.status !== 'completed')) return false;
-            const latest = candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-            return latest?.conclusion === 'success';
-          });
-          console.log(ready);
+          const candidates = runs.filter((run) => run.workflowName === 'Build macOS' && run.headSha === process.env.SOURCE_COMMIT);
+          if (!candidates.length || candidates.some((run) => run.status !== 'completed')) console.log(false);
+          else console.log(candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0].conclusion === 'success');
           NODE
             )"
             [[ "$ready" == true ]] && break
-            [[ "$attempt" == 3 ]] || sleep 10
+            [[ "$attempt" == 6 ]] || sleep 20
           done
           echo "ready=$ready" >> "$GITHUB_OUTPUT"
-          if [[ "$ready" != true && "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
-            echo 'Both platform builds must succeed for this exact source commit.' >&2
-            exit 1
-          fi
+          [[ "$ready" == true ]] || { echo 'Build macOS must succeed for this exact source commit.' >&2; exit 1; }
+
       - name: Checkout build source
         if: steps.builds.outputs.ready == 'true'
         uses: actions/checkout@v4
@@ -72,7 +70,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Verify and finalize release
+      - name: Verify the draft macOS release
         if: steps.builds.outputs.ready == 'true'
         shell: bash
         run: |
@@ -85,35 +83,32 @@ jobs:
           runtime_version="$(node scripts/release-version.mjs runtimeVersion)"
           repo="$GITHUB_REPOSITORY"
           tag="v$VERSION"
+          notes=".github/release-notes/$tag.md"
+          [[ -f "$notes" ]] || { echo "Missing release notes $notes" >&2; exit 1; }
           work="$RUNNER_TEMP/release-$VERSION"
           mkdir -p "$work/download" "$work/remote"
           release_json="$work/release.json"
           gh release view "$tag" --repo "$repo" --json isDraft,targetCommitish,assets > "$release_json"
           if [[ "$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft)" == false ]]; then
-            echo "$tag has already been finalized."
+            echo "$tag has already been published."
             exit 0
           fi
-          node --input-type=module - "$release_json" "$VERSION" "$SOURCE_COMMIT" "$tag" <<'NODE'
+          node --input-type=module - "$release_json" "$VERSION" "$SOURCE_COMMIT" <<'NODE'
           import { readFileSync } from 'node:fs';
-          const [releasePath, version, source, tag] = process.argv.slice(2);
+          const [releasePath, version, source] = process.argv.slice(2);
           const release = JSON.parse(readFileSync(releasePath, 'utf8'));
-          if (!release.isDraft) throw new Error(`${tag} is already published`);
+          if (!release.isDraft) throw new Error('The macOS release is already published');
           const expected = [
-            `Hexo-Lite-Editor_${version}_windows-x64-portable.zip`,
-            `Hexo-Lite-Editor_${version}_windows-x64-setup.exe`,
-            `Hexo-Lite-Editor_${version}_windows-x64-setup.exe.sig`,
-            `Hexo-Lite-Editor_${version}_windows-x64.msi`,
-            `Hexo-Lite-Editor_${version}_windows-x64.msi.sig`,
             `Hexo-Lite-Editor_${version}_macos-universal.dmg`,
             `Hexo-Lite-Editor_${version}_macos-universal.app.zip`,
             `Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz`,
             `Hexo-Lite-Editor_${version}_macos-universal.app.tar.gz.sig`,
-            'release-manifest.json', 'release-manifest-macos.json',
-            'SHA256SUMS.txt', 'SHA256SUMS-macos.txt'
+            'release-manifest-macos.json', 'SHA256SUMS-macos.txt'
           ];
           const names = new Set((release.assets ?? []).map((a) => a.name));
           for (const name of expected) if (!names.has(name)) throw new Error(`Missing release asset: ${name}`);
           for (const name of names) if (!expected.includes(name) && name !== 'latest.json') throw new Error(`Unexpected asset: ${name}`);
+          if ([...names].some((name) => /windows/i.test(name))) throw new Error('A macOS-only release must not carry Windows assets');
           if (release.targetCommitish && release.targetCommitish !== 'main' && release.targetCommitish !== source) {
             throw new Error(`Release target ${release.targetCommitish} does not match source ${source}`);
           }
@@ -131,16 +126,12 @@ jobs:
           import { join, basename } from 'node:path';
           const [dir, version, source, runtime] = process.argv.slice(2);
           const readJson = async (name) => JSON.parse((await readFile(join(dir, name), 'utf8')).replace(/^\uFEFF/, ''));
-          const win = await readJson('release-manifest.json');
           const mac = await readJson('release-manifest-macos.json');
-          for (const [label, manifest] of [['Windows', win], ['macOS', mac]]) {
-            if (manifest.version !== version || manifest.sourceCommit !== source) throw new Error(`${label} manifest version/source mismatch`);
-          }
-          if (win.runtimeVersion !== runtime || mac.runtimeVersion !== runtime) throw new Error('Unexpected runtime version');
-          const sums = (await readFile(join(dir, 'SHA256SUMS.txt'), 'utf8')).trim().split(/\r?\n/);
-          const macSums = (await readFile(join(dir, 'SHA256SUMS-macos.txt'), 'utf8')).trim().split(/\r?\n/);
+          if (mac.version !== version || mac.sourceCommit !== source) throw new Error('macOS manifest version/source mismatch');
+          if (mac.runtimeVersion !== runtime) throw new Error('Unexpected runtime version');
+          if (mac.assets?.length !== 4) throw new Error('Incomplete macOS manifest');
           const entries = new Map();
-          for (const line of [...sums, ...macSums]) {
+          for (const line of (await readFile(join(dir, 'SHA256SUMS-macos.txt'), 'utf8')).trim().split(/\r?\n/)) {
             const match = /^([0-9a-f]{64})\s+\*?(.+)$/i.exec(line.trim());
             if (!match) throw new Error('Invalid checksum line');
             const [, hash, name] = match;
@@ -148,28 +139,30 @@ jobs:
             if (basename(name) !== name || entries.has(name)) throw new Error(`Invalid checksum entry: ${name}`);
             entries.set(name, hash.toLowerCase());
           }
-          const files = [...(win.assets ?? []).map((a) => a.name), ...(mac.assets ?? []), 'release-manifest.json', 'release-manifest-macos.json'];
-          if (win.assets?.length !== 5 || mac.assets?.length !== 4 || entries.size !== 11 || new Set(files).size !== 11) throw new Error('Incomplete manifests or checksums');
+          const files = [...(mac.assets ?? []), 'release-manifest-macos.json'];
+          if (entries.size !== 5 || new Set(files).size !== 5) throw new Error('Incomplete checksums');
           for (const name of files) {
             if (basename(name) !== name) throw new Error(`Invalid manifest asset: ${name}`);
             const path = join(dir, name); const info = await stat(path);
             const hash = createHash('sha256').update(await readFile(path)).digest('hex');
             if (entries.get(name) !== hash) throw new Error(`Checksum mismatch: ${name}`);
-            const manifest = win.assets?.find((a) => a.name === name);
-            if (manifest && (manifest.size !== info.size || manifest.sha256 !== hash)) throw new Error(`Windows manifest mismatch: ${name}`);
           }
           NODE
-          notes=".github/release-notes/$tag.md"
-          [[ -f "$notes" ]] || { echo "Missing release notes $notes" >&2; exit 1; }
           node scripts/generate-latest-json.mjs \
             --version "$runtime_version" --tag "$tag" --repository "$repo" --notes "$notes" \
-            --windows-asset "$work/download/Hexo-Lite-Editor_${VERSION}_windows-x64-setup.exe" \
-            --windows-signature "$work/download/Hexo-Lite-Editor_${VERSION}_windows-x64-setup.exe.sig" \
             --macos-asset "$work/download/Hexo-Lite-Editor_${VERSION}_macos-universal.app.tar.gz" \
             --macos-signature "$work/download/Hexo-Lite-Editor_${VERSION}_macos-universal.app.tar.gz.sig" \
             --output "$work/latest.json"
+          node --input-type=module - "$work/latest.json" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          const platforms = Object.keys(manifest.platforms ?? {}).sort();
+          if (platforms.join(',') !== 'darwin-aarch64,darwin-x86_64') {
+            throw new Error(`A macOS-only update must list exactly the darwin targets, found: ${platforms.join(', ')}`);
+          }
+          NODE
           node scripts/verify-updater-manifest.mjs --manifest "$work/latest.json" --version "$runtime_version" --tag "$tag" \
-            --platform windows-x86_64 --platform darwin-x86_64 --platform darwin-aarch64
+            --platform darwin-x86_64 --platform darwin-aarch64
           node scripts/verify-updater-signatures.mjs "$work/latest.json" "$work/download"
           awk '!/latest\.json\r?$/' "$work/download/SHA256SUMS-macos.txt" > "$work/SHA256SUMS-macos.txt"
           sha256sum "$work/latest.json" | sed "s#$work/latest.json#latest.json#" >> "$work/SHA256SUMS-macos.txt"
@@ -177,18 +170,5 @@ jobs:
           gh release download "$tag" --repo "$repo" --pattern latest.json --pattern SHA256SUMS-macos.txt --dir "$work/remote" --clobber
           cmp "$work/latest.json" "$work/remote/latest.json"
           cmp "$work/SHA256SUMS-macos.txt" "$work/remote/SHA256SUMS-macos.txt"
-          # A rerun may have started while assets were being checked. Keep this
-          # release as a draft until both platforms are still complete and successful.
-          gh run list --repo "$repo" --commit "$SOURCE_COMMIT" --limit 100 \
-            --json workflowName,status,conclusion,headSha,createdAt > "$work/final-platform-runs.json"
-          node - "$work/final-platform-runs.json" <<'NODE'
-          const fs = require('node:fs');
-          const runs = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-          for (const name of ['Release Windows', 'Build macOS']) {
-            const candidates = runs.filter((run) => run.workflowName === name && run.headSha === process.env.SOURCE_COMMIT);
-            if (candidates.some((run) => run.status !== 'completed')) throw new Error(`${name} is running again; release remains a draft`);
-            const latest = candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-            if (latest?.conclusion !== 'success') throw new Error(`${name} has not succeeded for this source commit`);
-          }
-          NODE
           gh release edit "$tag" --repo "$repo" --draft=false --latest --title "Hexo Lite Editor $VERSION" --notes-file "$notes"
+          echo "Published macOS-only update $VERSION; latest.json lists darwin-x86_64 and darwin-aarch64 only."

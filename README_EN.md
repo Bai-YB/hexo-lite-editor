@@ -17,8 +17,8 @@
   <p>
     <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe"><strong>Download for Windows</strong></a>
     ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip">Portable ZIP</a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.dmg">macOS</a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.2">v1.0.6.5.2</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.3/Hexo-Lite-Editor_1.0.6.5.3_macos-universal.dmg">macOS</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.3">v1.0.6.5.3</a>
   </p>
 </div>
 
@@ -62,14 +62,14 @@ It never takes over your project or changes how Hexo builds. Files stay where th
 
 ## Download
 
-`v1.0.6.5.2` supports Windows 10/11 x64 and universal macOS.
+Windows builds are `v1.0.6.5.2` (Windows 10/11 x64). `v1.0.6.5.3` is a macOS-only fix (universal for Intel and Apple Silicon); Windows users stay on 1.0.6.5.2.
 
 | Package | Use |
 | --- | --- |
 | [Windows setup (EXE)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe) | Recommended, wizard install |
 | [Windows portable (ZIP)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip) | Extract and run |
 | [Windows MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64.msi) | Managed or bulk deployment |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.dmg) | Universal for Intel and Apple Silicon |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.3/Hexo-Lite-Editor_1.0.6.5.3_macos-universal.dmg) | Universal for Intel and Apple Silicon; fixes content sync and Node.js detection |
 
 ## Getting started
 
@@ -118,7 +118,7 @@ pnpm tauri build    # package
 Releases are produced by the Windows and macOS workflows in `.github/workflows`: both platforms build, sign, and hash their packages, a shared update manifest is generated, and the release is published only after every check passes.
 </details>
 
-Docs: [module responsibilities](docs/modules/README.md) · [plugin development](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [changelog](CHANGELOG.md) · [1.0.6.5.2 validation](docs/validation-1.0.6.5.2.md)
+Docs: [module responsibilities](docs/modules/README.md) · [plugin development](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [changelog](CHANGELOG.md) · [1.0.6.5.3 validation](docs/validation-1.0.6.5.3.md)
 
 ## Star History
 

@@ -17,6 +17,15 @@ fn write_fixture(root: &Path, path: &str, content: &str) {
     fs::write(target, content).unwrap();
 }
 
+/// Projects copied from a Windows archive, share, or disk keep the read-only
+/// attribute, which used to fail every macOS sync with
+/// `Permission denied (os error 13)`.
+fn make_read_only(path: &Path) {
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 fn register_fixture(state: &AppState, root: &Path, remote: &Path) {
     let mut item = record(root);
     item.repository = remote.to_string_lossy().into_owned();
@@ -503,6 +512,83 @@ fn remote_apply_rejects_changes_saved_after_the_decision_snapshot() {
         fs::read_to_string(root.join("source/_posts/post.md")).unwrap(),
         "new input"
     );
+}
+
+#[test]
+fn apply_replaces_a_read_only_project_file() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().join("project");
+    let cache = temp.path().join("cache");
+    let state = AppState::new(&temp.path().join("config"));
+    write_fixture(&root, "source/_posts/post.md", "local");
+    write_fixture(&cache, "source/_posts/post.md", "remote");
+    let local = local_snapshot(&root, "source/images").unwrap();
+    let remote = local_snapshot(&cache, "source/images").unwrap();
+    make_read_only(&root.join("source/_posts/post.md"));
+
+    apply_remote(&state, &root, &cache, &local, &remote, &hash_map(&local)).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(root.join("source/_posts/post.md")).unwrap(),
+        "remote"
+    );
+}
+
+#[test]
+fn recovery_restores_a_read_only_project_file() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().join("project");
+    let state = AppState::new(&temp.path().join("config"));
+    write_fixture(&root, "source/_posts/hello.md", "partial remote");
+    let key = cache_key(&path_key(&root));
+    let backup = state.sync_backup_dir.join(&key).join("backup-1");
+    let transaction = state
+        .sync_cache_dir
+        .join(&key)
+        .join("apply-transaction.json");
+    fs::create_dir_all(backup.join("source/_posts")).unwrap();
+    fs::create_dir_all(transaction.parent().unwrap()).unwrap();
+    fs::write(backup.join("source/_posts/hello.md"), "local before sync").unwrap();
+    let journal = ApplyTransaction {
+        backup_name: "backup-1".to_string(),
+        operations: BTreeSet::from(["source/_posts/hello.md".to_string()]),
+    };
+    fs::write(&transaction, serde_json::to_vec(&journal).unwrap()).unwrap();
+    make_read_only(&root.join("source/_posts/hello.md"));
+
+    recover_pending_transaction(&state, &root).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(root.join("source/_posts/hello.md")).unwrap(),
+        "local before sync"
+    );
+    assert!(!transaction.exists());
+}
+
+#[test]
+fn recovery_reports_the_path_that_cannot_be_restored() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let root = temp.path().join("project");
+    fs::create_dir_all(root.join("source/_posts")).unwrap();
+    let state = AppState::new(&temp.path().join("config"));
+    let key = cache_key(&path_key(&root));
+    let backup = state.sync_backup_dir.join(&key).join("backup-1");
+    fs::create_dir_all(backup.join("source/_posts")).unwrap();
+    // The backup holds a file, but the project path is a directory now, so the
+    // rollback cannot write and has to name the path it failed on.
+    fs::write(backup.join("source/_posts/hello.md"), "local").unwrap();
+    fs::create_dir_all(root.join("source/_posts/hello.md")).unwrap();
+
+    let error = restore_backup(
+        &root,
+        &backup,
+        &BTreeSet::from(["source/_posts/hello.md".to_string()]),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, "io_error");
+    assert!(error.message.contains("恢复同步备份失败"));
+    assert!(error.message.contains("source/_posts/hello.md"));
 }
 
 #[test]

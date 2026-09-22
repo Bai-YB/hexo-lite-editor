@@ -17,8 +17,8 @@
   <p>
     <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe"><strong>下载 Windows 安装版</strong></a>
     ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip">便携版</a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.dmg">macOS</a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.2">v1.0.6.5.2</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.3/Hexo-Lite-Editor_1.0.6.5.3_macos-universal.dmg">macOS</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.3">v1.0.6.5.3</a>
   </p>
 </div>
 
@@ -62,14 +62,14 @@
 
 ## 下载
 
-`v1.0.6.5.2` 支持 Windows 10/11 x64 与 macOS 通用版。
+Windows 版本为 `v1.0.6.5.2`（Windows 10/11 x64）；`v1.0.6.5.3` 是只包含 macOS 安装包的修复版（Intel 与 Apple Silicon 通用），Windows 用户继续使用 1.0.6.5.2。
 
 | 安装包 | 用途 |
 | --- | --- |
 | [Windows 安装版 (EXE)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe) | 推荐，按向导安装 |
 | [Windows 便携版 (ZIP)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip) | 解压后直接运行 |
 | [Windows MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64.msi) | 企业或批量部署 |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.dmg) | Intel 与 Apple Silicon 通用 |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.3/Hexo-Lite-Editor_1.0.6.5.3_macos-universal.dmg) | Intel 与 Apple Silicon 通用，修复同步与 Node.js 检测 |
 
 ## 快速开始
 
@@ -118,7 +118,7 @@ pnpm tauri build    # 打包
 发布由 `.github/workflows` 中的 Windows 与 macOS 工作流完成：双平台构建、签名、哈希校验、生成更新清单，全部通过后统一公开 Release。
 </details>
 
-文档：[模块职责与调用链](docs/modules/README.md) · [插件开发](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [更新记录](CHANGELOG.md) · [1.0.6.5.2 验证记录](docs/validation-1.0.6.5.2.md)
+文档：[模块职责与调用链](docs/modules/README.md) · [插件开发](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [更新记录](CHANGELOG.md) · [1.0.6.5.3 验证记录](docs/validation-1.0.6.5.3.md)
 
 ## Star History
 

@@ -2,10 +2,10 @@
 
 ## 版本映射
 
-- 对外版本与标签：`1.0.6.5.2` / `v1.0.6.5.2`。
-- Cargo、Tauri、更新器 SemVer：`1.0.6+5.2`。
-- Windows MSI：`1.0.6052`（Windows Installer 只比较前三段，第三段编码修订号）。
-- macOS `CFBundleShortVersionString`：`1.0.6`；`CFBundleVersion`：`1.1.0`。
+- 对外版本与标签：`1.0.6.5.3` / `v1.0.6.5.3`。
+- Cargo、Tauri、更新器 SemVer：`1.0.6+5.3`。
+- Windows MSI：`1.0.6053`（Windows Installer 只比较前三段，第三段编码修订号；该值在下一次 Windows 构建时生效）。
+- macOS `CFBundleShortVersionString`：`1.0.6`；`CFBundleVersion`：`1.1.2`。
 
 `package.json` 是发布脚本读取的版本源，`release-version.mjs` 将内部构建元数据（如 `+5.1`）映射为对外修订段（如 `.5.1`）。Cargo、Tauri、WiX、Info.plist、工作流默认值和打包脚本必须同时一致。
 
@@ -17,8 +17,16 @@
 3. Windows 与 macOS 工作流从同一标签构建平台包、更新包、签名、哈希与平台 manifest。
 4. finalize 工作流核对两个平台的源码 SHA、文件 SHA256、更新包大小和 Minisign 签名，生成三平台 `latest.json` 后公开 Release。
 5. 从公开 Release 下载全部资产到独立临时目录，再次验证数量、哈希、大小、签名、Latest/草稿状态。
-6. 把实际运行号、发布提交、资产清单与验证结果写回 `docs/validation-1.0.6.5.2.md` 和 `docs/archive/1.0.6.5.2.md`。
+6. 把实际运行号、发布提交、资产清单与验证结果写回 `docs/validation-1.0.6.5.3.md` 和 `docs/archive/1.0.6.5.3.md`。
 7. 最后删除工作区内 `.svelte-kit`、`build`、`output`、`node_modules`、`src-tauri/target`、`src-tauri/gen/schemas` 与临时发布下载；不清理用户博客、应用数据或全局缓存。
+
+## macOS 专用热修复通道
+
+只影响 macOS 的修复可以不等待 Windows 构建，走单独的通道：
+
+1. 按同一份源码提交推送 `main`，然后手动触发 `Build macOS`（`version` 必须与 `package.json` 一致）。该工作流校验版本后创建草稿 Release 并上传 macOS 资产，同时由 Release 创建指向同一提交的 `v<版本>` 标签。
+2. 手动触发 `Finalize macOS hotfix`，传入同一 `version` 与 `source_commit`。工作流只接受 `Build macOS` 在该提交上的成功结果，拒绝任何 Windows 资产，生成只声明 `darwin-x86_64` 与 `darwin-aarch64` 的 `latest.json`，校验更新包签名与 SHA256 后公开 Release 并置为 Latest。
+3. Windows 客户端在本版本为 Latest 期间手动检查更新会提示检查失败（不会下载或安装），`windows-x86_64` 缺失时不会命中任何更新包；下一次双平台发布会写回含 Windows 的 `latest.json`，恢复正常。
 
 ## 文档发布门槛
 

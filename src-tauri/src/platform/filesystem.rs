@@ -1,6 +1,10 @@
 use crate::domain::{AppError, AppResult};
 use atomic_write_file::AtomicWriteFile;
-use std::{fs, io::Write, path::Path};
+use std::{
+    fs,
+    io::{self, Write},
+    path::Path,
+};
 
 const LEGACY_APP_IDENTIFIER: &str = "com.user.hexo-lite-editor";
 
@@ -14,6 +18,74 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> AppResult<()> {
         .map_err(|error| AppError::io("写入临时文件失败", error))?;
     file.commit()
         .map_err(|error| AppError::io("提交原子写入失败", error))
+}
+
+/// Replaces `path` with `bytes`, following the same rule the editor uses when
+/// it saves a file: the data goes to a temporary file next to the destination
+/// and is renamed into place. Only the directory has to be writable, so a
+/// read-only project file - typical for projects copied from a Windows archive,
+/// share, or disk, and reported by macOS as `Permission denied (os error 13)` -
+/// no longer fails the write.
+pub fn replace_file_with_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_file(path, &|file| file.write_all(bytes))
+}
+
+/// Streams `source` over `destination`; see [`replace_file_with_bytes`].
+pub fn replace_file_from(source: &Path, destination: &Path) -> io::Result<()> {
+    replace_file(destination, &|file| {
+        let mut source = fs::File::open(source)?;
+        io::copy(&mut source, file).map(|_| ())
+    })
+}
+
+fn replace_file<F>(path: &Path, write: &F) -> io::Result<()>
+where
+    F: Fn(&mut AtomicWriteFile) -> io::Result<()>,
+{
+    match commit_atomic(path, write) {
+        // Renaming is enough on Unix, but Windows refuses to replace a
+        // read-only file until the attribute is cleared.
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            clear_read_only(path)?;
+            commit_atomic(path, write)
+        }
+        result => result,
+    }
+}
+
+fn commit_atomic<F>(path: &Path, write: &F) -> io::Result<()>
+where
+    F: Fn(&mut AtomicWriteFile) -> io::Result<()>,
+{
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = AtomicWriteFile::open(path)?;
+    write(&mut file)?;
+    file.commit()
+}
+
+fn clear_read_only(path: &Path) -> io::Result<()> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut permissions = metadata.permissions();
+    if !permissions.readonly() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(permissions.mode() | 0o200);
+    }
+    // Only reached on the targets without POSIX modes, where this clears the
+    // Windows read-only attribute instead of widening file permissions.
+    #[cfg(not(unix))]
+    #[allow(clippy::permissions_set_readonly_false)]
+    permissions.set_readonly(false);
+    fs::set_permissions(path, permissions)
 }
 
 /// Copies data from the provisional 1.0.x application identifier without
