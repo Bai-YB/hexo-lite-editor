@@ -24,8 +24,8 @@ fn install_dir_argument(directory: &Path) -> Option<OsString> {
 ///
 /// A portable copy therefore keeps updating its own folder instead of a fixed
 /// location, and an installation keeps the directory that was chosen during the
-/// first install (or the installer default).
-#[cfg(windows)]
+/// first install (or the installer default). Only Windows installers read these
+/// arguments, so every other platform simply ignores them.
 fn in_place_installer_args() -> Vec<OsString> {
     std::env::current_exe()
         .ok()
@@ -33,11 +33,6 @@ fn in_place_installer_args() -> Vec<OsString> {
         .and_then(|directory| install_dir_argument(&directory))
         .into_iter()
         .collect()
-}
-
-#[cfg(not(windows))]
-fn in_place_installer_args() -> Vec<OsString> {
-    Vec::new()
 }
 
 /// Windows updates are shipped as the NSIS setup executable, which is the only
