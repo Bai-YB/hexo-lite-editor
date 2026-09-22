@@ -16,4 +16,8 @@ Windows 打包启动路径、便携包与安装包冒烟脚本、发布版本映
 
 ## 发布结果
 
-发布完成后补录标签提交、CI 与双平台工作流运行、公开 Release 时间、14 项资产与哈希/签名复核结果。
+- 发布标签 `v1.0.6.5.1`（annotated，`e22b77b9`）指向源码提交 `b28ae9f8`（`main`）；Release 于 2026-09-21T10:01:32Z 公开：https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.1 ，状态为公开（非草稿、非预发布），并已置为 Latest。
+- 工作流运行（同一源码提交 `b28ae9f8`）：CI success run/35583040934；Release Windows success run/35584019575；Build macOS success run/35584019645；Finalize release success run/35585764006；Finalize release success run/35586449996。
+- 公开资产共 14 项：Hexo-Lite-Editor_1.0.6.5.1_macos-universal.app.tar.gz、Hexo-Lite-Editor_1.0.6.5.1_macos-universal.app.tar.gz.sig、Hexo-Lite-Editor_1.0.6.5.1_macos-universal.app.zip、Hexo-Lite-Editor_1.0.6.5.1_macos-universal.dmg、Hexo-Lite-Editor_1.0.6.5.1_windows-x64-portable.zip、Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe、Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe.sig、Hexo-Lite-Editor_1.0.6.5.1_windows-x64.msi、Hexo-Lite-Editor_1.0.6.5.1_windows-x64.msi.sig、latest.json、release-manifest-macos.json、release-manifest.json、SHA256SUMS-macos.txt、SHA256SUMS.txt。
+- 资产复核：从公开 Release 重新下载全部 14 项资产（合计 79 930 140 字节），逐项 SHA256 与 `SHA256SUMS.txt`、`SHA256SUMS-macos.txt` 及 GitHub 资产摘要一致；两份 manifest 记录的 `sourceCommit` 均为 `b28ae9f8`。
+- 更新通道复核：`latest.json` 运行版本 `1.0.6+5.1`，覆盖 windows-x86_64、darwin-x86_64、darwin-aarch64 三个平台，包大小与记录一致；`scripts/verify-updater-signatures.mjs` 以 `tauri.conf.json` 内嵌公钥校验 `Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe` 与 `Hexo-Lite-Editor_1.0.6.5.1_macos-universal.app.tar.gz` 的 Minisign 包签名与 trusted comment，均通过。
