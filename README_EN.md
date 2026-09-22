@@ -1,118 +1,127 @@
 <div align="center">
-  <img src=".github/assets/app-icon.png" width="96" height="96" alt="Hexo Lite Editor icon">
+  <img src=".github/assets/app-icon.png" width="96" height="96" alt="Hexo Lite Editor app icon">
   <h1>Hexo Lite Editor</h1>
-  <p>A desktop editor for local Hexo blogs.</p>
-  <p><a href="README.md">简体中文</a> · <a href="README_EN.md">English</a></p>
+  <p><strong>Writing, images, sync, and publishing for your local Hexo blog — in one quiet desktop window.</strong></p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/Bai-YB/hexo-lite-editor?display_name=tag&style=flat-square"></a>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/Bai-YB/hexo-lite-editor?style=flat-square"></a>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/Bai-YB/hexo-lite-editor/total?style=flat-square"></a>
-    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
+    <a href="README.md">简体中文</a> ·
+    <a href="README_EN.md">English</a>
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe"><strong>Download setup</strong></a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip">Portable ZIP</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.dmg">macOS</a>
-    · <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.2">v1.0.6.5.2</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Bai-YB/hexo-lite-editor?display_name=tag&style=flat-square"></a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Bai-YB/hexo-lite-editor?style=flat-square"></a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases"><img alt="Total downloads" src="https://img.shields.io/github/downloads/Bai-YB/hexo-lite-editor/total?style=flat-square"></a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/Bai-YB/hexo-lite-editor/ci.yml?style=flat-square&label=CI"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Bai-YB/hexo-lite-editor?style=flat-square"></a>
+    <img alt="Supported platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2f6f5e?style=flat-square">
+  </p>
+  <p>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe"><strong>Download for Windows</strong></a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-portable.zip">Portable ZIP</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_macos-universal.dmg">macOS</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.1">v1.0.6.5.1</a>
   </p>
 </div>
 
 <p align="center">
-  <img src=".github/assets/writing-workflow.gif" alt="Selecting a post, editing Markdown, updating preview, and hiding and restoring preview">
+  <img src=".github/assets/writing-workflow.gif" alt="Selecting a post, editing Markdown, updating the live preview, then hiding and restoring the preview">
 </p>
 
 ## Features
 
-- Edit posts and drafts with Markdown, common HTML, and live preview.
-- Align editor and preview by source content, including images, code blocks and long paragraphs.
-- Browse All files to edit friend links, YAML, JSON and theme configuration with disk-change checks; manage plugins from their own navigation entry.
-- Hide the preview to give the editor all space outside the post list.
-- Manage images under `source/` or connect Cloudflare-ImgBed; pasted and dropped images appear locally while uploading in the background.
-- Publishing always saves, cleans, generates, and deploys to prevent stale output; the background preview server can be stopped at any time.
-- Sync Hexo project sources, themes, and configuration through an isolated GitHub branch or a standard WebDAV service, with an explicit remote/local choice when the cloud advances.
-- Sync setup follows provider selection, connection preflight, and first merge. GitHub and WebDAV forms are mutually exclusive, and checks and transfers run in the background.
-- Automatically check daily and download signature-verified updates in the background, then ask before restarting to install.
-- Use light, dark, or system theme.
+- ✍️ **Writing**: Markdown and common HTML, post/draft conversion, renaming keeps the file name in step
+- 👀 **Live preview**: repaints only changed blocks, scrolling driven by the editor alone
+- 🖥️ **Browser preview**: opens the project's real theme; the background server stops on demand
+- 🗂️ **All files**: edit friend links, YAML, JSON, and theme config with a disk check before saving
+- 🖼️ **Images**: local `source/` or Cloudflare-ImgBed; pasted images land locally first, then upload
+- 🚀 **Publishing**: always save → `clean` → `generate` → `deploy`, and stops on any error
+- ☁️ **Sync**: GitHub content branch or WebDAV, conflicts resolved file by file, backup before overwrite
+- 🎨 **Themes**: light, dark, or follow system, with body text at WCAG AA contrast
+- 🧩 **Plugins**: Plugin API v0.1 in an isolated Worker, limited to declared permissions
+
+It never takes over your project or changes how Hexo builds. Files stay where they are, and the command line is always one step away.
 
 ## Screenshots
 
-### Images
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/editor-dark.png">
+    <img src=".github/assets/editor-light.png" alt="Hexo Lite Editor: post list, Markdown editor, and live preview">
+  </picture>
+</p>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/image-bed-dark.png">
-  <img src=".github/assets/image-bed-light.png" alt="Hexo Lite Editor image workspace">
-</picture>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/image-bed-dark.png">
+    <img src=".github/assets/image-bed-light.png" width="49%" alt="Images: folder-based local images and Cloudflare-ImgBed assets">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/content-sync-dark.png">
+    <img src=".github/assets/content-sync-light.png" width="49%" alt="Content sync: GitHub and WebDAV">
+  </picture>
+</p>
 
-### Content sync
+## Download
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/content-sync-dark.png">
-  <img src=".github/assets/content-sync-light.png" alt="Hexo Lite Editor WebDAV content sync">
-</picture>
-
-The WebDAV endpoint, directory, and username remain editable after sync is enabled. New credentials are saved only after directory access and a read/write test succeed.
-
-## Install
-
-`v1.0.6.5.2` supports Windows 10/11 x64 and universal macOS. The displayed version is **1.0.6.5.2**; the internal Tauri-compatible version is `1.0.6+5.2`. Existing 1.0.6.x builds can recognize this update.
-
-This release makes updates install in place: a portable copy keeps updating its own extracted folder, and an installed copy returns to the directory chosen during the first install (or the installer default) instead of a fixed or temporary location. After an update a desktop shortcut always points at the new build, while the first install still lets the user choose whether to create one. See the [1.0.6.5.2 validation record](docs/validation-1.0.6.5.2.md) and [module documentation](docs/modules/README.md).
+`v1.0.6.5.1` supports Windows 10/11 x64 and universal macOS.
 
 | Package | Use |
 | --- | --- |
-| [Setup EXE](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe) | Recommended; install with the setup wizard |
-| [Portable ZIP](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip) | Extract and run |
-| [MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64.msi) | Managed or bulk deployment |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.dmg) | Universal for Intel and Apple Silicon |
+| [Windows setup (EXE)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe) | Recommended, wizard install |
+| [Windows portable (ZIP)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-portable.zip) | Extract and run |
+| [Windows MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64.msi) | Managed or bulk deployment |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_macos-universal.dmg) | Universal for Intel and Apple Silicon |
 
-The Windows packages do not have a commercial code-signing certificate, so SmartScreen may show “Unknown publisher.” Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/SHA256SUMS.txt) and [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/SHA256SUMS-macos.txt). Updates are checked quietly; users choose when to download and install. Background downloading is optional, and update packages are verified with Tauri signatures.
+## Getting started
 
-## Usage
+1. Open a Hexo blog directory containing `_config.yml`
+2. Pick a post or draft on the left, edit in the middle, and watch the live preview follow
+3. Press `Ctrl + S` to save and **Publish**; generate or deploy can also run on their own
 
-1. Open a Hexo blog directory containing `_config.yml`.
-2. Select a post or draft on the left and edit it.
-3. Check the live preview, or open browser preview when you need the actual theme.
-4. Save and choose **Publish**, or run generate and deploy separately from the advanced menu.
-
-Open friend links and theme files in **All files** (Ctrl+6), and plugins with Ctrl+5. Project files use explicit saving (Ctrl+S), with unsaved-change prompts when switching files, leaving the workspace or quitting.
-
-For the first sync, check the connection, enable it and confirm the direction. Later saves upload after 30 seconds, or use **Upload changes now**. Stopping waits for the current network request, with a 30-second timeout per request. Completed remote commits remain in place.
-
-## Notes
-
-- Node.js, Hexo, and blog dependencies are not bundled. Local editing works without Node.js; preview and publishing use the project's existing environment.
-- Live preview removes unsafe HTML such as scripts, iframes, and forms. HTML in code fences remains source code.
-- Tokens and WebDAV passwords stay in the OS credential vault and are not written to project config, logs, or sync manifests.
-- Project sync is off by default and includes posts, drafts, `source/`, themes, scaffolds, and Hexo/theme configuration. It excludes `.git`, `public`, `node_modules`, caches, environment files, and common credentials. A local backup is created before cloud content overwrites local files.
-- Remote images load directly in WebView. Empty or unrenderable responses keep an error state; they are not replaced by a default cover and do not flash the original image while switching posts.
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl + 1` … `Ctrl + 6` | Editor, images, settings, about, plugins, all files |
+| `Ctrl + O` / `Ctrl + N` | Open project / new post |
+| `Ctrl + S` / `Ctrl + Shift + P` | Save / publish |
+| `Ctrl + \` / `Ctrl + ,` | Show or hide live preview / open settings |
 
 <details>
-<summary><strong>Development and builds</strong></summary>
+<summary><strong>Notes and limits</strong></summary>
 
-You need Node.js, pnpm, Rust, and the platform prerequisites for Tauri 2.
+- Node.js, Hexo, and blog dependencies are not bundled. Local editing works without Node.js; preview and publishing use the environment the project already has.
+- The live preview strips unsafe HTML such as scripts, iframes, and forms. HTML inside code blocks stays visible as source.
+- Tokens and WebDAV passwords live in the OS credential vault and are never written to project configuration, logs, or sync manifests.
+- Project sync is off by default. It covers posts, drafts, `source/`, themes, scaffolds, and Hexo/theme configuration, and excludes `.git`, `public`, `node_modules`, caches, environment files, and common credentials.
+- Remote images load directly through the WebView. Empty or unrenderable responses keep an error state instead of falling back to a default cover, and they do not flash the previous image while switching posts.
+- Windows packages do not carry a commercial code-signing certificate, so SmartScreen may report an unknown publisher. Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/SHA256SUMS.txt), and updates are signature-verified before install.
+</details>
+
+<details>
+<summary><strong>Stack and development</strong></summary>
+
+| Layer | Choice |
+| --- | --- |
+| Desktop shell | [Tauri 2](https://tauri.app/) (Rust) with WebView2 on Windows and WKWebView on macOS |
+| Interface | Svelte 5 + SvelteKit + TypeScript + Vite |
+| Editor | CodeMirror 6 |
+| Markdown | markdown-it + DOMPurify |
+| Tests | Vitest, Testing Library, Playwright (Chromium / WebKit), `cargo test` / `cargo clippy` |
+
+You need Node.js, pnpm, Rust, and the Tauri 2 platform prerequisites.
 
 ```bash
 pnpm install
-pnpm check
-pnpm test
-pnpm test:e2e
-pnpm tauri dev
+pnpm check && pnpm test && pnpm test:e2e
+pnpm tauri dev      # develop
+pnpm tauri build    # package
 ```
 
-Production builds and README assets:
-
-```bash
-pnpm build
-pnpm tauri build
-pnpm readme:assets
-pnpm readme:stars -- --repository Bai-YB/hexo-lite-editor
-```
+Releases are produced by the Windows and macOS workflows in `.github/workflows`: both platforms build, sign, and hash their packages, a shared update manifest is generated, and the release is published only after every check passes.
 </details>
+
+Docs: [module responsibilities](docs/modules/README.md) · [plugin development](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [changelog](CHANGELOG.md) · [1.0.6.5.1 validation](docs/validation-1.0.6.5.1.md)
 
 ## Star History
 
-<img src=".github/assets/star-history.svg" alt="GitHub Star History for Bai-YB/hexo-lite-editor">
+<img src=".github/assets/star-history.svg" alt="GitHub star history for Bai-YB/hexo-lite-editor">
 
-[Open an Issue](https://github.com/Bai-YB/hexo-lite-editor/issues) · [Browse Releases](https://github.com/Bai-YB/hexo-lite-editor/releases) · [Contribute](https://github.com/Bai-YB/hexo-lite-editor/pulls)
-
-Released under the [MIT License](LICENSE).
+[Open an issue](https://github.com/Bai-YB/hexo-lite-editor/issues) · [Browse releases](https://github.com/Bai-YB/hexo-lite-editor/releases) · [Contribute](https://github.com/Bai-YB/hexo-lite-editor/pulls) · [MIT License](LICENSE)
