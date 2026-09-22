@@ -89,10 +89,10 @@ jobs:
           mkdir -p "$work/download" "$work/remote"
           release_json="$work/release.json"
           # A draft created by `gh release create` has no tag ref until it is
-          # published, and `gh release view/download/upload` resolve a release
-          # through its tag. Create the ref on the verified source commit first;
-          # tag refs created through the API raise a create event, so the
-          # Windows workflow is not triggered by this macOS-only release.
+          # published. The workflow token cannot create protected `v*` tags, so
+          # this channel never writes the ref itself: it verifies the tag when it
+          # already exists and otherwise relies on GitHub creating it from the
+          # release target commit, which is checked below.
           if gh api "repos/$repo/git/ref/tags/$tag" >/dev/null 2>&1; then
             tag_type="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.type')"
             tag_sha="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')"
@@ -101,8 +101,7 @@ jobs:
             fi
             [[ "$tag_sha" == "$SOURCE_COMMIT" ]] || { echo "Tag $tag points to $tag_sha, expected $SOURCE_COMMIT" >&2; exit 1; }
           else
-            gh api -X POST "repos/$repo/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SOURCE_COMMIT" >/dev/null
-            echo "Created tag $tag at $SOURCE_COMMIT."
+            echo "Tag $tag does not exist yet; it will be created at the release target commit when the draft is published."
           fi
           gh release view "$tag" --repo "$repo" --json isDraft,targetCommitish,assets > "$release_json"
           if [[ "$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft)" == false ]]; then
@@ -181,4 +180,10 @@ jobs:
           cmp "$work/latest.json" "$work/remote/latest.json"
           cmp "$work/SHA256SUMS-macos.txt" "$work/remote/SHA256SUMS-macos.txt"
           gh release edit "$tag" --repo "$repo" --draft=false --latest --title "Hexo Lite Editor $VERSION" --notes-file "$notes"
+          published_sha="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')"
+          published_type="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.type')"
+          if [[ "$published_type" == tag ]]; then
+            published_sha="$(gh api "repos/$repo/git/tags/$published_sha" --jq '.object.sha')"
+          fi
+          [[ "$published_sha" == "$SOURCE_COMMIT" ]] || { echo "Published tag $tag points to $published_sha, expected $SOURCE_COMMIT" >&2; exit 1; }
           echo "Published macOS-only update $VERSION; latest.json lists darwin-x86_64 and darwin-aarch64 only."
