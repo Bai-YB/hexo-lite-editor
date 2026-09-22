@@ -16,6 +16,34 @@ $nsisInstallDir = Join-Path $smokeRoot "nsis"
 $msiExtractDir = Join-Path $smokeRoot "msi"
 $appProcess = $null
 $uninstaller = $null
+$productName = "Hexo Lite Editor"
+$mainBinary = "$productName.exe"
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "$productName.lnk"
+$uninstallKeys = @(
+    "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$productName",
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$productName"
+)
+
+function Remove-HexoInstallRegistryEntries {
+    foreach ($key in $uninstallKeys) {
+        if (Test-Path -LiteralPath $key) {
+            Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Remove-HexoDesktopShortcut {
+    param([string]$TargetPath)
+
+    if (-not (Test-Path -LiteralPath $desktopShortcut -PathType Leaf)) {
+        return
+    }
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($desktopShortcut)
+    if ([string]::IsNullOrEmpty($TargetPath) -or $shortcut.TargetPath -eq $TargetPath) {
+        Remove-Item -LiteralPath $desktopShortcut -Force -ErrorAction SilentlyContinue
+    }
+}
 
 function Get-InstalledHexoLiteEditor {
     $uninstallRegistryPaths = @(
@@ -41,7 +69,7 @@ try {
         throw "NSIS installer failed with code $($install.ExitCode)"
     }
 
-    $installedExe = Join-Path $nsisInstallDir "hexo-lite-editor.exe"
+    $installedExe = Join-Path $nsisInstallDir $mainBinary
     $uninstaller = Join-Path $nsisInstallDir "uninstall.exe"
     $installedRouteHelper = Join-Path $nsisInstallDir "resources\resolve-hexo-route.cjs"
     foreach ($required in @($installedExe, $uninstaller, $installedRouteHelper)) {
@@ -85,13 +113,35 @@ try {
     if ($extract.ExitCode -ne 0) {
         throw "MSI administrative extraction failed with code $($extract.ExitCode)"
     }
-    $msiExe = Get-ChildItem -LiteralPath $msiExtractDir -Recurse -Filter "hexo-lite-editor.exe" -File | Select-Object -First 1
+    $msiExe = Get-ChildItem -LiteralPath $msiExtractDir -Recurse -Filter $mainBinary -File | Select-Object -First 1
     $msiRouteHelper = Get-ChildItem -LiteralPath $msiExtractDir -Recurse -Filter "resolve-hexo-route.cjs" -File | Select-Object -First 1
     if ($null -eq $msiExe -or $null -eq $msiRouteHelper) {
         throw "MSI extraction is missing the executable or route helper"
     }
 
-    Write-Output "Installer smoke passed: NSIS install/start and MSI administrative extraction"
+    # Updating has to stay inside the directory the app was installed to and has
+    # to leave a desktop shortcut behind, even when the shortcut was declined or
+    # removed after the first install.
+    Remove-HexoDesktopShortcut -TargetPath $installedExe
+    $update = Start-Process -FilePath $nsis -ArgumentList @("/S", "/UPDATE", "/D=$nsisInstallDir") -PassThru -Wait
+    if ($update.ExitCode -ne 0) {
+        throw "NSIS update failed with code $($update.ExitCode)"
+    }
+    foreach ($required in @($installedExe, $installedRouteHelper)) {
+        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+            throw "Update did not keep the installation in place: $required"
+        }
+    }
+    if (-not (Test-Path -LiteralPath $desktopShortcut -PathType Leaf)) {
+        throw "Update did not create a desktop shortcut at $desktopShortcut"
+    }
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcutTarget = $shell.CreateShortcut($desktopShortcut).TargetPath
+    if ($shortcutTarget -ne $installedExe) {
+        throw "Desktop shortcut points at $shortcutTarget instead of $installedExe"
+    }
+
+    Write-Output "Installer smoke passed: NSIS install/start, in-place update with desktop shortcut, and MSI administrative extraction"
 } finally {
     if ($null -ne $appProcess -and -not $appProcess.HasExited) {
         Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue
@@ -103,6 +153,8 @@ try {
             Write-Warning "NSIS uninstaller returned code $($uninstall.ExitCode)"
         }
     }
+    Remove-HexoDesktopShortcut -TargetPath (Join-Path $nsisInstallDir $mainBinary)
+    Remove-HexoInstallRegistryEntries
     $resolvedSmokeRoot = [IO.Path]::GetFullPath($smokeRoot)
     if (-not $resolvedSmokeRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to remove a path outside the system temp directory: $resolvedSmokeRoot"

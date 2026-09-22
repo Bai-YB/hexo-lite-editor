@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.6.5.1",
+    [string]$Version = "1.0.6.5.2",
     [switch]$SkipBuild
 )
 
@@ -43,7 +43,12 @@ try {
 
     $nsisSource = Join-Path $targetDir "bundle\nsis\Hexo Lite Editor_${runtimeVersion}_x64-setup.exe"
     $msiSource = Join-Path $targetDir "bundle\msi\Hexo Lite Editor_${runtimeVersion}_x64_en-US.msi"
-    $exeSource = Join-Path $targetDir "hexo-lite-editor.exe"
+    # `mainBinaryName` makes the Tauri CLI rename the built binary; tolerate the
+    # cargo name as well so a `--no-bundle` build without the rename still works.
+    $exeSource = Join-Path $targetDir "Hexo Lite Editor.exe"
+    if (-not (Test-Path -LiteralPath $exeSource -PathType Leaf)) {
+        $exeSource = Join-Path $targetDir "hexo-lite-editor.exe"
+    }
     $routeHelper = Join-Path $targetDir "resources\resolve-hexo-route.cjs"
     # Tauri v2 reuses the NSIS installer itself as the Windows updater artifact.
     # `createUpdaterArtifacts: true` therefore emits installer `.sig` files rather

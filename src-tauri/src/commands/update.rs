@@ -2,10 +2,57 @@ use crate::{
     app::AppState,
     domain::{AppError, AppResult, UpdateErrorStage, UpdateSnapshot, UpdateStatus},
 };
+use std::ffi::OsString;
+use std::path::Path;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 const UPDATE_CHECK_RETRY_DELAY_MS: u64 = 750;
+
+/// Builds the NSIS `/D=<directory>` argument used to keep an update in place.
+///
+/// NSIS only accepts `/D=` unquoted and as the final command line argument,
+/// which is what [`tauri_plugin_updater`] produces for `installer_args`.
+fn install_dir_argument(directory: &Path) -> Option<OsString> {
+    if directory.as_os_str().is_empty() {
+        return None;
+    }
+    Some(OsString::from(format!("/D={}", directory.display())))
+}
+
+/// The directory the running executable lives in, as an installer argument.
+///
+/// A portable copy therefore keeps updating its own folder instead of a fixed
+/// location, and an installation keeps the directory that was chosen during the
+/// first install (or the installer default).
+#[cfg(windows)]
+fn in_place_installer_args() -> Vec<OsString> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(Path::to_path_buf))
+        .and_then(|directory| install_dir_argument(&directory))
+        .into_iter()
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn in_place_installer_args() -> Vec<OsString> {
+    Vec::new()
+}
+
+/// Windows updates are shipped as the NSIS setup executable, which is the only
+/// artifact that understands the `/D=` argument.
+fn is_nsis_setup(url: &url::Url) -> bool {
+    url.path().to_ascii_lowercase().ends_with("-setup.exe")
+}
+
+fn build_updater(app: &AppHandle, in_place: bool) -> Result<tauri_plugin_updater::Updater, String> {
+    let mut builder = app.updater_builder();
+    if in_place {
+        builder = builder.installer_args(in_place_installer_args());
+    }
+    builder.build().map_err(|error| error.to_string())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DownloadEvent {
@@ -131,11 +178,11 @@ fn is_transient_update_error(error: &str) -> bool {
 }
 
 async fn check_for_update(app: &AppHandle) -> Result<Option<Update>, String> {
-    let first = app
-        .updater()
-        .map_err(|error| error.to_string())?
-        .check()
-        .await;
+    check_for_update_with(app, false).await
+}
+
+async fn check_for_update_with(app: &AppHandle, in_place: bool) -> Result<Option<Update>, String> {
+    let first = build_updater(app, in_place)?.check().await;
     match first {
         Ok(update) => Ok(update),
         Err(error) if is_transient_update_error(&error.to_string()) => {
@@ -144,13 +191,26 @@ async fn check_for_update(app: &AppHandle) -> Result<Option<Update>, String> {
                 UPDATE_CHECK_RETRY_DELAY_MS,
             ))
             .await;
-            app.updater()
-                .map_err(|error| error.to_string())?
+            build_updater(app, in_place)?
                 .check()
                 .await
                 .map_err(|error| format!("{error}（已自动重试一次；首次失败：{first_message}）"))
         }
         Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Resolves the update that is about to be downloaded and installed.
+///
+/// Windows installers are asked to update the directory the application is
+/// currently running from. Updater artifacts that are not the NSIS setup
+/// executable (for example an MSI package) take MSI arguments instead, so they
+/// are resolved without the NSIS-only `/D=` flag.
+async fn resolve_install_update(app: &AppHandle) -> Result<Option<Update>, String> {
+    match check_for_update_with(app, true).await? {
+        Some(update) if is_nsis_setup(&update.download_url) => Ok(Some(update)),
+        Some(_) => check_for_update_with(app, false).await,
+        None => Ok(None),
     }
 }
 
@@ -229,7 +289,7 @@ pub async fn download_update(app: AppHandle) -> AppResult<UpdateSnapshot> {
     snapshot.error_message = None;
     store(&app, snapshot.clone());
 
-    let update = check_for_update(&app).await.map_err(|error| {
+    let update = resolve_install_update(&app).await.map_err(|error| {
         failure(
             &app,
             snapshot.clone(),
@@ -487,5 +547,33 @@ mod tests {
         )
         .unwrap();
         assert!(enabled.auto_download);
+    }
+
+    #[test]
+    fn installer_directory_argument_keeps_updates_in_place() {
+        let argument = install_dir_argument(Path::new(r"C:\Users\me\Hexo Lite Editor")).unwrap();
+        // NSIS requires the unquoted `/D=` form, even when the path has spaces.
+        assert_eq!(
+            argument.to_string_lossy(),
+            r"/D=C:\Users\me\Hexo Lite Editor"
+        );
+        assert_eq!(install_dir_argument(Path::new("")), None);
+    }
+
+    #[test]
+    fn only_the_nsis_setup_artifact_receives_installer_directory_arguments() {
+        let parse = |value: &str| url::Url::parse(value).unwrap();
+        assert!(is_nsis_setup(&parse(
+            "https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe"
+        )));
+        assert!(!is_nsis_setup(&parse(
+            "https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64.msi"
+        )));
+        assert!(!is_nsis_setup(&parse(
+            "https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip"
+        )));
+        assert!(!is_nsis_setup(&parse(
+            "https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.app.tar.gz"
+        )));
     }
 }

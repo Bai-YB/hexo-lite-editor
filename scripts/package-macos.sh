@@ -4,7 +4,7 @@ set -euo pipefail
 if [[ "${1:-}" == "--" ]]; then
   shift
 fi
-version="${1:-1.0.6.5.1}"
+version="${1:-1.0.6.5.2}"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+){0,2}$ ]]; then
   echo "Invalid release version: $version" >&2
   exit 1
@@ -36,7 +36,7 @@ fi
 
 short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_source/Contents/Info.plist")"
 bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_source/Contents/Info.plist")"
-if [[ "$short_version" != "1.0.6" || "$bundle_version" != "1.1.0" ]]; then
+if [[ "$short_version" != "1.0.6" || "$bundle_version" != "1.1.1" ]]; then
   echo "Unexpected macOS bundle versions: $short_version / $bundle_version" >&2
   exit 1
 fi
@@ -59,7 +59,11 @@ else
 fi
 
 commit="$(git -C "$repo_root" rev-parse HEAD)"
-architecture="$(lipo -archs "$app_source/Contents/MacOS/hexo-lite-editor")"
+app_binary="$app_source/Contents/MacOS/Hexo Lite Editor"
+if [[ ! -f "$app_binary" ]]; then
+  app_binary="$app_source/Contents/MacOS/hexo-lite-editor"
+fi
+architecture="$(lipo -archs "$app_binary")"
 if [[ "$architecture" != *"arm64"* || "$architecture" != *"x86_64"* ]]; then
   echo "::error title=Invalid macOS architecture::Expected arm64 and x86_64, found: $architecture"
   exit 1

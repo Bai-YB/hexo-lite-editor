@@ -1,5 +1,5 @@
 param(
-  [string]$Executable = (Join-Path $PSScriptRoot "..\src-tauri\target\release\hexo-lite-editor.exe")
+  [string]$Executable = (Join-Path $PSScriptRoot "..\src-tauri\target\release\Hexo Lite Editor.exe")
 )
 
 $ErrorActionPreference = "Stop"

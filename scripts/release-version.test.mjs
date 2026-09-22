@@ -5,13 +5,13 @@ import { resolveReleaseVersion } from "./release-version.mjs";
 
 describe("release version mapping", () => {
   it("keeps a five-part public version and valid updater SemVer", () => {
-    expect(resolveReleaseVersion({ version: "1.0.6+5.1", releaseVersion: "1.0.6.5.1" })).toEqual({
-      version: "1.0.6.5.1", runtimeVersion: "1.0.6+5.1", tag: "v1.0.6.5.1"
+    expect(resolveReleaseVersion({ version: "1.0.6+5.2", releaseVersion: "1.0.6.5.2" })).toEqual({
+      version: "1.0.6.5.2", runtimeVersion: "1.0.6+5.2", tag: "v1.0.6.5.2"
     });
   });
   it("rejects a mismatched package and release instead of building misleading assets", () => {
     expect(() => resolveReleaseVersion({ version: "1.0.6", releaseVersion: "1.0.6.2" })).toThrow();
-    expect(() => resolveReleaseVersion({ version: "1.0.6.5.1", releaseVersion: "1.0.6.5.1" })).toThrow();
+    expect(() => resolveReleaseVersion({ version: "1.0.6.5.2", releaseVersion: "1.0.6.5.2" })).toThrow();
   });
 });
 
