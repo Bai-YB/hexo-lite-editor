@@ -24,8 +24,8 @@
 
 只影响 macOS 的修复可以不等待 Windows 构建，走单独的通道：
 
-1. 按同一份源码提交推送 `main`，然后手动触发 `Build macOS`（`version` 必须与 `package.json` 一致）。该工作流校验版本后创建草稿 Release 并上传 macOS 资产，同时由 Release 创建指向同一提交的 `v<版本>` 标签。
-2. 手动触发 `Finalize macOS hotfix`，传入同一 `version` 与 `source_commit`。工作流只接受 `Build macOS` 在该提交上的成功结果，拒绝任何 Windows 资产，生成只声明 `darwin-x86_64` 与 `darwin-aarch64` 的 `latest.json`，校验更新包签名与 SHA256 后公开 Release 并置为 Latest。
+1. 按同一份源码提交推送 `main`，然后手动触发 `Build macOS`（`version` 必须与 `package.json` 一致）。该工作流校验版本后创建草稿 Release 并上传 macOS 资产；草稿 Release 在公开前不会创建标签引用。
+2. 手动触发 `Finalize macOS hotfix`，传入同一 `version` 与 `source_commit`。工作流只接受 `Build macOS` 在该提交上的成功结果，先按该提交补上 `v<版本>` 标签引用（通过 API 建 ref 只触发 create 事件，不会启动 Windows 构建），拒绝任何 Windows 资产，生成只声明 `darwin-x86_64` 与 `darwin-aarch64` 的 `latest.json`，校验更新包签名与 SHA256 后公开 Release 并置为 Latest。
 3. Windows 客户端在本版本为 Latest 期间手动检查更新会提示检查失败（不会下载或安装），`windows-x86_64` 缺失时不会命中任何更新包；下一次双平台发布会写回含 Windows 的 `latest.json`，恢复正常。
 
 ## 文档发布门槛

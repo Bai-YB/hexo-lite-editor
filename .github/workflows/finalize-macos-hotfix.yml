@@ -88,6 +88,22 @@ jobs:
           work="$RUNNER_TEMP/release-$VERSION"
           mkdir -p "$work/download" "$work/remote"
           release_json="$work/release.json"
+          # A draft created by `gh release create` has no tag ref until it is
+          # published, and `gh release view/download/upload` resolve a release
+          # through its tag. Create the ref on the verified source commit first;
+          # tag refs created through the API raise a create event, so the
+          # Windows workflow is not triggered by this macOS-only release.
+          if gh api "repos/$repo/git/ref/tags/$tag" >/dev/null 2>&1; then
+            tag_type="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.type')"
+            tag_sha="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')"
+            if [[ "$tag_type" == tag ]]; then
+              tag_sha="$(gh api "repos/$repo/git/tags/$tag_sha" --jq '.object.sha')"
+            fi
+            [[ "$tag_sha" == "$SOURCE_COMMIT" ]] || { echo "Tag $tag points to $tag_sha, expected $SOURCE_COMMIT" >&2; exit 1; }
+          else
+            gh api -X POST "repos/$repo/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SOURCE_COMMIT" >/dev/null
+            echo "Created tag $tag at $SOURCE_COMMIT."
+          fi
           gh release view "$tag" --repo "$repo" --json isDraft,targetCommitish,assets > "$release_json"
           if [[ "$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft)" == false ]]; then
             echo "$tag has already been published."
@@ -113,12 +129,6 @@ jobs:
             throw new Error(`Release target ${release.targetCommitish} does not match source ${source}`);
           }
           NODE
-          tag_type="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.type')"
-          tag_sha="$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.sha')"
-          if [[ "$tag_type" == tag ]]; then
-            tag_sha="$(gh api "repos/$repo/git/tags/$tag_sha" --jq '.object.sha')"
-          fi
-          [[ "$tag_sha" == "$SOURCE_COMMIT" ]] || { echo "Tag $tag points to $tag_sha, expected $SOURCE_COMMIT" >&2; exit 1; }
           gh release download "$tag" --repo "$repo" --dir "$work/download"
           node --input-type=module - "$work/download" "$VERSION" "$SOURCE_COMMIT" "$runtime_version" <<'NODE'
           import { readFile, stat } from 'node:fs/promises';
