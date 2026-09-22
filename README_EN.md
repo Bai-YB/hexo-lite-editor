@@ -15,10 +15,10 @@
     <img alt="Supported platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2f6f5e?style=flat-square">
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe"><strong>Download for Windows</strong></a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-portable.zip">Portable ZIP</a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_macos-universal.dmg">macOS</a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.1">v1.0.6.5.1</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe"><strong>Download for Windows</strong></a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip">Portable ZIP</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.dmg">macOS</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.5.2">v1.0.6.5.2</a>
   </p>
 </div>
 
@@ -62,14 +62,14 @@ It never takes over your project or changes how Hexo builds. Files stay where th
 
 ## Download
 
-`v1.0.6.5.1` supports Windows 10/11 x64 and universal macOS.
+`v1.0.6.5.2` supports Windows 10/11 x64 and universal macOS.
 
 | Package | Use |
 | --- | --- |
-| [Windows setup (EXE)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-setup.exe) | Recommended, wizard install |
-| [Windows portable (ZIP)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64-portable.zip) | Extract and run |
-| [Windows MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_windows-x64.msi) | Managed or bulk deployment |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/Hexo-Lite-Editor_1.0.6.5.1_macos-universal.dmg) | Universal for Intel and Apple Silicon |
+| [Windows setup (EXE)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-setup.exe) | Recommended, wizard install |
+| [Windows portable (ZIP)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64-portable.zip) | Extract and run |
+| [Windows MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_windows-x64.msi) | Managed or bulk deployment |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/Hexo-Lite-Editor_1.0.6.5.2_macos-universal.dmg) | Universal for Intel and Apple Silicon |
 
 ## Getting started
 
@@ -92,7 +92,7 @@ It never takes over your project or changes how Hexo builds. Files stay where th
 - Tokens and WebDAV passwords live in the OS credential vault and are never written to project configuration, logs, or sync manifests.
 - Project sync is off by default. It covers posts, drafts, `source/`, themes, scaffolds, and Hexo/theme configuration, and excludes `.git`, `public`, `node_modules`, caches, environment files, and common credentials.
 - Remote images load directly through the WebView. Empty or unrenderable responses keep an error state instead of falling back to a default cover, and they do not flash the previous image while switching posts.
-- Windows packages do not carry a commercial code-signing certificate, so SmartScreen may report an unknown publisher. Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.1/SHA256SUMS.txt), and updates are signature-verified before install.
+- Windows packages do not carry a commercial code-signing certificate, so SmartScreen may report an unknown publisher. Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.5.2/SHA256SUMS.txt), and updates are signature-verified before install.
 </details>
 
 <details>
@@ -118,7 +118,7 @@ pnpm tauri build    # package
 Releases are produced by the Windows and macOS workflows in `.github/workflows`: both platforms build, sign, and hash their packages, a shared update manifest is generated, and the release is published only after every check passes.
 </details>
 
-Docs: [module responsibilities](docs/modules/README.md) · [plugin development](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [changelog](CHANGELOG.md) · [1.0.6.5.1 validation](docs/validation-1.0.6.5.1.md)
+Docs: [module responsibilities](docs/modules/README.md) · [plugin development](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [changelog](CHANGELOG.md) · [1.0.6.5.2 validation](docs/validation-1.0.6.5.2.md)
 
 ## Star History
 
