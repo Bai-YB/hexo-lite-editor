@@ -5,6 +5,13 @@
   grid-template-rows: 52px minmax(0, 1fr) 30px;
 }
 
+.editor-page.focus-mode {
+  grid-template-rows: 44px minmax(0, 1fr);
+}
+
+.editor-page.focus-mode .editor-toolbar { height: 44px; }
+.editor-page.focus-mode .editor-status { display: none; }
+
 .editor-toolbar {
   position: relative;
   z-index: 16;
@@ -70,6 +77,7 @@
 .project-menu > .project-menu-open { display: flex !important; margin-top: 4px; border-top: 1px solid var(--border-subtle); border-radius: 0 0 7px 7px; }
 
 .editor-grid {
+  position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -78,6 +86,75 @@
   background: var(--border-subtle);
   gap: 1px;
 }
+
+.editor-grid.layout-dual .article-pane,
+.editor-grid.layout-single .article-pane {
+  position: absolute;
+  z-index: 32;
+  inset: 0 auto 0 0;
+  width: min(var(--article-width, 280px), calc(100% - 24px));
+  display: none;
+  box-shadow: var(--shadow-popover);
+}
+
+.editor-grid.layout-dual.article-drawer-open .article-pane,
+.editor-grid.layout-single.article-drawer-open .article-pane { display: grid; }
+
+.article-drawer-backdrop {
+  position: absolute;
+  z-index: 31;
+  inset: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--bg-app) 28%, transparent);
+}
+
+.editor-grid.layout-dual .writing-pane,
+.editor-grid.layout-dual .preview-pane { min-width: 0; }
+
+.editor-grid.layout-single .writing-pane,
+.editor-grid.layout-single .preview-pane {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.editor-grid.layout-single .preview-pane,
+.editor-grid.layout-single.show-compact-preview .writing-pane,
+.editor-grid.layout-single .content-resize-handle { display: none; }
+.editor-grid.layout-single.show-compact-preview .preview-pane { display: grid; }
+.resize-handle.compact-hidden { display: none; }
+
+.compact-view-switch {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg-control);
+}
+
+.compact-view-switch button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 12px;
+}
+
+.compact-view-switch button.active {
+  color: var(--text-primary);
+  background: var(--bg-panel);
+}
+.compact-view-switch button:disabled { opacity: 0.45; }
+
+.editor-toolbar.macos-single .browser-preview-action,
+.editor-toolbar.macos-single .new-article-action,
+.editor-page.focus-mode .browser-preview-action,
+.editor-page.focus-mode .new-article-action { display: none; }
+
+.editor-toolbar.macos-compact .project-switcher { max-width: 180px; }
+.editor-toolbar.macos-single .project-switcher { max-width: 130px; }
 
 .article-pane,
 .writing-pane,

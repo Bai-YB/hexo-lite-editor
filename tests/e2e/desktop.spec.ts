@@ -491,7 +491,7 @@ test("维护页不向普通用户显示任务日志或终端输出，关于页�
   await expect(page.getByText("任务日志")).toHaveCount(0);
   await expect(page.locator(".diagnostic-log-view")).toHaveCount(0);
   await page.getByRole("button", { name: "关于" }).click();
-  await expect(page.getByText("版本 1.0.6.5.3")).toBeVisible();
+  await expect(page.getByText("版本 1.0.6.6")).toBeVisible();
   await expect(page.getByText("发布目标")).toHaveCount(0);
   await expect(page.getByText("操作系统")).toHaveCount(0);
 });
@@ -609,6 +609,7 @@ test("页面过渡配置不超过 200ms 且离场页不拦截点击", async ({ p
 });
 
 test("深色模式光标 token 可见并生成双尺寸回归截图", async ({ page }) => {
+  await page.setViewportSize({ width: 1360, height: 860 });
   await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
   await page.screenshot({ path: "output/playwright/editor-1360x860-light.png", fullPage: true });
   await page.setViewportSize({ width: 1120, height: 720 });

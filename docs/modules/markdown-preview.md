@@ -4,6 +4,12 @@
 
 `safeMarkdown.ts` 把 Markdown 与原始 HTML 转为即时预览所需的安全 HTML。`previewBlocks.ts` 把渲染结果按顶层块拆分并复用上帧未变块，`renderScheduler.ts` 自适应合并渲染请求，`previewSurface.ts` 只替换变化块的 DOM。`EditorPage.svelte` 安排渲染、解析本地图片并维护预览 DOM。`sourceScrollSync.ts` 与 `MarkdownEditor.svelte` 做编辑器到预览的单向定位（预览区自身滚动不再回写编辑器）。
 
+## macOS 写作布局
+
+`EditorPage.svelte` 用 `ResizeObserver` 读取工作区实际宽度：总窗口约 1500px 以上显示文章、编辑、预览三栏；约 1100–1499px 将文章列表改为可开关的覆盖侧栏，编辑与预览分栏；更窄时编辑和预览单栏切换。阈值按工作区宽度扣除 88px 导航栏计算，Windows 的原有三栏逻辑保持不变。单栏切换只改变显示方式，CodeMirror 实例、文章内容、预览 DOM、滚动位置及已保存的列表宽度和预览比例保持原状态；隐藏预览时自动回到编辑视图。
+
+`EditorToolbar.svelte` 提供列表、单栏编辑/预览与专注模式按钮。专注模式通过 `onFocusModeChange` 通知 `AppShell.svelte` 隐藏导航栏，同时收起文章列表、缩短工具栏并隐藏状态栏；退出或卸载编辑页时恢复外壳。小窗口把浏览器预览和新建文章入口移入高级菜单，原快捷键继续可用。
+
 ## 渲染调用链
 
 1. `EditorSessionStore` 发布文档内容或图片状态变化。

@@ -1,6 +1,12 @@
 // Exact, explicit UI copy. Chinese source text is the stable lookup key.
 // Parameters are interpolated by ui.ts and never translated themselves.
 export const uiMessages: Record<string, string> = {
+  "打开文章列表": "Open article list",
+  "关闭文章列表": "Close article list",
+  "工作区视图": "Workspace view",
+  "进入专注模式": "Enter focus mode",
+  "退出专注模式": "Exit focus mode",
+  "编辑": "Edit",
   "同步细节": "Sync details",
   "切换到 GitHub 并合并": "Switch to GitHub and merge",
   "切换到 WebDAV 并合并": "Switch to WebDAV and merge",

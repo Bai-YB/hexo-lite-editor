@@ -7,13 +7,18 @@
     FolderOpen,
     ImagePlus,
     MoreHorizontal,
+    PanelLeftClose,
+    PanelLeftOpen,
     PanelRightClose,
     PanelRightOpen,
+    Maximize2,
+    Minimize2,
     Rocket,
     Save,
     Server
   } from "@lucide/svelte";
   import { shortcutLabel } from "$platform/os";
+  import { isMacOS } from "$platform/os";
   import type {
     PreviewServerView,
     ProjectSessionView,
@@ -46,6 +51,13 @@
   export let onOpenPreviewHome: () => void = () => {};
   export let onOpenSettings: (section?: SettingsSectionId) => void = () => {};
   export let onPublish: () => void = () => {};
+  export let workspaceLayout: "wide" | "dual" | "single" = "wide";
+  export let articleDrawerOpen = false;
+  export let compactView: "editor" | "preview" = "editor";
+  export let focusMode = false;
+  export let onToggleArticleList: () => void = () => {};
+  export let onSelectCompactView: (view: "editor" | "preview") => void = () => {};
+  export let onToggleFocusMode: () => void = () => {};
 
   let projectMenuOpen = false;
   let advancedMenuOpen = false;
@@ -69,7 +81,7 @@
   }
 </script>
 
-<header class="editor-toolbar">
+<header class:macos-compact={isMacOS && workspaceLayout !== "wide"} class:macos-single={isMacOS && workspaceLayout === "single"} class="editor-toolbar">
   <div class="project-switcher-wrap">
     <button class="project-switcher" type="button" aria-expanded={projectMenuOpen} on:click={() => { projectMenuOpen = !projectMenuOpen; advancedMenuOpen = false; }}>
       <FolderOpen size={17} /><span>{session.name}</span><ChevronDown size={14} />
@@ -84,12 +96,28 @@
       </div>
     {/if}
   </div>
+  {#if isMacOS && workspaceLayout !== "wide"}
+    <button class="icon-button" type="button" aria-label={articleDrawerOpen ? $ui("关闭文章列表") : $ui("打开文章列表")} title={articleDrawerOpen ? $ui("关闭文章列表") : $ui("打开文章列表")} aria-expanded={articleDrawerOpen} on:click={onToggleArticleList}>
+      {#if articleDrawerOpen}<PanelLeftClose size={17} />{:else}<PanelLeftOpen size={17} />{/if}
+    </button>
+  {/if}
+  {#if isMacOS && workspaceLayout === "single"}
+    <div class="compact-view-switch" role="group" aria-label={$ui("工作区视图")}>
+      <button class:active={compactView === "editor"} type="button" aria-pressed={compactView === "editor"} on:click={() => onSelectCompactView("editor")}>{$ui("编辑")}</button>
+      <button class:active={compactView === "preview"} type="button" aria-pressed={compactView === "preview"} disabled={!previewVisible} on:click={() => onSelectCompactView("preview")}>{$ui("预览")}</button>
+    </div>
+  {/if}
+  {#if isMacOS}
+    <button class="icon-button focus-toggle" type="button" aria-label={focusMode ? $ui("退出专注模式") : $ui("进入专注模式")} title={focusMode ? $ui("退出专注模式") : $ui("进入专注模式")} aria-pressed={focusMode} on:click={onToggleFocusMode}>
+      {#if focusMode}<Minimize2 size={16} />{:else}<Maximize2 size={16} />{/if}
+    </button>
+  {/if}
   <div class="toolbar-spacer"></div>
-  <button class="button quiet" type="button" disabled={previewBusy} on:click={onPreview}><Server size={16} />{previewBusy ? $ui("正在打开…") : $ui("在浏览器中打开")}</button>
+  <button class="button quiet browser-preview-action" type="button" disabled={previewBusy} on:click={onPreview}><Server size={16} />{previewBusy ? $ui("正在打开…") : $ui("在浏览器中打开")}</button>
   {#if previewServer?.state === "running"}
     <button class="button quiet" type="button" disabled={previewBusy} on:click={onTogglePreviewServer}>{$ui("停止预览")}</button>
   {/if}
-  <button class="button quiet" type="button" title={$ui("新建（{p0}）", { p0: shortcutLabel("N") })} on:click={onCreate}><FilePlus2 size={16} />{$ui("新建")}</button>
+  <button class="button quiet new-article-action" type="button" title={$ui("新建（{p0}）", { p0: shortcutLabel("N") })} on:click={onCreate}><FilePlus2 size={16} />{$ui("新建")}</button>
   <button class="icon-button" type="button" disabled={imageDisabled} title={$ui("选择图片并插入")} aria-label={$ui("选择图片并插入")} on:click={onSelectImages}><ImagePlus size={17} /></button>
   <button class="button quiet" type="button" disabled={saveDisabled} title={saveTitle || $ui("保存（{p0}）", { p0: shortcutLabel("S") })} on:click={onSave}><Save size={16} />{saving ? $ui("正在保存…") : $ui("保存")}</button>
   <button
@@ -107,6 +135,11 @@
     <button class="icon-button" type="button" title={$ui("高级操作")} aria-label={$ui("高级操作")} aria-expanded={advancedMenuOpen} on:click={() => { advancedMenuOpen = !advancedMenuOpen; projectMenuOpen = false; }}><MoreHorizontal size={18} /></button>
     {#if advancedMenuOpen}
       <div class="advanced-menu quiet-menu">
+        {#if isMacOS && workspaceLayout === "single"}
+          <button type="button" on:click={() => { advancedMenuOpen = false; onCreate(); }}>{$ui("新建文章")}</button>
+          <button type="button" disabled={previewBusy} on:click={() => { advancedMenuOpen = false; onPreview(); }}>{$ui("在浏览器中打开")}</button>
+          <div class="menu-separator"></div>
+        {/if}
         <button type="button" on:click={() => { advancedMenuOpen = false; onRunAdvanced("clean"); }}>{$ui("清理缓存")}</button>
         <button type="button" on:click={() => { advancedMenuOpen = false; onRunAdvanced("generate"); }}>{$ui("生成站点")}</button>
         <button type="button" on:click={() => { advancedMenuOpen = false; onRunAdvanced("deploy"); }}>{$ui("单独部署")}</button>

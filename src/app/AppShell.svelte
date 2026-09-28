@@ -42,6 +42,7 @@
   };
 
   let page: AppPage = "editor";
+  let editorFocusMode = false;
   let pagePromise = pageLoaders.editor();
   let config: AppConfigV3 = structuredClone(defaultConfig);
   let configLoaded = false;
@@ -945,7 +946,7 @@
     onRequestClose={requestClose}
     onMaximizedChange={(value) => (maximized = value)}
   />
-  <div class="app-body">
+  <div class:editor-focus={page === "editor" && editorFocusMode} class="app-body">
     <NavRail {page} onNavigate={navigate} />
     <main class="workspace">
       {#if !configLoaded}
@@ -986,6 +987,7 @@
             onOpenPreviewHome={openPreviewHome}
             onNotice={showNotice}
             onPendingImageUploadsChange={(count: number) => (pendingImageUploads = count)}
+             onFocusModeChange={(active: boolean) => (editorFocusMode = active)}
             onInstallUpdate={installUpdate}
             onOpenUpdates={() => navigate("about")}
             onOpenSettings={(section?: SettingsSectionId) => navigate("settings", section ?? "maintenance")}

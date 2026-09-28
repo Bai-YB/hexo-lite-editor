@@ -127,6 +127,9 @@
   grid-template-columns: 88px minmax(0, 1fr);
 }
 
+.app-body.editor-focus { grid-template-columns: minmax(0, 1fr); }
+.app-body.editor-focus .nav-rail { display: none; }
+
 .nav-rail {
   min-height: 0;
   display: flex;

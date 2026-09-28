@@ -41,7 +41,8 @@ export default defineConfig({
       use: {
         ...devices["Desktop Safari"],
         locale: "zh-CN",
-        viewport: { width: 1360, height: 860 }
+        // Legacy article-list interactions require a visible three-pane layout.
+        viewport: { width: 1600, height: 900 }
       }
     }
   ]

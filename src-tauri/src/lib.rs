@@ -15,6 +15,43 @@ pub use platform::ensure_webview2_runtime;
 
 const WINDOW_ICON: Image<'_> = tauri::include_image!("./icons/128x128.png");
 
+#[cfg(target_os = "macos")]
+fn fit_macos_main_window(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    use tauri::{LogicalSize, PhysicalPosition};
+
+    let monitor = match window.current_monitor()? {
+        Some(monitor) => Some(monitor),
+        None => window.primary_monitor()?,
+    };
+    let Some(monitor) = monitor else {
+        return Ok(());
+    };
+    let work = monitor.work_area();
+    let scale = monitor.scale_factor();
+    let max_width = (f64::from(work.size.width) / scale - 32.0).max(320.0);
+    let max_height = (f64::from(work.size.height) / scale - 32.0).max(320.0);
+    window.set_min_size(Some(LogicalSize::new(
+        max_width.min(900.0),
+        max_height.min(600.0),
+    )))?;
+
+    if window.is_maximized()? || window.is_fullscreen()? {
+        return Ok(());
+    }
+    let current = window.outer_size()?.to_logical::<f64>(scale);
+    if current.width <= max_width && current.height <= max_height {
+        return Ok(());
+    }
+    let width = current.width.min(max_width);
+    let height = current.height.min(max_height);
+    window.set_size(LogicalSize::new(width, height))?;
+    window.set_position(PhysicalPosition::new(
+        work.position.x + ((f64::from(work.size.width) - width * scale) / 2.0).round() as i32,
+        work.position.y + ((f64::from(work.size.height) - height * scale) / 2.0).round() as i32,
+    ))?;
+    Ok(())
+}
+
 fn webdav_invoke_handler<R: tauri::Runtime>(
 ) -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
@@ -216,6 +253,8 @@ pub fn run() {
             app.manage(state);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_icon(WINDOW_ICON.clone());
+                #[cfg(target_os = "macos")]
+                fit_macos_main_window(&window)?;
             }
             Ok(())
         })

@@ -36,6 +36,7 @@
     replacePreviewImageWithPlaceholder
   } from "$shared/markdown/safeMarkdown";
   import { isTauri, platform, normalizeError } from "$platform/tauri";
+  import { isMacOS } from "$platform/os";
   import { hashPreviewText, PreviewBlockCache, renderPreviewBlocks, type PreviewBlock } from "$shared/markdown/previewBlocks";
   import { countWords, lineAt } from "$shared/markdown/wordCount";
   import { previewStateLabel } from "./previewModel";
@@ -83,6 +84,44 @@
   export let autoSaveSuspended = false;
   export let onPendingImageUploadsChange: (count: number) => void = () => {};
   export let onBeforeSync: () => Promise<boolean> = async () => true;
+  export let onFocusModeChange: (active: boolean) => void = () => {};
+
+  type WorkspaceLayout = "wide" | "dual" | "single";
+  let workspaceLayout: WorkspaceLayout = "wide";
+  let activeLayout: WorkspaceLayout = "wide";
+  let articleDrawerOpen = false;
+  let compactView: "editor" | "preview" = "editor";
+  let focusMode = false;
+  $: activeLayout = focusMode && workspaceLayout === "wide" ? "dual" : workspaceLayout;
+  $: if (!config.layout.previewVisible && compactView === "preview") compactView = "editor";
+
+  function observeWorkspace(node: HTMLElement) {
+    if (!isMacOS) return;
+    const update = () => {
+      const width = node.clientWidth;
+      workspaceLayout = width >= 1412 ? "wide" : width >= 1012 ? "dual" : "single";
+      if (workspaceLayout === "wide" && !focusMode) articleDrawerOpen = false;
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
+
+  function toggleFocusMode() {
+    focusMode = !focusMode;
+    if (focusMode) articleDrawerOpen = false;
+    onFocusModeChange(focusMode);
+  }
+
+  function selectCompactView(view: "editor" | "preview") {
+    compactView = view;
+    articleDrawerOpen = false;
+  }
+
+  function closeArticleDrawerOnEscape(event: KeyboardEvent) {
+    if (event.key === "Escape" && articleDrawerOpen) articleDrawerOpen = false;
+  }
 
   const store = editorStore;
   let content = "";
@@ -219,6 +258,7 @@
     window.addEventListener("focus", handleWindowFocus);
     window.addEventListener("pointerdown", closeFilterMenu);
     window.addEventListener("keydown", closeFilterMenu);
+    window.addEventListener("keydown", closeArticleDrawerOnEscape);
     window.addEventListener("hexo-editor-new-article", openCreateDialog);
     void platform.onContentSyncStatus((view) => {
       if (!componentAlive || view.projectId !== session?.projectId || view.sessionGeneration !== session?.generation) return;
@@ -237,6 +277,7 @@
   });
 
   onDestroy(() => {
+    if (focusMode) onFocusModeChange(false);
     componentAlive = false;
     unlistenFileDrop?.();
     unlistenSync?.();
@@ -247,6 +288,7 @@
     window.removeEventListener("focus", handleWindowFocus);
     window.removeEventListener("pointerdown", closeFilterMenu);
     window.removeEventListener("keydown", closeFilterMenu);
+    window.removeEventListener("keydown", closeArticleDrawerOnEscape);
     window.removeEventListener("hexo-editor-new-article", openCreateDialog);
   });
 
@@ -1257,7 +1299,7 @@
 
 </script>
 
-<div class="editor-page">
+<div class:macos={isMacOS} class:focus-mode={focusMode} class="editor-page">
   {#if session}
     <EditorToolbar
       {session}
@@ -1279,6 +1321,13 @@
       onSelectImages={() => imageInput?.click()}
       onSave={saveCurrent}
       onTogglePreview={togglePreview}
+      workspaceLayout={activeLayout}
+      {articleDrawerOpen}
+      {compactView}
+      {focusMode}
+      onToggleArticleList={() => (articleDrawerOpen = !articleDrawerOpen)}
+      onSelectCompactView={selectCompactView}
+      onToggleFocusMode={toggleFocusMode}
       onRunAdvanced={(task) => void runAdvanced(task)}
       {onTogglePreviewServer}
       {onOpenPreviewHome}
@@ -1293,8 +1342,11 @@
   {#if !session}
     <WelcomePanel {recentProjects} {onOpenProject} {onOpenRecentProject} {onOpenSettings} />
   {:else}
-    <div class="editor-grid-wrap" style={`--article-width:${articleWidth}px; --writing-ratio:${config.layout.previewVisible ? 1 - previewRatio : 1}; --preview-ratio:${previewRatio}`}>
-      <div class:preview-hidden={!config.layout.previewVisible} class="editor-grid" bind:this={editorGrid}>
+    <div class="editor-grid-wrap" use:observeWorkspace style={`--article-width:${articleWidth}px; --writing-ratio:${config.layout.previewVisible ? 1 - previewRatio : 1}; --preview-ratio:${previewRatio}`}>
+      <div class:preview-hidden={!config.layout.previewVisible} class:layout-dual={isMacOS && activeLayout === "dual"} class:layout-single={isMacOS && activeLayout === "single"} class:article-drawer-open={articleDrawerOpen} class:show-compact-preview={compactView === "preview" && config.layout.previewVisible} class="editor-grid" bind:this={editorGrid}>
+        {#if isMacOS && activeLayout !== "wide" && articleDrawerOpen}
+          <button class="article-drawer-backdrop" type="button" aria-label={$ui("关闭文章列表")} on:click={() => (articleDrawerOpen = false)}></button>
+        {/if}
         <aside class="article-pane" aria-label={$ui("文章列表")}>
           <div class="pane-toolbar">
             <Search size={15} aria-hidden="true" />
@@ -1325,7 +1377,7 @@
                   class="article-item"
                   type="button"
                   data-article-id={article.articleId}
-                  on:click={() => requestArticle(article)}
+                  on:click={() => { articleDrawerOpen = false; compactView = "editor"; requestArticle(article); }}
                   on:contextmenu={(event) => showArticleContext(event, article, event.currentTarget)}
                   on:keydown={(event) => handleArticleMenuKeydown(event, article)}
                 >
@@ -1424,6 +1476,7 @@
         {/if}
       </div>
       <div
+        class:compact-hidden={isMacOS && activeLayout !== "wide"}
         class:dragging={articleResizeActive}
         class="resize-handle"
         style={`left:${articleWidth}px`}

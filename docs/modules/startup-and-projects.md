@@ -15,6 +15,8 @@
 
 ## 原生调用链
 
+macOS 主窗口建立后，`fit_macos_main_window()` 读取当前显示器的工作区域和缩放比例，将最小尺寸限制在可用区域以内。若新建或恢复的窗口超过工作区域，则把宽高收进工作区域并居中；已能完整显示的窗口保持原尺寸和位置。Windows 继续使用 Tauri 配置中的窗口尺寸。macOS Dock 使用 `src-tauri/icons/icon.icns`，从 `app-icon.png` 等比缩至画布的 88% 后生成；Windows 图标和应用内 favicon 不随之改变。
+
 `pick_project`、`reopen_recent_project` 与 `open_recent_project` 是异步 Tauri 命令。文件选择完成后，项目验证和扫描通过 `tauri::async_runtime::spawn_blocking` 执行，避免同步磁盘读取占用 WebView/UI 线程。
 
 原应用标识的数据迁移只在当前配置尚未建立时递归执行；迁移成功写入完成标记。已有 `config-v3.json` 的安装直接跳过旧缓存遍历，避免每次原生窗口创建前重复扫描历史目录。
