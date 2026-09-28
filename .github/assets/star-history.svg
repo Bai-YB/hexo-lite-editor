@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" role="img" aria-labelledby="title description">
   <title id="title">Star History for Bai-YB/hexo-lite-editor</title>
-  <desc id="description">1 GitHub stars over time.</desc>
+  <desc id="description">4 GitHub stars over time.</desc>
   <style>
     :root { color-scheme: light dark; }
     .title { fill: #24292f; font: 600 18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -21,16 +21,16 @@
     }
   </style>
   <text class="title" x="32" y="38">Star History</text>
-  <text class="count" x="768" y="38" text-anchor="end">1 star</text>
+  <text class="count" x="768" y="38" text-anchor="end">4 stars</text>
     <g data-state="history">
       <line class="grid" x1="64" y1="208" x2="752" y2="208" />
       <line class="grid" x1="64" y1="76" x2="752" y2="76" />
       <text class="axis" x="48" y="212" text-anchor="end">0</text>
-      <text class="axis" x="48" y="80" text-anchor="end">1</text>
-      <path class="area" d="M 64 208 L 408.0 76.0 L 408.0 208 Z" />
-      <polyline class="line" points="64.0,208.0 408.0,76.0" />
-      <circle class="point" cx="408.0" cy="76.0" r="4" />
+      <text class="axis" x="48" y="80" text-anchor="end">4</text>
+      <path class="area" d="M 64 208 L 74.6 175.0 L 688.5 142.0 L 699.1 109.0 L 741.4 76.0 L 741.4 208 Z" />
+      <polyline class="line" points="64.0,208.0 74.6,175.0 688.5,142.0 699.1,109.0 741.4,76.0" />
+      <circle class="point" cx="741.4" cy="76.0" r="4" />
       <text class="axis" x="64" y="230">Jul 26, 2026</text>
-      <text class="axis" x="752" y="230" text-anchor="end">Jul 26, 2026</text>
+      <text class="axis" x="752" y="230" text-anchor="end">Sep 27, 2026</text>
     </g>
 </svg>
