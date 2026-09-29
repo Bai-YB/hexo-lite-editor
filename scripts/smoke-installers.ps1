@@ -72,7 +72,8 @@ try {
     $installedExe = Join-Path $nsisInstallDir $mainBinary
     $uninstaller = Join-Path $nsisInstallDir "uninstall.exe"
     $installedRouteHelper = Join-Path $nsisInstallDir "resources\resolve-hexo-route.cjs"
-    foreach ($required in @($installedExe, $uninstaller, $installedRouteHelper)) {
+    $installedNotices = Join-Path $nsisInstallDir "resources\THIRD_PARTY_NOTICES.txt"
+    foreach ($required in @($installedExe, $uninstaller, $installedRouteHelper, $installedNotices)) {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
             throw "Missing NSIS installed file: $required"
         }
@@ -115,8 +116,9 @@ try {
     }
     $msiExe = Get-ChildItem -LiteralPath $msiExtractDir -Recurse -Filter $mainBinary -File | Select-Object -First 1
     $msiRouteHelper = Get-ChildItem -LiteralPath $msiExtractDir -Recurse -Filter "resolve-hexo-route.cjs" -File | Select-Object -First 1
-    if ($null -eq $msiExe -or $null -eq $msiRouteHelper) {
-        throw "MSI extraction is missing the executable or route helper"
+    $msiNotices = Get-ChildItem -LiteralPath $msiExtractDir -Recurse -Filter "THIRD_PARTY_NOTICES.txt" -File | Select-Object -First 1
+    if ($null -eq $msiExe -or $null -eq $msiRouteHelper -or $null -eq $msiNotices) {
+        throw "MSI extraction is missing the executable, route helper, or third-party notices"
     }
 
     # Updating has to stay inside the directory the app was installed to and has

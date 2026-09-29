@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.6.6",
+    [string]$Version = "1.0.6.7",
     [switch]$SkipBuild
 )
 
@@ -50,13 +50,14 @@ try {
         $exeSource = Join-Path $targetDir "hexo-lite-editor.exe"
     }
     $routeHelper = Join-Path $targetDir "resources\resolve-hexo-route.cjs"
+    $notices = Join-Path $targetDir "resources\THIRD_PARTY_NOTICES.txt"
     # Tauri v2 reuses the NSIS installer itself as the Windows updater artifact.
     # `createUpdaterArtifacts: true` therefore emits installer `.sig` files rather
     # than the legacy v1-compatible `.nsis.zip` bundle.
     $nsisSignature = "$nsisSource.sig"
     $msiSignature = "$msiSource.sig"
 
-    foreach ($required in @($nsisSource, $nsisSignature, $msiSource, $msiSignature, $exeSource, $routeHelper)) {
+    foreach ($required in @($nsisSource, $nsisSignature, $msiSource, $msiSignature, $exeSource, $routeHelper, $notices)) {
         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
             throw "Missing release input: $required"
         }
@@ -76,6 +77,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $portableStage "resources") -Force | Out-Null
     Copy-Item -LiteralPath $exeSource -Destination (Join-Path $portableStage "Hexo Lite Editor.exe")
     Copy-Item -LiteralPath $routeHelper -Destination (Join-Path $portableStage "resources\resolve-hexo-route.cjs")
+    Copy-Item -LiteralPath $notices -Destination (Join-Path $portableStage "resources\THIRD_PARTY_NOTICES.txt")
     $portableReadme = @(
         "Hexo Lite Editor $Version - Windows x64 portable edition",
         "",

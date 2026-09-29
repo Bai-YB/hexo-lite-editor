@@ -4,7 +4,7 @@ set -euo pipefail
 if [[ "${1:-}" == "--" ]]; then
   shift
 fi
-version="${1:-1.0.6.6}"
+version="${1:-1.0.6.7}"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+){0,2}$ ]]; then
   echo "Invalid release version: $version" >&2
   exit 1
@@ -33,10 +33,14 @@ if [[ ! -d "$app_source" || ! -f "$dmg_source" ]]; then
   echo "Missing macOS bundle output under $bundle_root" >&2
   exit 1
 fi
+if [[ ! -f "$app_source/Contents/Resources/resources/THIRD_PARTY_NOTICES.txt" ]]; then
+  echo "Missing bundled third-party notices" >&2
+  exit 1
+fi
 
 short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_source/Contents/Info.plist")"
 bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_source/Contents/Info.plist")"
-if [[ "$short_version" != "1.0.6" || "$bundle_version" != "1.1.3" ]]; then
+if [[ "$short_version" != "1.0.6" || "$bundle_version" != "1.1.4" ]]; then
   echo "Unexpected macOS bundle versions: $short_version / $bundle_version" >&2
   exit 1
 fi

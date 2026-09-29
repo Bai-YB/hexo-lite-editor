@@ -9,9 +9,9 @@ test("小屏文章列表展开时占据独立列，编辑与预览不会被盖�
   await page.goto("/?demo=1");
   const grid = page.locator(".editor-grid.layout-single");
   await expect(grid).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: "打开文章列表" }).click();
   const article = grid.locator(".article-pane");
   const writing = grid.locator(".writing-pane");
+  await expect(page.getByRole("button", { name: "关闭文章列表" })).toBeVisible();
   await expect(article).toBeVisible();
   await expect(writing).toBeVisible();
   const positions = await page.evaluate(() => {
@@ -33,6 +33,8 @@ test("小屏文章列表展开时占据独立列，编辑与预览不会被盖�
   await expect(article).toBeHidden();
   const expandedWidth = await preview.evaluate((element) => element.getBoundingClientRect().width);
   expect(expandedWidth).toBeGreaterThan(positions.writingWidth);
+  await page.getByRole("button", { name: "打开文章列表" }).click();
+  await expect(article).toBeVisible();
 });
 
 test("Markdown 标题与代码着色可见，右下角更新入口可点击跳转", async ({ page }) => {

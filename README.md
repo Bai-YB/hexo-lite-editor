@@ -15,10 +15,10 @@
     <img alt="支持平台" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-2f6f5e?style=flat-square">
   </p>
   <p>
-    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.6/Hexo-Lite-Editor_1.0.6.6_windows-x64-setup.exe"><strong>下载 Windows 安装版</strong></a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.6/Hexo-Lite-Editor_1.0.6.6_windows-x64-portable.zip">便携版</a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.6/Hexo-Lite-Editor_1.0.6.6_macos-universal.dmg">macOS</a>
-    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.6">v1.0.6.6</a>
+    <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/Hexo-Lite-Editor_1.0.6.7_windows-x64-setup.exe"><strong>下载 Windows 安装版</strong></a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/Hexo-Lite-Editor_1.0.6.7_windows-x64-portable.zip">便携版</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/Hexo-Lite-Editor_1.0.6.7_macos-universal.dmg">macOS</a>
+    ・ <a href="https://github.com/Bai-YB/hexo-lite-editor/releases/tag/v1.0.6.7">v1.0.6.7</a>
   </p>
 </div>
 
@@ -62,14 +62,14 @@
 
 ## 下载
 
-`v1.0.6.6` 同时提供 Windows 10/11 x64 与 macOS（Intel、Apple Silicon 通用）安装包。macOS 版改善小屏写作空间与程序坞图标尺寸。
+`v1.0.6.7` 同时提供 Windows 10/11 x64 与 macOS（Intel、Apple Silicon 通用）安装包。macOS 文章栏默认显示且不遮挡编辑区，程序坞图标进一步缩小；Markdown 标题与代码增加语法配色。
 
 | 安装包 | 用途 |
 | --- | --- |
-| [Windows 安装版 (EXE)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.6/Hexo-Lite-Editor_1.0.6.6_windows-x64-setup.exe) | 推荐，按向导安装 |
-| [Windows 便携版 (ZIP)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.6/Hexo-Lite-Editor_1.0.6.6_windows-x64-portable.zip) | 解压后直接运行 |
-| [Windows MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.6/Hexo-Lite-Editor_1.0.6.6_windows-x64.msi) | 企业或批量部署 |
-| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.6/Hexo-Lite-Editor_1.0.6.6_macos-universal.dmg) | Intel 与 Apple Silicon 通用，小屏布局与图标改进 |
+| [Windows 安装版 (EXE)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/Hexo-Lite-Editor_1.0.6.7_windows-x64-setup.exe) | 推荐，按向导安装 |
+| [Windows 便携版 (ZIP)](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/Hexo-Lite-Editor_1.0.6.7_windows-x64-portable.zip) | 解压后直接运行 |
+| [Windows MSI](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/Hexo-Lite-Editor_1.0.6.7_windows-x64.msi) | 企业或批量部署 |
+| [macOS DMG](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/Hexo-Lite-Editor_1.0.6.7_macos-universal.dmg) | Intel 与 Apple Silicon 通用，小屏布局与图标改进 |
 
 ## 快速开始
 
@@ -92,7 +92,7 @@
 - Token 与 WebDAV 密码保存在操作系统凭据库，不写入项目配置、日志或同步清单。
 - 项目同步默认关闭，范围包含文章、草稿、`source/`、主题、脚手架与 Hexo/主题配置；排除 `.git`、`public`、`node_modules`、缓存、环境文件和常见凭据。
 - 远程图片由 WebView 直接加载；空响应或无法显示时保留错误提示，不替换成默认封面，也不在切换文章时闪回原图。
-- Windows 安装包没有商业代码签名证书，首次运行可能提示"未知发布者"；校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.6/SHA256SUMS.txt)，更新包在安装前经过签名验证。
+- Windows 安装包没有商业代码签名证书，首次运行可能提示"未知发布者"；校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/SHA256SUMS.txt)，更新包在安装前经过签名验证。
 </details>
 
 <details>
@@ -118,7 +118,7 @@ pnpm tauri build    # 打包
 发布由 `.github/workflows` 中的 Windows 与 macOS 工作流完成：双平台构建、签名、哈希校验、生成更新清单，全部通过后统一公开 Release。
 </details>
 
-文档：[模块职责与调用链](docs/modules/README.md) · [插件开发](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [更新记录](CHANGELOG.md) · [1.0.6.6 验证记录](docs/validation-1.0.6.6.md)
+文档：[模块职责与调用链](docs/modules/README.md) · [插件开发](docs/plugin-development.md) · [Plugin API](docs/plugin-api-reference.md) · [更新记录](CHANGELOG.md) · [1.0.6.7 验证记录](docs/validation-1.0.6.7.md)
 
 ## Star History
 

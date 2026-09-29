@@ -1,7 +1,7 @@
 {
   "name": "hexo-lite-editor",
-  "version": "1.0.6+6",
-  "releaseVersion": "1.0.6.6",
+  "version": "1.0.6+7",
+  "releaseVersion": "1.0.6.7",
   "description": "A quiet, native desktop workspace for Hexo publishing.",
   "type": "module",
   "scripts": {
@@ -15,6 +15,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "release:latest-json": "node scripts/generate-latest-json.mjs",
+    "release:notices": "node scripts/generate-third-party-notices.mjs",
     "test:native-close": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-native-close.ps1",
     "readme:assets": "node scripts/capture-readme-assets.mjs",
     "readme:stars": "node scripts/generate-star-history.mjs",

@@ -89,7 +89,7 @@
   type WorkspaceLayout = "wide" | "dual" | "single";
   let workspaceLayout: WorkspaceLayout = "wide";
   let activeLayout: WorkspaceLayout = "wide";
-  let articleDrawerOpen = false;
+  let articleDrawerOpen = isMacOS;
   let compactView: "editor" | "preview" = "editor";
   let focusMode = false;
   $: activeLayout = focusMode && workspaceLayout === "wide" ? "dual" : workspaceLayout;
@@ -100,7 +100,6 @@
     const update = () => {
       const width = node.clientWidth;
       workspaceLayout = width >= 1412 ? "wide" : width >= 1012 ? "dual" : "single";
-      if (workspaceLayout === "wide" && !focusMode) articleDrawerOpen = false;
     };
     update();
     const observer = new ResizeObserver(update);

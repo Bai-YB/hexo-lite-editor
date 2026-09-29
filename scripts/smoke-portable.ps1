@@ -20,6 +20,7 @@ try {
     $required = @(
         $executable,
         (Join-Path $smokeDir "resources\resolve-hexo-route.cjs"),
+        (Join-Path $smokeDir "resources\THIRD_PARTY_NOTICES.txt"),
         (Join-Path $smokeDir "README.txt")
     )
     foreach ($item in $required) {
