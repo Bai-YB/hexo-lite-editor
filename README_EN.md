@@ -93,6 +93,7 @@ It never takes over your project or changes how Hexo builds. Files stay where th
 - Project sync is off by default. It covers posts, drafts, `source/`, themes, scaffolds, and Hexo/theme configuration, and excludes `.git`, `public`, `node_modules`, caches, environment files, and common credentials.
 - Remote images load directly through the WebView. Empty or unrenderable responses keep an error state instead of falling back to a default cover, and they do not flash the previous image while switching posts.
 - Windows packages do not carry a commercial code-signing certificate, so SmartScreen may report an unknown publisher. Checksums are in [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/SHA256SUMS.txt), and updates are signature-verified before install.
+- The macOS app is not Apple Developer ID signed or notarized. On first launch, Finder may require right-clicking the app and choosing Open. Checksums are in [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/SHA256SUMS-macos.txt); in-app updates are still verified with the project's signature.
 </details>
 
 <details>

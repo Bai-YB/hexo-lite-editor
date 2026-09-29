@@ -93,6 +93,7 @@
 - 项目同步默认关闭，范围包含文章、草稿、`source/`、主题、脚手架与 Hexo/主题配置；排除 `.git`、`public`、`node_modules`、缓存、环境文件和常见凭据。
 - 远程图片由 WebView 直接加载；空响应或无法显示时保留错误提示，不替换成默认封面，也不在切换文章时闪回原图。
 - Windows 安装包没有商业代码签名证书，首次运行可能提示"未知发布者"；校验值见 [SHA256SUMS.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/SHA256SUMS.txt)，更新包在安装前经过签名验证。
+- macOS 应用包尚未经过 Apple 开发者签名和公证，首次打开可能需要在 Finder 中右键选择“打开”；校验值见 [SHA256SUMS-macos.txt](https://github.com/Bai-YB/hexo-lite-editor/releases/download/v1.0.6.7/SHA256SUMS-macos.txt)，应用内更新包仍经过项目签名验证。
 </details>
 
 <details>
