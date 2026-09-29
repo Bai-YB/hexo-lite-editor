@@ -8,6 +8,7 @@ import { uiText } from "$shared/i18n/ui";
   import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
   import { tags } from "@lezer/highlight";
   import { markdown } from "@codemirror/lang-markdown";
+  import { languages } from "@codemirror/language-data";
   import { yaml } from "@codemirror/lang-yaml";
   import { json } from "@codemirror/lang-json";
   import { javascript } from "@codemirror/lang-javascript";
@@ -26,18 +27,25 @@ import { uiText } from "$shared/i18n/ui";
   let instance = documentInstance;
   const options = new Compartment();
   const highlight = HighlightStyle.define([
-    { tag: tags.keyword, color: "var(--accent)" },
-    { tag: [tags.string, tags.regexp], color: "var(--success)" },
-    { tag: [tags.number, tags.bool, tags.atom], color: "var(--warning)" },
-    { tag: [tags.propertyName, tags.tagName, tags.attributeName], color: "var(--accent)" },
-    { tag: [tags.comment, tags.meta], color: "var(--text-tertiary)" },
-    { tag: tags.heading, color: "var(--accent)", fontWeight: "bold" },
+    { tag: tags.processingInstruction, color: "var(--text-tertiary)" },
+    { tag: tags.keyword, color: "var(--syntax-keyword)" },
+    { tag: [tags.string, tags.regexp], color: "var(--syntax-string)" },
+    { tag: [tags.number, tags.bool, tags.atom], color: "var(--syntax-number)" },
+    { tag: [tags.propertyName, tags.tagName, tags.attributeName], color: "var(--syntax-function)" },
+    { tag: tags.typeName, color: "var(--syntax-type)" },
+    { tag: [tags.comment, tags.meta], color: "var(--syntax-comment)" },
+    { tag: tags.heading1, color: "var(--syntax-heading-1)", fontWeight: "bold" },
+    { tag: tags.heading2, color: "var(--syntax-heading-2)", fontWeight: "bold" },
+    { tag: tags.heading3, color: "var(--syntax-heading-3)", fontWeight: "bold" },
+    { tag: tags.heading4, color: "var(--syntax-heading-4)", fontWeight: "bold" },
+    { tag: tags.heading5, color: "var(--syntax-heading-5)", fontWeight: "bold" },
+    { tag: tags.heading6, color: "var(--syntax-heading-6)", fontWeight: "bold" },
     { tag: tags.link, color: "var(--accent)", textDecoration: "underline" },
     { tag: tags.invalid, color: "var(--danger)" }
   ]);
   function language() {
     const extension = path.split(".").at(-1)?.toLowerCase();
-    if (["md", "markdown"].includes(extension ?? "")) return markdown();
+    if (["md", "markdown"].includes(extension ?? "")) return markdown({ codeLanguages: languages });
     if (["yml", "yaml"].includes(extension ?? "")) return yaml();
     if (extension === "json") return json();
     if (["js", "mjs", "cjs", "ts"].includes(extension ?? "")) return javascript({ typescript: extension === "ts" });

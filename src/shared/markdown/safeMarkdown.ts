@@ -2,12 +2,14 @@ import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 import type { PreviewImageResult } from "$shared/types/app";
 import { uiText } from "$shared/i18n/ui";
+import { highlightFencedCode } from "./codeHighlight";
 
 const markdown = new MarkdownIt({
   html: true,
   linkify: true,
   breaks: false,
-  typographer: false
+  typographer: false,
+  highlight: highlightFencedCode
 });
 
 const allowedTags = [

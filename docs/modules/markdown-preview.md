@@ -6,9 +6,13 @@
 
 ## macOS 写作布局
 
-`EditorPage.svelte` 用 `ResizeObserver` 读取工作区实际宽度：总窗口约 1500px 以上显示文章、编辑、预览三栏；约 1100–1499px 将文章列表改为可开关的覆盖侧栏，编辑与预览分栏；更窄时编辑和预览单栏切换。阈值按工作区宽度扣除 88px 导航栏计算，Windows 的原有三栏逻辑保持不变。单栏切换只改变显示方式，CodeMirror 实例、文章内容、预览 DOM、滚动位置及已保存的列表宽度和预览比例保持原状态；隐藏预览时自动回到编辑视图。
+`EditorPage.svelte` 用 `ResizeObserver` 读取工作区实际宽度：总窗口约 1500px 以上显示文章、编辑、预览三栏；约 1100–1499px 显示编辑与预览分栏；更窄时编辑和预览单栏切换。后两档的文章列表可展开为独立列，参与 flex 布局并压缩内容区域，不再覆盖正文；切换文章或预览后保持展开，直到用户收起或按 Escape。阈值按工作区宽度扣除 88px 导航栏计算，Windows 的原有三栏逻辑保持不变。单栏切换只改变显示方式，CodeMirror 实例、文章内容、预览 DOM、滚动位置及已保存的列表宽度和预览比例保持原状态；隐藏预览时自动回到编辑视图。浏览器演示页可用 `?demo=1&macLayout=1` 在 Windows 上检查这一布局。
 
 `EditorToolbar.svelte` 提供列表、单栏编辑/预览与专注模式按钮。专注模式通过 `onFocusModeChange` 通知 `AppShell.svelte` 隐藏导航栏，同时收起文章列表、缩短工具栏并隐藏状态栏；退出或卸载编辑页时恢复外壳。小窗口把浏览器预览和新建文章入口移入高级菜单，原快捷键继续可用。
+
+## Markdown 色彩
+
+`MarkdownEditor.svelte` 与 `TextFileEditor.svelte` 使用 `@codemirror/language-data` 解析围栏代码的语言标记；一级至六级标题（包括 `#` 标记）、关键字、字符串、数字、类型、函数和注释使用明暗主题对应的语义颜色。`safeMarkdown.ts` 通过 `codeHighlight.ts` 对 13 种常见围栏语言着色；未知语言和超过 50,000 字符的代码块由 markdown-it 原样转义显示，不进行自动猜测。着色 HTML 仍经过 DOMPurify，再进入分块预览 DOM。预览中的六级标题也使用同一组主题颜色。
 
 ## 渲染调用链
 
@@ -32,6 +36,7 @@
 ## 回归入口
 
 - `src/shared/markdown/safeMarkdown.test.ts`：HTML/CSS 允许项、限定选择器、危险内容过滤、单次图片源输出。
+- `tests/e2e/mac-compact-review.spec.ts`：macOS 小屏列表分栏、标题与围栏代码颜色、右下角更新入口跳转。
 - `tests/e2e/platform-parity.spec.ts`：Chromium/WebKit 中真实输入带 CSS 的 HTML 卡片并检查计算样式。
 - `src/shared/markdown/previewBlocks.test.ts`：分块拆分、指纹复用、HTML 块全量回退。
 - `tests/e2e/preview-source-scroll.spec.ts`：长图、换行段落、代码块、迟到布局变化、单向跟随、反复跨段与首尾边界。

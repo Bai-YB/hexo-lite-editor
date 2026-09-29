@@ -31,13 +31,37 @@ export function createNetworkRequestHandler(maxResponseBytes = 5 * 1024 * 1024) 
         throw Object.assign(new Error("Plugin network redirects are not followed"), { code: "plugin_network_redirect_denied" });
       }
       const declaredLength = Number(response.headers.get("content-length") ?? "0");
-      if (declaredLength > maxResponseBytes) throw Object.assign(new Error("Plugin response is too large"), { code: "plugin_network_response_too_large" });
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > maxResponseBytes) throw Object.assign(new Error("Plugin response is too large"), { code: "plugin_network_response_too_large" });
+      if (declaredLength > maxResponseBytes) {
+        await response.body?.cancel().catch(() => undefined);
+        throw Object.assign(new Error("Plugin response is too large"), { code: "plugin_network_response_too_large" });
+      }
+      const reader = response.body?.getReader();
+      let body = "";
+      if (reader) {
+        const decoder = new TextDecoder();
+        let received = 0;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            received += value.byteLength;
+            if (received > maxResponseBytes) {
+              throw Object.assign(new Error("Plugin response is too large"), { code: "plugin_network_response_too_large" });
+            }
+            body += decoder.decode(value, { stream: true });
+          }
+          body += decoder.decode();
+        } catch (error) {
+          await reader.cancel().catch(() => undefined);
+          throw error;
+        } finally {
+          reader.releaseLock();
+        }
+      }
       return {
         status: response.status,
         headers: Object.fromEntries(response.headers.entries()),
-        body: new TextDecoder().decode(bytes)
+        body
       };
     } finally {
       clearTimeout(timer);

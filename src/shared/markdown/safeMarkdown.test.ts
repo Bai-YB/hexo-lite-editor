@@ -64,9 +64,22 @@ describe("safe markdown", () => {
   });
 
   it("keeps fenced HTML as source code", () => {
-    const html = renderSafeMarkdown("```html\n<figure>源码</figure>\n```");
-    expect(html).toContain("&lt;figure&gt;源码&lt;/figure&gt;");
-    expect(html).not.toContain("<figure>源码</figure>");
+    const root = document.createElement("article");
+    root.innerHTML = renderSafeMarkdown("```html\n<figure>源码</figure>\n```");
+    expect(root.querySelector("pre code")?.textContent).toContain("<figure>源码</figure>");
+    expect(root.querySelector("figure")).toBeNull();
+  });
+
+  it("colors known fenced languages and keeps unsupported or unsafe code escaped", () => {
+    const root = document.createElement("article");
+    root.innerHTML = renderSafeMarkdown("```js\nconst title = '<img src=x onerror=alert(1)>';\n```");
+    expect(root.querySelector("pre code .hljs-keyword")?.textContent).toBe("const");
+    expect(root.querySelector("pre code .hljs-string")?.textContent).toContain("<img");
+    expect(root.querySelector("img")).toBeNull();
+
+    const unknown = renderSafeMarkdown("```unknown-language\n<script>alert(1)</script>\n```");
+    expect(unknown).toContain("&lt;script&gt;");
+    expect(unknown).not.toContain("<script>");
   });
 
   it("keeps controlled links and image protocols", () => {

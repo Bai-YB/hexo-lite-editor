@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import { markdown } from "@codemirror/lang-markdown";
+  import { languages } from "@codemirror/language-data";
   import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
   import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
   import { Compartment, EditorState, type ChangeDesc, type Extension } from "@codemirror/state";
@@ -51,31 +52,36 @@
 
   // 组件实例级常量：样式值全部走 CSS var，主题切换无需重建；
   // reconfigure 时引用同一实例，生成的高亮 class 不抖动。
-  const quietHighlight = HighlightStyle.define([
-    { tag: tags.heading1, color: "var(--accent)", fontWeight: "700" },
-    { tag: tags.heading2, color: "var(--accent)", fontWeight: "650" },
-    { tag: tags.heading3, color: "var(--text-primary)", fontWeight: "650" },
-    { tag: tags.heading, color: "var(--text-primary)", fontWeight: "600" },
+  const markdownHighlight = HighlightStyle.define([
+    // Keep punctuation subdued unless it belongs to a heading. In that case
+    // the # mark and heading text share the same level-specific color.
+    { tag: tags.processingInstruction, color: "var(--text-tertiary)" },
+    { tag: tags.heading, fontWeight: "600" },
+    { tag: tags.heading1, color: "var(--syntax-heading-1)", fontWeight: "700" },
+    { tag: tags.heading2, color: "var(--syntax-heading-2)", fontWeight: "700" },
+    { tag: tags.heading3, color: "var(--syntax-heading-3)", fontWeight: "650" },
+    { tag: tags.heading4, color: "var(--syntax-heading-4)", fontWeight: "650" },
+    { tag: tags.heading5, color: "var(--syntax-heading-5)", fontWeight: "600" },
+    { tag: tags.heading6, color: "var(--syntax-heading-6)", fontWeight: "600" },
     { tag: tags.emphasis, fontStyle: "italic" },
     { tag: tags.strong, fontWeight: "700" },
     { tag: tags.strikethrough, color: "var(--text-tertiary)", textDecoration: "line-through" },
     { tag: tags.link, color: "var(--accent)" },
     { tag: tags.url, color: "var(--success)" },
-    { tag: tags.string, color: "var(--success)" },
+    { tag: [tags.string, tags.regexp], color: "var(--syntax-string)" },
     { tag: tags.labelName, color: "var(--text-tertiary)" },
     { tag: tags.monospace, color: "var(--warning)" },
     { tag: tags.quote, color: "var(--text-secondary)", fontStyle: "italic" },
     { tag: tags.contentSeparator, color: "var(--text-tertiary)", fontWeight: "600" },
-    { tag: tags.comment, color: "var(--text-tertiary)", fontStyle: "italic" },
+    { tag: tags.comment, color: "var(--syntax-comment)", fontStyle: "italic" },
     { tag: [tags.meta, tags.documentMeta], color: "var(--text-tertiary)" },
     { tag: [tags.escape, tags.character], color: "var(--warning)" },
-    { tag: tags.atom, color: "var(--accent)", fontWeight: "600" },
+    { tag: [tags.atom, tags.bool, tags.number], color: "var(--syntax-number)", fontWeight: "600" },
     { tag: tags.invalid, color: "var(--danger)" },
-    { tag: tags.tagName, color: "var(--accent)" },
-    { tag: tags.attributeName, color: "var(--text-secondary)" },
-    // 必须放最后：HeaderMark 等节点同时带 heading 与 processingInstruction，
-    // CSS 按定义顺序取胜，本条在后 ⇒ "#"、">"、"-" 等标记符统一淡化。
-    { tag: tags.processingInstruction, color: "var(--text-tertiary)" }
+    { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "600" },
+    { tag: [tags.typeName, tags.className], color: "var(--syntax-type)" },
+    { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)], color: "var(--syntax-function)" },
+    { tag: [tags.tagName, tags.attributeName, tags.propertyName], color: "var(--syntax-function)" }
   ]);
 
   const zhPhrases = EditorState.phrases.of({
@@ -118,8 +124,8 @@
     return [
       history(),
       resolvedImageHistory(() => imageUrlReplacements),
-      markdown(),
-      syntaxHighlighting(quietHighlight),
+      markdown({ codeLanguages: languages }),
+      syntaxHighlighting(markdownHighlight),
       compTabSize.of(EditorState.tabSize.of(tabSize)),
       EditorState.allowMultipleSelections.of(true),
       zhPhrases,

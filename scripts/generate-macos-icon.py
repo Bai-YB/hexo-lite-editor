@@ -13,7 +13,9 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "app-icon.png"
 OUTPUT = ROOT / "src-tauri" / "icons"
-ART_SCALE = 0.88
+# The former 88% artwork still looked larger than neighbouring Dock icons.
+# Match their apparent size at the Dock's standard (non-magnified) setting.
+ART_SCALE = 0.74
 SIZES = {
     b"icp4": 16,
     b"icp5": 32,

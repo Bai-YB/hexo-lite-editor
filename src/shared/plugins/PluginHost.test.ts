@@ -21,4 +21,22 @@ describe("PluginHost", () => {
     await expect(handler({ url: "https://allowed.example/a" })).rejects.toMatchObject({ code: "plugin_network_redirect_denied" });
     vi.unstubAllGlobals();
   });
+  it("stops reading a chunked plugin response at the byte limit", async () => {
+    const cancelled = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("abcd"));
+        controller.enqueue(new TextEncoder().encode("efgh"));
+      },
+      cancel: cancelled
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(stream)));
+    try {
+      await expect(createNetworkRequestHandler(5)({ url: "https://allowed.example/a" }))
+        .rejects.toMatchObject({ code: "plugin_network_response_too_large" });
+      expect(cancelled).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

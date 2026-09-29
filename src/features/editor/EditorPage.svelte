@@ -116,7 +116,6 @@
 
   function selectCompactView(view: "editor" | "preview") {
     compactView = view;
-    articleDrawerOpen = false;
   }
 
   function closeArticleDrawerOnEscape(event: KeyboardEvent) {
@@ -1344,9 +1343,6 @@
   {:else}
     <div class="editor-grid-wrap" use:observeWorkspace style={`--article-width:${articleWidth}px; --writing-ratio:${config.layout.previewVisible ? 1 - previewRatio : 1}; --preview-ratio:${previewRatio}`}>
       <div class:preview-hidden={!config.layout.previewVisible} class:layout-dual={isMacOS && activeLayout === "dual"} class:layout-single={isMacOS && activeLayout === "single"} class:article-drawer-open={articleDrawerOpen} class:show-compact-preview={compactView === "preview" && config.layout.previewVisible} class="editor-grid" bind:this={editorGrid}>
-        {#if isMacOS && activeLayout !== "wide" && articleDrawerOpen}
-          <button class="article-drawer-backdrop" type="button" aria-label={$ui("关闭文章列表")} on:click={() => (articleDrawerOpen = false)}></button>
-        {/if}
         <aside class="article-pane" aria-label={$ui("文章列表")}>
           <div class="pane-toolbar">
             <Search size={15} aria-hidden="true" />
@@ -1377,7 +1373,7 @@
                   class="article-item"
                   type="button"
                   data-article-id={article.articleId}
-                  on:click={() => { articleDrawerOpen = false; compactView = "editor"; requestArticle(article); }}
+                  on:click={() => { compactView = "editor"; requestArticle(article); }}
                   on:contextmenu={(event) => showArticleContext(event, article, event.currentTarget)}
                   on:keydown={(event) => handleArticleMenuKeydown(event, article)}
                 >

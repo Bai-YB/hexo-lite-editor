@@ -270,7 +270,7 @@ pub async fn resolve_article_preview_url(
             .map_err(|error| {
                 AppError::new(
                     "preview_route_runtime_missing",
-                    format!("鏃犳硶鍐欏叆 Hexo 璺敱瑙ｆ瀽鍣細{error}"),
+                    format!("无法写入 Hexo 路由解析器：{error}"),
                     true,
                 )
             })?;
@@ -278,7 +278,7 @@ pub async fn resolve_article_preview_url(
     let output = route_process.wait_with_output().await.map_err(|error| {
         AppError::new(
             "preview_route_runtime_missing",
-            format!("鏃犳硶杩愯 Hexo 璺敱瑙ｆ瀽鍣細{error}"),
+            format!("无法运行 Hexo 路由解析器：{error}"),
             true,
         )
     })?;

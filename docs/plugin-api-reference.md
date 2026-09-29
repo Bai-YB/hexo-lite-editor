@@ -17,7 +17,7 @@ The worker can request a Host API by posting `{ kind: "hostRequest", id, method,
 
 Providers implement `validateConfig`, `testConnection`, and `upload`. Listing, folder creation, rename, move, and delete are optional; unavailable operations must be omitted rather than emulated.
 
-`network.request` accepts HTTPS URLs only and requires an exact `network:<origin>` manifest permission. Redirect targets are checked again by the host. Requests have a finite timeout and bounded response size.
+`network.request` accepts HTTPS URLs only and requires an exact `network:<origin>` manifest permission. Redirect targets are checked again by the host. Requests have a finite timeout; response chunks are counted as they arrive and the stream is cancelled before it exceeds the 5 MiB default limit, including when the server omits `Content-Length`.
 
 ## Compatibility
 
